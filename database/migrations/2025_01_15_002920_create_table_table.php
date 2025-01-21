@@ -13,8 +13,9 @@ return new class extends Migration {
     Schema::create('table', function (Blueprint $table) {
       $table->id();
       $table->string('name');
-      $table->integer('created_by');
-      $table->foreignId('current_board_id')->constrained('board');
+      $table->integer('created_by')->nullable();
+      $table->foreignId('current_board_id')->nullable()->constrained('board');
+      $table->timestamps();
     });
   }
 
