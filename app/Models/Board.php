@@ -2,14 +2,16 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class Board extends Model
 {
+  use HasFactory;
+
   protected $fillable = [
-    'board_id',
-    'card_id',
+    'position',
   ];
 
   public function table(): BelongsToMany

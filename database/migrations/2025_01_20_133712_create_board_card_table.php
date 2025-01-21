@@ -13,8 +13,7 @@ return new class extends Migration {
     Schema::create('board_card', function (Blueprint $table) {
       $table->foreignId('board_id')->constrained('boards');
       $table->foreignId('card_id')->constrained('cards');
-      $table->integer('position');
-      $table->string('position_name');
+      $table->string('position');
     });
   }
 
