@@ -2,7 +2,6 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration {
@@ -11,12 +10,9 @@ return new class extends Migration {
    */
   public function up(): void
   {
-    Schema::create('card', function (Blueprint $table) {
-      $table->id();
-      $table->integer('suit');
-      $table->string('suit_name');
-      $table->integer('rank');
-      $table->string('rank_name')->nullable();
+    Schema::create('tables_users', function (Blueprint $table) {
+      $table->foreignId('user_id')->constrained();
+      $table->foreignId('table_id')->constrained('tables');
     });
   }
 
@@ -25,6 +21,6 @@ return new class extends Migration {
    */
   public function down(): void
   {
-    Schema::dropIfExists('card');
+    Schema::dropIfExists('tables_users');
   }
 };

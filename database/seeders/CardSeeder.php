@@ -46,6 +46,6 @@ class CardSeeder extends Seeder
       }
     }
 
-    DB::table('card')->insert($dbCards);
+    DB::table('cards')->insert($dbCards);
   }
 }
