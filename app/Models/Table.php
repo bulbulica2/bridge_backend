@@ -26,21 +26,21 @@ class Table extends Model
 
   public function north(): HasOne
   {
-    return $this->hasOne(User::class, 'id', 'north_id');
+    return $this->hasOne(User::class, 'id', 'north');
   }
 
   public function east(): HasOne
   {
-    return $this->hasOne(User::class, 'id', 'east_id');
+    return $this->hasOne(User::class, 'id', 'east');
   }
 
   public function south(): HasOne
   {
-    return $this->hasOne(User::class, 'id', 'south_id');
+    return $this->hasOne(User::class, 'id', 'south');
   }
 
   public function west(): HasOne
   {
-    return $this->hasOne(User::class, 'id', 'west_id');
+    return $this->hasOne(User::class, 'id', 'west');
   }
 }

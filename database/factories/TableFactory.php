@@ -27,10 +27,10 @@ class TableFactory extends Factory
       'name' => $this->faker->name(),
       'created_by' => $owner->id,
       'moderated_by' => $owner->id,
-      'north_id' => $owner->id,
-      'east_id' => $guest1->id,
-      'west_id' => $guest2->id,
-      'south_id' => $guest3->id,
+      'north' => $owner->id,
+      'east' => $guest1->id,
+      'west' => $guest2->id,
+      'south' => $guest3->id,
     ];
   }
 }

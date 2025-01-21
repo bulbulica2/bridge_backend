@@ -72,23 +72,23 @@ class User extends Authenticatable
     }
 
     $rows = DB::table('tables')
-      ->where('north_id', $this->id)
-      ->orWhere('east_id', $this->id)
-      ->orWhere('south_id', $this->id)
-      ->orWhere('west_id', $this->id)
+      ->where('north', $this->id)
+      ->orWhere('east', $this->id)
+      ->orWhere('south', $this->id)
+      ->orWhere('west', $this->id)
       ->get();
 
     return $rows->map(function ($row) {
       $seat = null;
 
       if ($this->id == $row->north_id) {
-        $seat = 'north_id';
+        $seat = 'north';
       } elseif ($this->id == $row->east_id) {
-        $seat = 'east_id';
+        $seat = 'east';
       } elseif ($this->id == $row->south_id) {
-        $seat = 'south_id';
+        $seat = 'south';
       } elseif ($this->id == $row->west_id) {
-        $seat = 'west_id';
+        $seat = 'west';
       }
 
       return (object) array_merge((array) $row, ['user_seat' => $seat]);
