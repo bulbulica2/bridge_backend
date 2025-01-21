@@ -10,11 +10,11 @@ return new class extends Migration {
    */
   public function up(): void
   {
-    Schema::create('boards_cards', function (Blueprint $table) {
-      $table->foreignId('board_id')->constrained('boards');
-      $table->foreignId('card_id')->constrained('cards');
-      $table->integer('position');
-      $table->string('position_name');
+    Schema::create('table_user_history', function (Blueprint $table) {
+      $table->foreignId('table_id')->constrained('tables');
+      $table->foreignId('user_id')->constrained('users');
+      $table->integer('action');
+      $table->timestamps();
     });
   }
 
@@ -23,6 +23,6 @@ return new class extends Migration {
    */
   public function down(): void
   {
-    Schema::dropIfExists('boards_cards');
+    Schema::dropIfExists('table_user_history');
   }
 };
