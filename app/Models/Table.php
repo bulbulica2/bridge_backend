@@ -2,26 +2,45 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Table extends Model
 {
-  protected $table = 'table';
+  use HasFactory;
 
   protected $fillable = [
     'name',
-    'created_by',
-    'current_board_id'
   ];
 
-  public function user(): BelongsToMany
+  public function createdBy(): HasOne
   {
-    return $this->belongsToMany(User::class);
+    return $this->hasOne(User::class, 'id', 'created_by');
   }
 
-  public function board(): BelongsToMany
+  public function moderatedBy(): HasOne
   {
-    return $this->belongsToMany(Board::class);
+    return $this->hasOne(User::class, 'id', 'moderated_by');
+  }
+
+  public function north(): HasOne
+  {
+    return $this->hasOne(User::class, 'id', 'north');
+  }
+
+  public function east(): HasOne
+  {
+    return $this->hasOne(User::class, 'id', 'east');
+  }
+
+  public function south(): HasOne
+  {
+    return $this->hasOne(User::class, 'id', 'south');
+  }
+
+  public function west(): HasOne
+  {
+    return $this->hasOne(User::class, 'id', 'west');
   }
 }

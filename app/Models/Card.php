@@ -7,8 +7,6 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class Card extends Model
 {
-  protected $table = 'card';
-
   protected $fillable = [
     'suit',
     'suit_name',
@@ -16,7 +14,7 @@ class Card extends Model
     'rank_name',
   ];
 
-  public function board(): BelongsToMany
+  public function boards(): BelongsToMany
   {
     return $this->belongsToMany(Board::class);
   }

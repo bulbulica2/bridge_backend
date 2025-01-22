@@ -11,10 +11,9 @@ return new class extends Migration {
   public function up(): void
   {
     Schema::create('board_card', function (Blueprint $table) {
-      $table->foreignId('board_id')->constrained('board');
-      $table->foreignId('card_id')->constrained('card');
-      $table->integer('position');
-      $table->string('position_name');
+      $table->foreignId('board_id')->constrained('boards');
+      $table->foreignId('card_id')->constrained('cards');
+      $table->string('position');
     });
   }
 

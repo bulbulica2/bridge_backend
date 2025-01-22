@@ -10,9 +10,10 @@ return new class extends Migration {
    */
   public function up(): void
   {
+    // ON HOLD!!!
     Schema::create('table_user', function (Blueprint $table) {
       $table->foreignId('user_id')->constrained();
-      $table->foreignId('table_id')->constrained('table');
+      $table->foreignId('table_id')->constrained('tables');
     });
   }
 

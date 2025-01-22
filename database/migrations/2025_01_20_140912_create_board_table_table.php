@@ -11,8 +11,13 @@ return new class extends Migration {
   public function up(): void
   {
     Schema::create('board_table', function (Blueprint $table) {
-      $table->foreignId('board_id')->constrained('board');
-      $table->foreignId('table_id')->constrained('table');
+      $table->foreignId('board_id')->constrained('boards');
+      $table->foreignId('table_id')->constrained('tables');
+      $table->foreignId('declarer_id')->constrained('users');
+      $table->integer('contract');
+      $table->string('axis');
+      $table->string('result');
+      $table->integer('score');
       $table->timestamp('played_at')->nullable();
     });
   }
