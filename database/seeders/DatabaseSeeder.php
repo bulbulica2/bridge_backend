@@ -2,6 +2,7 @@
 
 namespace Database\Seeders;
 
+use App\Models\Board;
 use App\Models\Table;
 use App\Models\User;
 use Illuminate\Database\Seeder;
@@ -39,7 +40,8 @@ class DatabaseSeeder extends Seeder
   {
     $this->call([
       CardSeeder::class,
-      BoardSeeder::class,
     ]);
+
+    Board::factory(100)->create();
   }
 }

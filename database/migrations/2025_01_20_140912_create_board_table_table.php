@@ -15,6 +15,7 @@ return new class extends Migration {
       $table->foreignId('table_id')->constrained('tables');
       $table->foreignId('declarer_id')->constrained('users');
       $table->integer('contract');
+      $table->string('axis');
       $table->string('result');
       $table->integer('score');
       $table->timestamp('played_at')->nullable();

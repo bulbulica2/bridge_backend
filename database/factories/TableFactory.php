@@ -2,6 +2,7 @@
 
 namespace Database\Factories;
 
+use App\Models\Board;
 use App\Models\Table;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\Factory;
@@ -22,15 +23,17 @@ class TableFactory extends Factory
     $guest1 = User::factory()->create();
     $guest2 = User::factory()->create();
     $guest3 = User::factory()->create();
+    $board = Board::factory()->create();
 
     return [
       'name' => $this->faker->name(),
       'created_by' => $owner->id,
       'moderated_by' => $owner->id,
+      'current_board_id' => $board->id,
       'north' => $owner->id,
-      'east' => $guest1->id,
-      'west' => $guest2->id,
-      'south' => $guest3->id,
+      'east' => rand(0,1) ? $guest1->id : null,
+      'west' => rand(0,1) ? $guest2->id : null,
+      'south' => rand(0,1) ? $guest3->id : null,
     ];
   }
 }
