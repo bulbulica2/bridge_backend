@@ -19,7 +19,7 @@ class Board extends Model
     return $this->belongsToMany(Table::class);
   }
 
-  public function card(): BelongsToMany
+  public function cards(): BelongsToMany
   {
     return $this->belongsToMany(Card::class);
   }

@@ -14,7 +14,7 @@ class Card extends Model
     'rank_name',
   ];
 
-  public function board(): BelongsToMany
+  public function boards(): BelongsToMany
   {
     return $this->belongsToMany(Board::class);
   }
