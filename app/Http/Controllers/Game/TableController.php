@@ -1,13 +1,21 @@
 <?php
 
-namespace App\Http\Controllers;
+namespace App\Http\Controllers\Game;
 
+use App\Http\Controllers\BaseController;
 use App\Models\Table;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
-class TableController extends Controller
+class TableController extends BaseController
 {
+  public function index(): JsonResponse
+  {
+    $tables = Table::all();
+
+    return $this->sendResponse($tables, 'Tables retrieved successfully.');
+  }
+
   public function createNewTable(Request $request): JsonResponse
   {
     $validated = $request->validate([
@@ -30,12 +38,18 @@ class TableController extends Controller
     ], 201);
   }
 
-  public function index($name)
+  public function createRandomTable(): JsonResponse
   {
     $table = new Table([
-      'name' => "$name"
+      'name' => fake()->company,
     ]);
+
     $table->save();
-//    return csrf_token();
+
+    return response()->json([
+      'success' => true,
+      'message' => 'Table created successfully.',
+      'data' => $table
+    ], 201);
   }
 }
