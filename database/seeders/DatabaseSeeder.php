@@ -4,6 +4,7 @@ namespace Database\Seeders;
 
 use App\Models\Board;
 use App\Models\User;
+use Database\Seeders\game\BidSeeder;
 use Database\Seeders\game\BoardSeeder;
 use Database\Seeders\game\CardSeeder;
 use Database\Seeders\game\TableSeeder;
@@ -33,6 +34,7 @@ class DatabaseSeeder extends Seeder
       BoardSeeder::class,
       UserSeeder::class,
       TableSeeder::class,
+      BidSeeder::class,
     ]);
 
     User::factory(2)->unverified()->create();
@@ -44,6 +46,7 @@ class DatabaseSeeder extends Seeder
   {
     $this->call([
       CardSeeder::class,
+      BidSeeder::class,
     ]);
 
     Board::factory(100)->create();
