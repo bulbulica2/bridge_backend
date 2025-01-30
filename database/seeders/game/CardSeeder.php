@@ -2,6 +2,7 @@
 
 namespace Database\Seeders\game;
 
+use App\auxiliary\Suits;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 
@@ -12,15 +13,8 @@ class CardSeeder extends Seeder
    */
   public function run(): void
   {
-    $suitName = array(
-      1 => 'clubs',
-      2 => 'diamonds',
-      3 => 'hearts',
-      4 => 'spades',
-    );
-
     $dbCards = array();
-    for ($suits = 1; $suits <= 4; $suits++) {
+    foreach (Suits::SUIT_NAME as $suitAbbreviation => $suitFullName) {
       for ($cards = 2; $cards <= 15; $cards++) {
         if ($cards == 11) {
           continue;
@@ -38,8 +32,8 @@ class CardSeeder extends Seeder
           $rankName = $cards;
         }
         $dbCards[] = [
-          'suit' => $suits,
-          'suit_name' => $suitName[$suits],
+          'suit' => $suitAbbreviation,
+          'suit_name' => $suitFullName,
           'rank' => $cards,
           'rank_name' => $rankName,
         ];

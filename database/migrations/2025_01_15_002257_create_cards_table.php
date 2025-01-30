@@ -13,7 +13,7 @@ return new class extends Migration {
   {
     Schema::create('cards', function (Blueprint $table) {
       $table->id();
-      $table->integer('suit');
+      $table->string('suit');
       $table->string('suit_name');
       $table->integer('rank');
       $table->string('rank_name')->nullable();

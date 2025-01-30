@@ -16,6 +16,6 @@ class Card extends Model
 
   public function boards(): BelongsToMany
   {
-    return $this->belongsToMany(Board::class);
+    return $this->belongsToMany(Board::class)->withPivot('position');
   }
 }
