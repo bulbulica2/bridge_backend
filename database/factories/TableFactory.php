@@ -29,11 +29,11 @@ class TableFactory extends Factory
       'name' => $this->faker->name(),
       'created_by' => $owner->id,
       'moderated_by' => $owner->id,
-      'current_board_id' => $board->id,
-      'north' => $owner->id,
-      'east' => rand(0,1) ? $guest1->id : null,
-      'west' => rand(0,1) ? $guest2->id : null,
-      'south' => rand(0,1) ? $guest3->id : null,
+      'board_id' => $board->id,
+      'north_id' => $owner->id,
+      'east_id' => rand(0,1) ? $guest1->id : null,
+      'west_id' => rand(0,1) ? $guest2->id : null,
+      'south_id' => rand(0,1) ? $guest3->id : null,
     ];
   }
 }

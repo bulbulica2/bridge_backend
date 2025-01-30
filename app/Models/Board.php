@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Board extends Model
 {
@@ -14,9 +15,9 @@ class Board extends Model
     'position',
   ];
 
-  public function table(): BelongsToMany
+  public function table(): HasMany
   {
-    return $this->belongsToMany(Table::class);
+    return $this->hasMany(Table::class);
   }
 
   public function cards(): BelongsToMany

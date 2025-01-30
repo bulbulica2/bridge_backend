@@ -1,6 +1,6 @@
 <?php
 
-namespace Database\Seeders;
+namespace Database\Seeders\game;
 
 use Illuminate\Database\Seeder;
 

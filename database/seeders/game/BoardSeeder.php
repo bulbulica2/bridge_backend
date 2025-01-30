@@ -1,6 +1,6 @@
 <?php
 
-namespace Database\Seeders;
+namespace Database\Seeders\game;
 
 use App\Models\Board;
 use App\Models\Card;
@@ -21,16 +21,25 @@ class BoardSeeder extends Seeder
     Board::all()->each(function ($board) use (&$finalRowValues) {
       $shuffledCards = $this->shuffleCards($board->id);
       $finalRowValues = array_merge($finalRowValues, $shuffledCards);
+      // over 5000 records perform a table insert
       if (count($finalRowValues) > 5000) {
         DB::table('board_card')->insert($finalRowValues);
         $finalRowValues = [];
       }
     });
 
-    // remaining items
+    // remaining items and perform table insert
     if ($finalRowValues) {
       DB::table('board_card')->insert($finalRowValues);
     }
+  }
+
+  public function shuffleNewBoards()
+  {
+    // TODO: populate the new crated boards with values
+//    Board::whereHas('')->each(function ($board) {
+//
+//    });
   }
 
   private function shuffleCards(int $boardId): array
@@ -40,7 +49,7 @@ class BoardSeeder extends Seeder
     shuffle($cardIds);
 
     // Define the positions
-    $positions = ['north', 'south', 'west', 'east'];
+    $positions = ['N', 'S', 'W', 'E'];
 
     // Split the shuffled cards into 4 groups of 13
     $tableRows = [];

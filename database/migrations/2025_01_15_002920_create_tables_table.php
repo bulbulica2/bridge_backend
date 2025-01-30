@@ -15,11 +15,11 @@ return new class extends Migration {
       $table->string('name');
       $table->foreignId('created_by')->nullable()->constrained('users');
       $table->foreignId('moderated_by')->nullable()->constrained('users');
-      $table->foreignId('current_board_id')->nullable()->constrained('boards');
-      $table->foreignId('north')->nullable()->constrained('users');
-      $table->foreignId('east')->nullable()->constrained('users');
-      $table->foreignId('south')->nullable()->constrained('users');
-      $table->foreignId('west')->nullable()->constrained('users');
+      $table->foreignId('board_id')->nullable()->constrained('boards');
+      $table->foreignId('north_id')->nullable()->constrained('users');
+      $table->foreignId('east_id')->nullable()->constrained('users');
+      $table->foreignId('south_id')->nullable()->constrained('users');
+      $table->foreignId('west_Id')->nullable()->constrained('users');
       $table->timestamps();
     });
   }

@@ -3,8 +3,11 @@
 namespace Database\Seeders;
 
 use App\Models\Board;
-use App\Models\Table;
 use App\Models\User;
+use Database\Seeders\game\BoardSeeder;
+use Database\Seeders\game\CardSeeder;
+use Database\Seeders\game\TableSeeder;
+use Database\Seeders\game\UserSeeder;
 use Illuminate\Database\Seeder;
 
 class DatabaseSeeder extends Seeder
@@ -29,11 +32,12 @@ class DatabaseSeeder extends Seeder
       CardSeeder::class,
       BoardSeeder::class,
       UserSeeder::class,
+      TableSeeder::class,
     ]);
 
     User::factory(2)->unverified()->create();
     User::factory()->isAdmin()->create();
-    Table::factory(5)->create();
+//    Table::factory(5)->create();
   }
 
   private function runProductionEnvironmentSeeder(): void
