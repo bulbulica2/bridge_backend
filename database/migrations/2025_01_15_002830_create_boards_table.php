@@ -12,6 +12,7 @@ return new class extends Migration {
   {
     Schema::create('boards', function (Blueprint $table) {
       $table->id();
+      $table->string('vulnerable');
       $table->timestamps();
     });
   }

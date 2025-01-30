@@ -12,7 +12,7 @@ class Board extends Model
   use HasFactory;
 
   protected $fillable = [
-    'position',
+    'vulnerable',
   ];
 
   public function table(): HasMany
@@ -22,6 +22,6 @@ class Board extends Model
 
   public function cards(): BelongsToMany
   {
-    return $this->belongsToMany(Card::class);
+    return $this->belongsToMany(Card::class)->withPivot('position');
   }
 }

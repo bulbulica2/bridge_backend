@@ -17,8 +17,19 @@ class BoardFactory extends Factory
    */
   public function definition(): array
   {
+    $randomVulnerability = rand(0,3);
+    if ($randomVulnerability === 0) {
+      $vulnerable = '-';
+    } else if ($randomVulnerability === 1) {
+      $vulnerable = 'N-S';
+    } else if ($randomVulnerability === 2) {
+      $vulnerable = 'E-W';
+    } else {
+      $vulnerable = 'N-S, E-W';
+    }
+
     return [
-      //
+      'vulnerable' => $vulnerable,
     ];
   }
 }
