@@ -12,6 +12,13 @@ class Table extends Model
 
   protected $fillable = [
     'name',
+    'created_by',
+    'moderated_by',
+    'north_id',
+    'south_id',
+    'west_id',
+    'east_id',
+    'board_id',
   ];
 
   public function createdBy(): HasOne
