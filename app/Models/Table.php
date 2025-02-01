@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Table extends Model
@@ -54,5 +55,10 @@ class Table extends Model
   public function board(): HasOne
   {
     return $this->hasOne(Board::class, 'id', 'board_id');
+  }
+
+  public function auctions(): HasMany
+  {
+    return $this->hasMany(Auction::class, 'table_id', 'id');
   }
 }

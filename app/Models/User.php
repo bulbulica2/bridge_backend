@@ -6,6 +6,7 @@ use Database\Factories\UserFactory;
 use Exception;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Facades\DB;
@@ -60,6 +61,11 @@ class User extends Authenticatable
   public function moderatedTable(): BelongsTo
   {
     return $this->belongsTo(Table::class, 'id', 'moderated_by');
+  }
+
+  public function auctions(): HasMany
+  {
+    return $this->hasMany(Auction::class);
   }
 
   /**

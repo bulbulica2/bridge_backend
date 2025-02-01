@@ -15,7 +15,7 @@ class Board extends Model
     'vulnerable',
   ];
 
-  public function table(): HasMany
+  public function tables(): HasMany
   {
     return $this->hasMany(Table::class);
   }
@@ -23,5 +23,10 @@ class Board extends Model
   public function cards(): BelongsToMany
   {
     return $this->belongsToMany(Card::class)->withPivot('position');
+  }
+
+  public function auctions(): HasMany
+  {
+    return $this->hasMany(Auction::class);
   }
 }
