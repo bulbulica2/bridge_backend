@@ -9,13 +9,12 @@ class Card extends Model
 {
   protected $fillable = [
     'suit',
-    'suit_name',
     'rank',
     'rank_name',
   ];
 
   public function boards(): BelongsToMany
   {
-    return $this->belongsToMany(Board::class)->withPivot('position');
+    return $this->belongsToMany(Board::class)->withPivot('seat');
   }
 }

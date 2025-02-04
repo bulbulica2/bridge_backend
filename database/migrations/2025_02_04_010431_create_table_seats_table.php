@@ -1,6 +1,6 @@
 <?php
 
-use App\auxiliary\Vulnerability;
+use App\auxiliary\Seats;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
@@ -11,9 +11,11 @@ return new class extends Migration {
    */
   public function up(): void
   {
-    Schema::create('boards', function (Blueprint $table) {
+    Schema::create('table_seats', function (Blueprint $table) {
       $table->id();
-      $table->enum('vulnerable', Vulnerability::VULNERABILITY_SEATS);
+      $table->foreignId('table_id')->constrained('tables')->onDelete('cascade');
+      $table->foreignId('user_id')->constrained('users')->onDelete('cascade');
+      $table->enum('seat', Seats::SEATS);
       $table->timestamps();
     });
   }
@@ -23,6 +25,6 @@ return new class extends Migration {
    */
   public function down(): void
   {
-    Schema::dropIfExists('boards');
+    Schema::dropIfExists('table_seats');
   }
 };

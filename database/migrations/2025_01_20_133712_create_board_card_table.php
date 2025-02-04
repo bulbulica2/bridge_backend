@@ -1,5 +1,6 @@
 <?php
 
+use App\auxiliary\Seats;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
@@ -13,7 +14,7 @@ return new class extends Migration {
     Schema::create('board_card', function (Blueprint $table) {
       $table->foreignId('board_id')->constrained('boards');
       $table->foreignId('card_id')->constrained('cards');
-      $table->string('position');
+      $table->enum('seat', Seats::SEATS);
     });
   }
 

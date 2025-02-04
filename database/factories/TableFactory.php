@@ -19,21 +19,10 @@ class TableFactory extends Factory
    */
   public function definition(): array
   {
-    $owner = User::factory()->create();
-    $guest1 = User::factory()->create();
-    $guest2 = User::factory()->create();
-    $guest3 = User::factory()->create();
-    $board = Board::factory()->create();
-
     return [
-      'name' => $this->faker->name(),
-      'created_by' => $owner->id,
-      'moderated_by' => $owner->id,
-      'board_id' => $board->id,
-      'north_id' => $owner->id,
-      'east_id' => rand(0,1) ? $guest1->id : null,
-      'west_id' => rand(0,1) ? $guest2->id : null,
-      'south_id' => rand(0,1) ? $guest3->id : null,
+      'created_by' => User::factory(),
+      'moderated_by' => User::factory(),
+      'board_id' => Board::factory(),
     ];
   }
 }

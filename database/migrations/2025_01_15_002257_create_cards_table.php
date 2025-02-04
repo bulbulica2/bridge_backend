@@ -1,8 +1,8 @@
 <?php
 
+use App\auxiliary\Suits;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration {
@@ -13,8 +13,7 @@ return new class extends Migration {
   {
     Schema::create('cards', function (Blueprint $table) {
       $table->id();
-      $table->string('suit');
-      $table->string('suit_name');
+      $table->enum('suit', array_keys(Suits::SUIT_NAME));
       $table->integer('rank');
       $table->string('rank_name')->nullable();
     });

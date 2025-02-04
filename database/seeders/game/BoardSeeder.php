@@ -54,12 +54,12 @@ class BoardSeeder extends Seeder
     // Split the shuffled cards into 4 groups of 13
     $tableRows = [];
     foreach (array_chunk($cardIds, 13) as $index => $chunk) {
-      $position = $positions[$index];
+      $seat = $positions[$index];
       foreach ($chunk as $cardId) {
         $tableRows[] = [
           'board_id' => $boardId,
           'card_id' => $cardId,
-          'position' => $position,
+          'seat' => $seat,
         ];
       }
     }

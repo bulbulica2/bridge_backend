@@ -14,7 +14,7 @@ class CardSeeder extends Seeder
   public function run(): void
   {
     $dbCards = array();
-    foreach (Suits::SUIT_NAME as $suitAbbreviation => $suitFullName) {
+    foreach (array_keys(Suits::SUIT_NAME) as $suitAbbreviation) {
       for ($cards = 2; $cards <= 15; $cards++) {
         if ($cards == 11) {
           continue;
@@ -33,7 +33,6 @@ class CardSeeder extends Seeder
         }
         $dbCards[] = [
           'suit' => $suitAbbreviation,
-          'suit_name' => $suitFullName,
           'rank' => $cards,
           'rank_name' => $rankName,
         ];

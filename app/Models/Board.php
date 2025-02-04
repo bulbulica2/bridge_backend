@@ -22,7 +22,7 @@ class Board extends Model
 
   public function cards(): BelongsToMany
   {
-    return $this->belongsToMany(Card::class)->withPivot('position');
+    return $this->belongsToMany(Card::class)->withPivot('seat');
   }
 
   public function auctions(): HasMany

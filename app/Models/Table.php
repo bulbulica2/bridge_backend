@@ -4,61 +4,53 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Database\Eloquent\Relations\HasManyThrough;
 
 class Table extends Model
 {
   use HasFactory;
 
   protected $fillable = [
-    'name',
     'created_by',
     'moderated_by',
-    'north_id',
-    'south_id',
-    'west_id',
-    'east_id',
     'board_id',
   ];
 
-  public function createdBy(): HasOne
+  public function creator(): BelongsTo
   {
-    return $this->hasOne(User::class, 'id', 'created_by');
+    return $this->belongsTo(User::class, 'created_by');
   }
 
-  public function moderatedBy(): HasOne
+  public function moderator(): BelongsTo
   {
-    return $this->hasOne(User::class, 'id', 'moderated_by');
+    return $this->belongsTo(User::class, 'moderated_by');
   }
 
-  public function north(): HasOne
+  public function board(): BelongsTo
   {
-    return $this->hasOne(User::class, 'id', 'north_id');
+    return $this->belongsTo(Board::class);
   }
 
-  public function east(): HasOne
+  public function seats(): HasMany
   {
-    return $this->hasOne(User::class, 'id', 'east_id');
-  }
-
-  public function south(): HasOne
-  {
-    return $this->hasOne(User::class, 'id', 'south_id');
-  }
-
-  public function west(): HasOne
-  {
-    return $this->hasOne(User::class, 'id', 'west_id');
-  }
-
-  public function board(): HasOne
-  {
-    return $this->hasOne(Board::class, 'id', 'board_id');
+    return $this->hasMany(TableSeat::class);
   }
 
   public function auctions(): HasMany
   {
-    return $this->hasMany(Auction::class, 'table_id', 'id');
+    return $this->hasMany(Auction::class);
+  }
+
+//  public function cardplays(): HasMany
+//  {
+//    return $this->hasMany(Cardplay::class);
+//  }
+
+  // not tested yet
+  public function players(): HasManyThrough
+  {
+    return $this->hasManyThrough(User::class, TableSeat::class, 'table_id', 'id', 'id', 'user_id');
   }
 }
