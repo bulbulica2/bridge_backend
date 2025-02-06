@@ -22,10 +22,10 @@ class AuctionFactory extends Factory
   public function definition(): array
   {
     return [
-      'board_id' => Board::inRandomOrder()->first()->id ?? Board::factory(),
-      'table_id' => Table::inRandomOrder()->first()->id ?? Table::factory(),
-      'user_id' => User::inRandomOrder()->first()->id ?? User::factory(),
-      'bid_id' => Bid::inRandomOrder()->first()->id ?? null,
+      'board_id' => Board::factory(),
+      'table_id' => Table::factory(),
+      'user_id' => User::factory(),
+      'bid_id' => fn () => Bid::inRandomOrder()->value('id'),
       'seat' => $this->faker->randomElement(['N', 'S', 'W', 'E']),
     ];
   }
