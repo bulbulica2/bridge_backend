@@ -29,28 +29,33 @@ class DatabaseSeeder extends Seeder
 
   protected function runLocalEnvironmentSeeder(): void
   {
+    $this->defaultEnvironmentSeed();
+
     $this->call([
-      CardSeeder::class,
       BoardSeeder::class,
       UserSeeder::class,
       TableSeeder::class,
-      BidSeeder::class,
+      TableSeatSeeder::class,
       AuctionSeeder::class,
       CardplaySeeder::class,
     ]);
 
     User::factory(2)->unverified()->create();
     User::factory()->isAdmin()->create();
-//    Table::factory(5)->create();
   }
 
   private function runProductionEnvironmentSeeder(): void
+  {
+    $this->defaultEnvironmentSeed();
+
+    Board::factory(100)->create();
+  }
+
+  private function defaultEnvironmentSeed(): void
   {
     $this->call([
       CardSeeder::class,
       BidSeeder::class,
     ]);
-
-    Board::factory(100)->create();
   }
 }
