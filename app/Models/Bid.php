@@ -10,6 +10,7 @@ class Bid extends Model
   protected $fillable = [
     'suit',
     'suit_name',
+    'special',
   ];
 
   public function auctions(): HasMany

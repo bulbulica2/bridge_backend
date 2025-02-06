@@ -26,9 +26,7 @@ class AuctionFactory extends Factory
       'table_id' => Table::inRandomOrder()->first()->id ?? Table::factory(),
       'user_id' => User::inRandomOrder()->first()->id ?? User::factory(),
       'bid_id' => Bid::inRandomOrder()->first()->id ?? null,
-      'seat' => $this->faker->randomElement(['north', 'south', 'west', 'east']),
-      'created_at' => now(),
-      'updated_at' => now(),
+      'seat' => $this->faker->randomElement(['N', 'S', 'W', 'E']),
     ];
   }
 }
