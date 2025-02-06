@@ -36,6 +36,7 @@ class DatabaseSeeder extends Seeder
       TableSeeder::class,
       BidSeeder::class,
       AuctionSeeder::class,
+      CardplaySeeder::class,
     ]);
 
     User::factory(2)->unverified()->create();

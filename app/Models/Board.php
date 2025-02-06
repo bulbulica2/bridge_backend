@@ -29,4 +29,9 @@ class Board extends Model
   {
     return $this->hasMany(Auction::class);
   }
+
+  public function cardPlay(): HasMany
+  {
+    return $this->hasMany(CardPlay::class);
+  }
 }

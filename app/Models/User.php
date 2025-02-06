@@ -75,4 +75,9 @@ class User extends Authenticatable
   {
     return $this->hasMany(Auction::class);
   }
+
+  public function cardPlays(): HasMany
+  {
+    return $this->hasMany(CardPlay::class);
+  }
 }

@@ -43,10 +43,10 @@ class Table extends Model
     return $this->hasMany(Auction::class);
   }
 
-//  public function cardplays(): HasMany
-//  {
-//    return $this->hasMany(Cardplay::class);
-//  }
+  public function cardPlays(): HasMany
+  {
+    return $this->hasMany(Cardplay::class);
+  }
 
   // not tested yet
   public function players(): HasManyThrough

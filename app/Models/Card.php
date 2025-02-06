@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Card extends Model
 {
@@ -16,5 +17,10 @@ class Card extends Model
   public function boards(): BelongsToMany
   {
     return $this->belongsToMany(Board::class)->withPivot('seat');
+  }
+
+  public function cardPlays(): HasMany
+  {
+    return $this->hasMany(CardPlay::class);
   }
 }
