@@ -2,15 +2,17 @@
 
 namespace Database\Factories;
 
+use App\Models\Auction;
+use App\Models\Bid;
 use App\Models\Board;
 use App\Models\Table;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\Factory;
 
 /**
- * @extends Factory<Table>
+ * @extends Factory<Auction>
  */
-class TableFactory extends Factory
+class AuctionFactory extends Factory
 {
   /**
    * Define the model's default state.
@@ -20,9 +22,11 @@ class TableFactory extends Factory
   public function definition(): array
   {
     return [
-      'created_by' => User::factory(),
-      'moderated_by' => User::factory(),
       'board_id' => Board::factory(),
+      'table_id' => Table::factory(),
+      'user_id' => User::factory(),
+      'bid_id' => fn () => Bid::inRandomOrder()->value('id'),
+      'seat' => $this->faker->randomElement(['N', 'S', 'W', 'E']),
     ];
   }
 }

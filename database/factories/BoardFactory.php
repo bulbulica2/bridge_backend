@@ -2,6 +2,7 @@
 
 namespace Database\Factories;
 
+use App\auxiliary\Vulnerability;
 use App\Models\Board;
 use Illuminate\Database\Eloquent\Factories\Factory;
 
@@ -18,7 +19,7 @@ class BoardFactory extends Factory
   public function definition(): array
   {
     return [
-      //
+      'vulnerable' => $this->faker->randomElement(Vulnerability::VULNERABILITY_SEATS),
     ];
   }
 }

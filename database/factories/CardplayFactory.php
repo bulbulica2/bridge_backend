@@ -3,14 +3,15 @@
 namespace Database\Factories;
 
 use App\Models\Board;
+use App\Models\Card;
 use App\Models\Table;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\Factory;
 
 /**
- * @extends Factory<Table>
+ * @extends \Illuminate\Database\Eloquent\Factories\Factory<\App\Models\Cardplay>
  */
-class TableFactory extends Factory
+class CardplayFactory extends Factory
 {
   /**
    * Define the model's default state.
@@ -20,9 +21,12 @@ class TableFactory extends Factory
   public function definition(): array
   {
     return [
-      'created_by' => User::factory(),
-      'moderated_by' => User::factory(),
+      'user_id' => User::factory(),
+      'table_id' => Table::factory(),
       'board_id' => Board::factory(),
+      'card_id' => Card::factory(),
+      'round' => $this->faker->numberBetween(1,13),
+      'order' => $this->faker->numberBetween(1,4),
     ];
   }
 }

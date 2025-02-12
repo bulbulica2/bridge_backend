@@ -2,15 +2,15 @@
 
 namespace Database\Factories;
 
-use App\Models\Board;
 use App\Models\Table;
+use App\Models\TableSeat;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\Factory;
 
 /**
- * @extends Factory<Table>
+ * @extends Factory<TableSeat>
  */
-class TableFactory extends Factory
+class TableSeatFactory extends Factory
 {
   /**
    * Define the model's default state.
@@ -20,9 +20,9 @@ class TableFactory extends Factory
   public function definition(): array
   {
     return [
-      'created_by' => User::factory(),
-      'moderated_by' => User::factory(),
-      'board_id' => Board::factory(),
+      'table_id' => Table::factory(),
+      'user_id' => User::factory(),
+      'seat' => $this->faker->randomElement(['N', 'S', 'E', 'W']),
     ];
   }
 }

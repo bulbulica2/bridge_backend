@@ -10,16 +10,16 @@ return new class extends Migration {
    */
   public function up(): void
   {
-    Schema::create('board_table', function (Blueprint $table) {
-      $table->foreignId('board_id')->constrained('boards');
-      $table->foreignId('table_id')->constrained('tables');
-      $table->foreignId('declarer_id')->constrained('users');
-      $table->integer('contract');
-      $table->string('axis');
-      $table->string('result');
-      $table->integer('score');
-      $table->timestamp('played_at')->nullable();
-    });
+//    Schema::create('board_table', function (Blueprint $table) {
+//      $table->foreignId('board_id')->constrained('boards');
+//      $table->foreignId('table_id')->constrained('tables');
+//      $table->foreignId('declarer_id')->constrained('users');
+//      $table->integer('contract');
+//      $table->string('axis');
+//      $table->string('result');
+//      $table->integer('score');
+//      $table->timestamp('played_at')->nullable();
+//    });
   }
 
   /**
@@ -27,6 +27,6 @@ return new class extends Migration {
    */
   public function down(): void
   {
-    Schema::dropIfExists('board_table');
+//    Schema::dropIfExists('board_table');
   }
 };

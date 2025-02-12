@@ -3,8 +3,12 @@
 namespace Database\Seeders;
 
 use App\Models\Board;
-use App\Models\Table;
 use App\Models\User;
+use Database\Seeders\game\BidSeeder;
+use Database\Seeders\game\BoardSeeder;
+use Database\Seeders\game\CardSeeder;
+use Database\Seeders\game\TableSeeder;
+use Database\Seeders\game\UserSeeder;
 use Illuminate\Database\Seeder;
 
 class DatabaseSeeder extends Seeder
@@ -25,23 +29,33 @@ class DatabaseSeeder extends Seeder
 
   protected function runLocalEnvironmentSeeder(): void
   {
+    $this->defaultEnvironmentSeed();
+
     $this->call([
-      CardSeeder::class,
       BoardSeeder::class,
       UserSeeder::class,
+      TableSeeder::class,
+      TableSeatSeeder::class,
+      AuctionSeeder::class,
+      CardplaySeeder::class,
     ]);
 
     User::factory(2)->unverified()->create();
     User::factory()->isAdmin()->create();
-    Table::factory(5)->create();
   }
 
   private function runProductionEnvironmentSeeder(): void
   {
-    $this->call([
-      CardSeeder::class,
-    ]);
+    $this->defaultEnvironmentSeed();
 
     Board::factory(100)->create();
+  }
+
+  private function defaultEnvironmentSeed(): void
+  {
+    $this->call([
+      CardSeeder::class,
+      BidSeeder::class,
+    ]);
   }
 }

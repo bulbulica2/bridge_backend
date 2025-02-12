@@ -3,12 +3,11 @@
 namespace App\Models;
 
 use Database\Factories\UserFactory;
-use Exception;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasManyThrough;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
-use Illuminate\Support\Facades\DB;
 
 class User extends Authenticatable
 {
@@ -52,46 +51,33 @@ class User extends Authenticatable
     ];
   }
 
-  public function createdTable(): BelongsTo
+  public function createdTables()
   {
-    return $this->belongsTo(Table::class, 'id', 'created_by');
+    return $this->hasMany(Table::class, 'created_by');
   }
 
-  public function moderatedTable(): BelongsTo
+  public function moderatedTables()
   {
-    return $this->belongsTo(Table::class, 'id', 'moderated_by');
+    return $this->hasOne(Table::class, 'moderated_by');
   }
 
-  /**
-   * @throws Exception
-   */
-  public function seatPosition()
+  public function seats(): HasMany
   {
-    if (!$this->id) {
-      throw new \Exception("User ID is not set in the instance.");
-    }
+    return $this->hasMany(TableSeat::class);
+  }
 
-    $rows = DB::table('tables')
-      ->where('north', $this->id)
-      ->orWhere('east', $this->id)
-      ->orWhere('south', $this->id)
-      ->orWhere('west', $this->id)
-      ->get();
+  public function tables(): HasManyThrough
+  {
+    return $this->hasManyThrough(Table::class, TableSeat::class, 'user_id', 'id', 'id', 'table_id');
+  }
 
-    return $rows->map(function ($row) {
-      $seat = null;
+  public function auctions(): HasMany
+  {
+    return $this->hasMany(Auction::class);
+  }
 
-      if ($this->id == $row->north_id) {
-        $seat = 'north';
-      } elseif ($this->id == $row->east_id) {
-        $seat = 'east';
-      } elseif ($this->id == $row->south_id) {
-        $seat = 'south';
-      } elseif ($this->id == $row->west_id) {
-        $seat = 'west';
-      }
-
-      return (object) array_merge((array) $row, ['user_seat' => $seat]);
-    });
+  public function cardPlays(): HasMany
+  {
+    return $this->hasMany(CardPlay::class);
   }
 }

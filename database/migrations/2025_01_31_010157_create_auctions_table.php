@@ -10,10 +10,14 @@ return new class extends Migration {
    */
   public function up(): void
   {
-    // ON HOLD!!!
-    Schema::create('table_user', function (Blueprint $table) {
-      $table->foreignId('user_id')->constrained();
+    Schema::create('auctions', function (Blueprint $table) {
+      $table->id();
+      $table->foreignId('board_id')->constrained('boards');
       $table->foreignId('table_id')->constrained('tables');
+      $table->foreignId('user_id')->constrained('users');
+      $table->foreignId('bid_id')->constrained('bids');
+      $table->string('seat');
+      $table->timestamps();
     });
   }
 
@@ -22,6 +26,6 @@ return new class extends Migration {
    */
   public function down(): void
   {
-    Schema::dropIfExists('table_user');
+    Schema::dropIfExists('auctions');
   }
 };

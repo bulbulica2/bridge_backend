@@ -12,14 +12,9 @@ return new class extends Migration {
   {
     Schema::create('tables', function (Blueprint $table) {
       $table->id();
-      $table->string('name');
       $table->foreignId('created_by')->nullable()->constrained('users');
       $table->foreignId('moderated_by')->nullable()->constrained('users');
-      $table->foreignId('current_board_id')->nullable()->constrained('boards');
-      $table->foreignId('north')->nullable()->constrained('users');
-      $table->foreignId('east')->nullable()->constrained('users');
-      $table->foreignId('south')->nullable()->constrained('users');
-      $table->foreignId('west')->nullable()->constrained('users');
+      $table->foreignId('board_id')->nullable()->constrained('boards');
       $table->timestamps();
     });
   }

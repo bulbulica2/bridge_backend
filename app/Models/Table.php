@@ -4,43 +4,53 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasManyThrough;
 
 class Table extends Model
 {
   use HasFactory;
 
   protected $fillable = [
-    'name',
+    'created_by',
+    'moderated_by',
+    'board_id',
   ];
 
-  public function createdBy(): HasOne
+  public function creator(): BelongsTo
   {
-    return $this->hasOne(User::class, 'id', 'created_by');
+    return $this->belongsTo(User::class, 'created_by');
   }
 
-  public function moderatedBy(): HasOne
+  public function moderator(): BelongsTo
   {
-    return $this->hasOne(User::class, 'id', 'moderated_by');
+    return $this->belongsTo(User::class, 'moderated_by');
   }
 
-  public function north(): HasOne
+  public function board(): BelongsTo
   {
-    return $this->hasOne(User::class, 'id', 'north');
+    return $this->belongsTo(Board::class);
   }
 
-  public function east(): HasOne
+  public function seats(): HasMany
   {
-    return $this->hasOne(User::class, 'id', 'east');
+    return $this->hasMany(TableSeat::class);
   }
 
-  public function south(): HasOne
+  public function auctions(): HasMany
   {
-    return $this->hasOne(User::class, 'id', 'south');
+    return $this->hasMany(Auction::class);
   }
 
-  public function west(): HasOne
+  public function cardPlays(): HasMany
   {
-    return $this->hasOne(User::class, 'id', 'west');
+    return $this->hasMany(Cardplay::class);
+  }
+
+  // not tested yet
+  public function players(): HasManyThrough
+  {
+    return $this->hasManyThrough(User::class, TableSeat::class, 'table_id', 'id', 'id', 'user_id');
   }
 }

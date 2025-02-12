@@ -5,22 +5,33 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Board extends Model
 {
   use HasFactory;
 
   protected $fillable = [
-    'position',
+    'vulnerable',
   ];
 
-  public function table(): BelongsToMany
+  public function tables(): HasMany
   {
-    return $this->belongsToMany(Table::class);
+    return $this->hasMany(Table::class);
   }
 
   public function cards(): BelongsToMany
   {
-    return $this->belongsToMany(Card::class);
+    return $this->belongsToMany(Card::class)->withPivot('seat');
+  }
+
+  public function auctions(): HasMany
+  {
+    return $this->hasMany(Auction::class);
+  }
+
+  public function cardPlay(): HasMany
+  {
+    return $this->hasMany(CardPlay::class);
   }
 }
