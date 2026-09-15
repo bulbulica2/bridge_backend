@@ -2,6 +2,7 @@
 
 namespace Database\Factories;
 
+use App\auxiliary\Seats;
 use App\Models\Auction;
 use App\Models\Bid;
 use App\Models\Board;
@@ -26,7 +27,7 @@ class AuctionFactory extends Factory
       'table_id' => Table::factory(),
       'user_id' => User::factory(),
       'bid_id' => fn () => Bid::inRandomOrder()->value('id'),
-      'seat' => $this->faker->randomElement(['N', 'S', 'W', 'E']),
+      'seat' => $this->faker->randomElement(Seats::SEATS),
     ];
   }
 }

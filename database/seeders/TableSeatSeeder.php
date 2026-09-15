@@ -2,6 +2,7 @@
 
 namespace Database\Seeders;
 
+use App\auxiliary\Seats;
 use App\Models\Table;
 use App\Models\TableSeat;
 use App\Models\User;
@@ -17,15 +18,14 @@ class TableSeatSeeder extends Seeder
     $tables = Table::all();
 
     foreach ($tables as $table) {
-      $users = User::inRandomOrder()->limit(4)->get();
-
-      $seats = ['N', 'S', 'E', 'W'];
+      // a user can only sit at one table, so some tables may stay partly empty
+      $users = User::whereDoesntHave('seats')->inRandomOrder()->limit(4)->get();
 
       foreach ($users as $index => $user) {
         TableSeat::create([
           'table_id' => $table->id,
           'user_id' => $user->id,
-          'seat' => $seats[$index] ?? null,
+          'seat' => Seats::SEATS[$index],
         ]);
       }
     }

@@ -17,6 +17,11 @@ return new class extends Migration {
       $table->foreignId('user_id')->constrained('users')->onDelete('cascade');
       $table->enum('seat', Seats::SEATS);
       $table->timestamps();
+
+      // one user per seat at a table
+      $table->unique(['table_id', 'seat']);
+      // a user sits at one table at a time
+      $table->unique('user_id');
     });
   }
 

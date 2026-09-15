@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -13,10 +14,24 @@ class Table extends Model
   use HasFactory;
 
   protected $fillable = [
+    'name',
     'created_by',
     'moderated_by',
     'board_id',
+    'closed_at',
   ];
+
+  protected function casts(): array
+  {
+    return [
+      'closed_at' => 'datetime',
+    ];
+  }
+
+  public function scopeOpen(Builder $query): void
+  {
+    $query->whereNull('closed_at');
+  }
 
   public function creator(): BelongsTo
   {
@@ -46,6 +61,12 @@ class Table extends Model
   public function cardPlays(): HasMany
   {
     return $this->hasMany(Cardplay::class);
+  }
+
+  // boards this table has played
+  public function boardPlays(): HasMany
+  {
+    return $this->hasMany(BoardTable::class);
   }
 
   // not tested yet

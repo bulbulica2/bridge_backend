@@ -13,7 +13,11 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-      Debugbar::enable();
+      // enable() bypasses debugbar's own "off when testing" check, and the
+      // injected HTML breaks assertNoContent(), so only force it on locally
+      if ($this->app->environment('local')) {
+        Debugbar::enable();
+      }
     }
 
     /**

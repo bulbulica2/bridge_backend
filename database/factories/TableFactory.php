@@ -20,9 +20,17 @@ class TableFactory extends Factory
   public function definition(): array
   {
     return [
+      'name' => fake()->company(),
       'created_by' => User::factory(),
       'moderated_by' => User::factory(),
       'board_id' => Board::factory(),
     ];
+  }
+
+  public function closed(): static
+  {
+    return $this->state(fn(array $attributes) => [
+      'closed_at' => now(),
+    ]);
   }
 }

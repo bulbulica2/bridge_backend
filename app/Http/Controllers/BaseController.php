@@ -19,4 +19,13 @@ class BaseController extends Controller
       'data' => $data,
     ], $code);
   }
+
+  protected function sendError(string $message, int $code, array $errors = []): JsonResponse
+  {
+    return response()->json([
+      'status' => $code,
+      'message' => $message,
+      'data' => $errors,
+    ], $code);
+  }
 }
