@@ -36,4 +36,10 @@ class Board extends Model
   {
     return $this->hasMany(Cardplay::class);
   }
+
+  // every table that has played this board
+  public function plays(): HasMany
+  {
+    return $this->hasMany(BoardTable::class);
+  }
 }

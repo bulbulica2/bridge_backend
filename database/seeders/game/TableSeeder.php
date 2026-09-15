@@ -2,6 +2,7 @@
 
 namespace Database\Seeders\game;
 
+use App\Models\Board;
 use App\Models\Table;
 use Illuminate\Database\Seeder;
 
@@ -12,7 +13,10 @@ class TableSeeder extends Seeder
      */
     public function run(): void
     {
-      Table::factory(5)->create();
+      // use boards BoardSeeder dealt, so seeded plays have cards
+      Table::factory(5)->create([
+        'board_id' => fn() => Board::has('cards')->inRandomOrder()->value('id'),
+      ]);
 
       $table = Table::find(2);
 

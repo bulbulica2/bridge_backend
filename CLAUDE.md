@@ -64,7 +64,9 @@ vendor/bin/pint                   # format (Laravel Pint, default preset)
   namespace `App\auxiliary`): `Suits`, `Seats` (`N,E,S,W`, clockwise),
   `Vulnerability`. Migrations build DB enum columns from these, so changing
   them requires a migration. `Seats::dealerForBoard(int)` and
-  `Vulnerability::forBoard(int)` implement the standard 16-board cycle.
+  `Vulnerability::forBoard(int)` implement the standard 16-board cycle;
+  `Seats::next()` (left-hand seat, opening leader) and `Seats::partner()`
+  (dummy).
 - **Static reference data vs per-game data**:
   - `cards` (52 rows) and `bids` (38 calls: `P`,`X`,`XX` then `1C`…`7NT` in
     rank order) are seeded once and never duplicated. Card `rank` is 2–10,
@@ -79,9 +81,16 @@ vendor/bin/pint                   # format (Laravel Pint, default preset)
     surface as `QueryException` SQLSTATE 23000.
   - `auctions` = one row per call, `cardplays` = one row per card played
     (`round` = trick 1–13, `order` = 1–4, `seat` = hand the card came from,
-    since declarer plays dummy's cards), both keyed by board+table+user.
-  - `board_table` (per-table result/score) migration exists but is fully
-    commented out — planned, not built.
+    since declarer plays dummy's cards, `won_trick` = winning card of the
+    trick), both keyed by board+table+user. A card is played once per
+    board+table, and each round+order once.
+  - `board_table` (model `BoardTable`) = one playing of a board at a table:
+    board history (`unique(board_id, table_id)` — a table never replays a
+    board), the saved auction result (`contract_bid_id`, `doubled`,
+    `declarer_seat`, `declarer_id`), `tricks_won`, `score` and timestamps.
+    `board_table_seats` snapshots who sat where, for the board-selection
+    rule in `../bridge_docs/GAME-RULES.md` §8. `tables.board_id` is only the
+    current board.
 - **Seeding** (`DatabaseSeeder`) branches on `APP_ENV`: `production` seeds only
   cards, bids and 100 boards; anything else also seeds a fixed admin user
   (`email@email.com` / `pass`), random users, tables, seats, auctions and card

@@ -63,6 +63,12 @@ class Table extends Model
     return $this->hasMany(Cardplay::class);
   }
 
+  // boards this table has played
+  public function boardPlays(): HasMany
+  {
+    return $this->hasMany(BoardTable::class);
+  }
+
   // not tested yet
   public function players(): HasManyThrough
   {

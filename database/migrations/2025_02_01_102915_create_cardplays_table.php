@@ -21,7 +21,14 @@ return new class extends Migration {
       $table->enum('seat', Seats::SEATS);
       $table->integer('round');
       $table->integer('order');
+      // set on the winning card when the 4th card of the trick is played
+      $table->boolean('won_trick')->default(false);
       $table->timestamps();
+
+      // a card is played once per playing (board + table)
+      $table->unique(['board_id', 'table_id', 'card_id']);
+      // one card per trick position
+      $table->unique(['board_id', 'table_id', 'round', 'order']);
     });
   }
 

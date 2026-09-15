@@ -80,4 +80,10 @@ class User extends Authenticatable
   {
     return $this->hasMany(Cardplay::class);
   }
+
+  // which boards the user played, and from which seat
+  public function playedSeats(): HasMany
+  {
+    return $this->hasMany(BoardTableSeat::class);
+  }
 }

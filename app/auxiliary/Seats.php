@@ -26,4 +26,31 @@ class Seats
 
     return self::SEATS[($boardNumber - 1) % 4];
   }
+
+  /**
+   * Next seat clockwise, i.e. the player on this seat's left (declarer's left makes the opening lead).
+   */
+  public static function next(string $seat): string
+  {
+    return self::SEATS[(self::indexOf($seat) + 1) % 4];
+  }
+
+  /**
+   * The seat opposite (declarer's partner is dummy).
+   */
+  public static function partner(string $seat): string
+  {
+    return self::SEATS[(self::indexOf($seat) + 2) % 4];
+  }
+
+  private static function indexOf(string $seat): int
+  {
+    $index = array_search($seat, self::SEATS, true);
+
+    if ($index === false) {
+      throw new InvalidArgumentException("Unknown seat '$seat'.");
+    }
+
+    return $index;
+  }
 }

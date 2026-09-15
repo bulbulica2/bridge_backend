@@ -20,7 +20,15 @@ class Cardplay extends Model
     'seat',
     'round',
     'order',
+    'won_trick',
   ];
+
+  protected function casts(): array
+  {
+    return [
+      'won_trick' => 'boolean',
+    ];
+  }
 
   public function user(): BelongsTo
   {
