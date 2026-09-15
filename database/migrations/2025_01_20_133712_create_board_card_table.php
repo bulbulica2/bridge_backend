@@ -15,6 +15,9 @@ return new class extends Migration {
       $table->foreignId('board_id')->constrained('boards');
       $table->foreignId('card_id')->constrained('cards');
       $table->enum('seat', Seats::SEATS);
+
+      // a card appears only once per deal
+      $table->primary(['board_id', 'card_id']);
     });
   }
 

@@ -1,5 +1,6 @@
 <?php
 
+use App\auxiliary\Seats;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
@@ -16,6 +17,8 @@ return new class extends Migration {
       $table->foreignId('table_id')->constrained('tables');
       $table->foreignId('board_id')->constrained('boards');
       $table->foreignId('card_id')->constrained('cards');
+      // the hand the card came from; declarer also plays dummy's cards
+      $table->enum('seat', Seats::SEATS);
       $table->integer('round');
       $table->integer('order');
       $table->timestamps();

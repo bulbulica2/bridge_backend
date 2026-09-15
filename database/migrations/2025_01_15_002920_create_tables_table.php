@@ -12,9 +12,12 @@ return new class extends Migration {
   {
     Schema::create('tables', function (Blueprint $table) {
       $table->id();
+      $table->string('name')->nullable();
       $table->foreignId('created_by')->nullable()->constrained('users');
       $table->foreignId('moderated_by')->nullable()->constrained('users');
       $table->foreignId('board_id')->nullable()->constrained('boards');
+      // a table is open while closed_at is null
+      $table->timestamp('closed_at')->nullable();
       $table->timestamps();
     });
   }

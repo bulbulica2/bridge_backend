@@ -2,6 +2,7 @@
 
 namespace Database\Factories;
 
+use App\auxiliary\Seats;
 use App\Models\Board;
 use App\Models\Card;
 use App\Models\Table;
@@ -24,7 +25,9 @@ class CardplayFactory extends Factory
       'user_id' => User::factory(),
       'table_id' => Table::factory(),
       'board_id' => Board::factory(),
-      'card_id' => Card::factory(),
+      // Card has no factory; cards are static reference data
+      'card_id' => fn() => Card::inRandomOrder()->value('id'),
+      'seat' => $this->faker->randomElement(Seats::SEATS),
       'round' => $this->faker->numberBetween(1,13),
       'order' => $this->faker->numberBetween(1,4),
     ];

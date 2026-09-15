@@ -2,6 +2,7 @@
 
 namespace Database\Factories;
 
+use App\auxiliary\Seats;
 use App\Models\Table;
 use App\Models\TableSeat;
 use App\Models\User;
@@ -22,7 +23,7 @@ class TableSeatFactory extends Factory
     return [
       'table_id' => Table::factory(),
       'user_id' => User::factory(),
-      'seat' => $this->faker->randomElement(['N', 'S', 'E', 'W']),
+      'seat' => $this->faker->randomElement(Seats::SEATS),
     ];
   }
 }

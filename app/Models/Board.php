@@ -12,6 +12,8 @@ class Board extends Model
   use HasFactory;
 
   protected $fillable = [
+    'number',
+    'dealer',
     'vulnerable',
   ];
 
@@ -32,6 +34,6 @@ class Board extends Model
 
   public function cardPlay(): HasMany
   {
-    return $this->hasMany(CardPlay::class);
+    return $this->hasMany(Cardplay::class);
   }
 }

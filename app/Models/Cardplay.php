@@ -17,6 +17,7 @@ class Cardplay extends Model
     'table_id',
     'board_id',
     'card_id',
+    'seat',
     'round',
     'order',
   ];
