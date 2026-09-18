@@ -51,14 +51,16 @@ class User extends Authenticatable
     ];
   }
 
-  public function createdTables()
+  public function createdTables(): HasMany
   {
     return $this->hasMany(Table::class, 'created_by');
   }
 
-  public function moderatedTables()
+  // a user can moderate several tables: they keep created_by on the tables
+  // they made, and pick up moderated_by when a moderator leaves
+  public function moderatedTables(): HasMany
   {
-    return $this->hasOne(Table::class, 'moderated_by');
+    return $this->hasMany(Table::class, 'moderated_by');
   }
 
   public function seats(): HasMany

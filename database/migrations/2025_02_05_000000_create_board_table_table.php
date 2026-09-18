@@ -15,7 +15,9 @@ return new class extends Migration {
     Schema::create('board_table', function (Blueprint $table) {
       $table->id();
       $table->foreignId('board_id')->constrained('boards');
-      $table->foreignId('table_id')->constrained('tables');
+      // null once the table has been deleted: the playing outlives the table,
+      // so a user's board history survives (see board_table_seats below)
+      $table->foreignId('table_id')->nullable()->constrained('tables')->nullOnDelete();
 
       // auction result, null until the auction ends (passed out = ended with no contract)
       $table->foreignId('contract_bid_id')->nullable()->constrained('bids');

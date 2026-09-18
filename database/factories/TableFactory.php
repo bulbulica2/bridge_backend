@@ -26,11 +26,4 @@ class TableFactory extends Factory
       'board_id' => Board::factory(),
     ];
   }
-
-  public function closed(): static
-  {
-    return $this->state(fn(array $attributes) => [
-      'closed_at' => now(),
-    ]);
-  }
 }
