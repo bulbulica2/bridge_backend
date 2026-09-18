@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\auxiliary\Seats;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -13,24 +14,35 @@ class Table extends Model
 {
   use HasFactory;
 
+  /**
+   * How many active tables one user may have created at a time.
+   */
+  public const MAX_ACTIVE_PER_CREATOR = 3;
+
   protected $fillable = [
     'name',
     'created_by',
     'moderated_by',
     'board_id',
-    'closed_at',
   ];
 
-  protected function casts(): array
+  /**
+   * A table is active while somebody still sits at it. The last player to
+   * leave deletes it, so an inactive table only exists mid-transaction.
+   */
+  public function scopeActive(Builder $query): void
   {
-    return [
-      'closed_at' => 'datetime',
-    ];
+    $query->whereHas('seats');
   }
 
-  public function scopeOpen(Builder $query): void
+  /**
+   * Seats nobody sits in, in N/E/S/W order.
+   *
+   * @return list<string>
+   */
+  public function freeSeats(): array
   {
-    $query->whereNull('closed_at');
+    return array_values(array_diff(Seats::SEATS, $this->seats->pluck('seat')->all()));
   }
 
   public function creator(): BelongsTo

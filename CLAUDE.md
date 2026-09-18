@@ -56,10 +56,20 @@ vendor/bin/pint                   # format (Laravel Pint, default preset)
 - **Controllers**: game controllers are in `app/Http/Controllers/Game/` and
   extend `BaseController`, whose `sendResponse($data, $message, $code)` and
   `sendError($message, $code, $errors = [])` both return
-  `{status, message, data}` — use them for new endpoints.
-  `TableController::createNewTable/createRandomTable` bypass them and are
-  unrouted. `AuctionController` (outside `Game/`) and `Game\BidController`
-  are empty.
+  `{status, message, data}` — use them for new endpoints. Validation goes in
+  `app/Http/Requests/<Area>/` form requests. `TableController` has
+  `index/store/show` and `TableSeatController` has `store`/`destroy`
+  (join/leave a seat), all behind the `auth` middleware. Both serialise a
+  table through `App\Http\Resources\TableResource` (model fields plus
+  `free_seats`), so every table payload has the same shape. `AuctionController`
+  (outside `Game/`) and `Game\BidController` are empty.
+- **Seating**: all seat logic lives in `App\Services\TableSeatService`.
+  `seat()` locks the table row, checks valid/free/not-seated, and turns a
+  unique-index SQLSTATE 23000 into `App\Exceptions\SeatUnavailableException`.
+  `leave()` frees the user's seat, deletes the table if that was the last
+  player, and otherwise passes `moderated_by` to the earliest-joined remaining
+  player. Controllers map the exception to `sendError(..., 409)`. Reuse the
+  service for join/move instead of re-checking.
 - **Domain enums** are plain constant classes in `app/auxiliary/` (lowercase
   namespace `App\auxiliary`): `Suits`, `Seats` (`N,E,S,W`, clockwise),
   `Vulnerability`. Migrations build DB enum columns from these, so changing
@@ -74,11 +84,18 @@ vendor/bin/pint                   # format (Laravel Pint, default preset)
   - A `Board` is a deal with `number`, `dealer` and `vulnerable`
     (`BoardFactory` derives the last two from `number`); its hands are the
     `board_card` pivot (`seat` column, primary key `board_id+card_id`).
-  - A `Table` has an optional `name`, points at one `board_id`, and is
-    **open** while `closed_at` is null (`Table::open()` scope).
+  - A `Table` has an optional `name` and points at one `board_id`. It is
+    **active** while at least one `table_seats` row points at it
+    (`Table::active()` scope). There is no closed/archived state: the last
+    player to leave deletes the row. A user may hold at most
+    `Table::MAX_ACTIVE_PER_CREATOR` (3) active tables as `created_by`.
+    `created_by` never moves, which is why it is what that limit counts;
+    `moderated_by` does move, to the earliest-joined player left when the
+    current moderator leaves.
   - `table_seats` puts users in seats: `unique(table_id, seat)` and
     `unique(user_id)` — one user per seat, one table per user. Violations
-    surface as `QueryException` SQLSTATE 23000.
+    surface as `QueryException` SQLSTATE 23000. Leaving means deleting the
+    row, which is how a user frees themselves to create or join elsewhere.
   - `auctions` = one row per call, `cardplays` = one row per card played
     (`round` = trick 1–13, `order` = 1–4, `seat` = hand the card came from,
     since declarer plays dummy's cards, `won_trick` = winning card of the
@@ -90,14 +107,21 @@ vendor/bin/pint                   # format (Laravel Pint, default preset)
     `declarer_seat`, `declarer_id`), `tricks_won`, `score` and timestamps.
     `board_table_seats` snapshots who sat where, for the board-selection
     rule in `../bridge_docs/GAME-RULES.md` §8. `tables.board_id` is only the
-    current board.
+    current board. Because tables are deleted rather than closed,
+    `board_table.table_id` is nullable and `nullOnDelete`: a playing and its
+    `board_table_seats` snapshot outlive the table, so a user's board history
+    survives. `auctions.table_id` and `cardplays.table_id` cascade instead —
+    the call-by-call and card-by-card logs die with the table, while the
+    contract and result saved on `board_table` remain.
 - **Seeding** (`DatabaseSeeder`) branches on `APP_ENV`: `production` seeds only
   cards, bids and 100 boards; anything else also seeds a fixed admin user
   (`email@email.com` / `pass`), random users, tables, seats, auctions and card
   plays. Seeders are split between `database/seeders/game/` (namespace
   `Database\Seeders\game`) and the root seeders folder. Seeded auctions and
   card plays are random and don't follow bridge rules. `TableSeatSeeder`
-  only seats users without a seat, so some tables stay partly empty.
+  only seats users without a seat, so some tables stay partly or completely
+  empty. A completely empty seeded table is **inactive** — a state the API
+  itself never leaves behind, since leaving deletes the table.
 - No game rules are enforced anywhere yet (turn order, bid legality, follow
   suit, trick winner, scoring).
 

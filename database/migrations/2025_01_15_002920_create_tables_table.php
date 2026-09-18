@@ -16,8 +16,8 @@ return new class extends Migration {
       $table->foreignId('created_by')->nullable()->constrained('users');
       $table->foreignId('moderated_by')->nullable()->constrained('users');
       $table->foreignId('board_id')->nullable()->constrained('boards');
-      // a table is open while closed_at is null
-      $table->timestamp('closed_at')->nullable();
+      // a table lives only while someone sits at it; the last player to leave
+      // deletes it, so there is no closed/archived state
       $table->timestamps();
     });
   }

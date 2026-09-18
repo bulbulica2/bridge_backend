@@ -14,7 +14,9 @@ return new class extends Migration {
     Schema::create('cardplays', function (Blueprint $table) {
       $table->id();
       $table->foreignId('user_id')->constrained('users');
-      $table->foreignId('table_id')->constrained('tables');
+      // the card-by-card log dies with the table; the result it produced is
+      // saved on board_table, which outlives the table
+      $table->foreignId('table_id')->constrained('tables')->cascadeOnDelete();
       $table->foreignId('board_id')->constrained('boards');
       $table->foreignId('card_id')->constrained('cards');
       // the hand the card came from; declarer also plays dummy's cards

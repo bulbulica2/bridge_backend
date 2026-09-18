@@ -2,54 +2,68 @@
 
 namespace App\Http\Controllers\Game;
 
+use App\Exceptions\SeatUnavailableException;
 use App\Http\Controllers\BaseController;
+use App\Http\Requests\Table\StoreTableRequest;
+use App\Http\Resources\TableResource;
 use App\Models\Table;
+use App\Services\TableSeatService;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class TableController extends BaseController
 {
   public function index(): JsonResponse
   {
-    $tables = Table::all();
+    $tables = Table::with('seats.user')
+      ->orderByDesc('created_at')
+      ->orderByDesc('id')
+      ->get();
 
-    return $this->sendResponse($tables, 'Tables retrieved successfully.');
+    return $this->sendResponse(TableResource::collection($tables), 'Tables retrieved successfully.');
   }
 
-  public function createNewTable(Request $request): JsonResponse
+  public function store(StoreTableRequest $request, TableSeatService $seatService): JsonResponse
   {
-    $validated = $request->validate([
-      'name' => 'required|string|max:255',
-    ]);
+    $user = $request->user();
 
-//    $user = Auth::user();
+    if ($user->seats()->exists()) {
+      return $this->sendError('You are already seated at a table. Leave it before creating another.', 409);
+    }
 
-    $table = new Table([
-      'name' => $validated['name'],
-//      'created_by' => $user->id,
-    ]);
+    if ($user->createdTables()->active()->count() >= Table::MAX_ACTIVE_PER_CREATOR) {
+      return $this->sendError(
+        'You already have ' . Table::MAX_ACTIVE_PER_CREATOR . ' active tables.',
+        409
+      );
+    }
 
-    $table->save();
+    try {
+      $table = DB::transaction(function () use ($request, $seatService, $user) {
+        $table = Table::create([
+          'name' => $request->validated('name'),
+          'created_by' => $user->id,
+          'moderated_by' => $user->id,
+          'board_id' => null,
+        ]);
 
-    return response()->json([
-      'success' => true,
-      'message' => 'Table created successfully.',
-      'data' => $table
-    ], 201);
+        $seatService->seat($table, $user, $request->validated('seat', 'N'));
+
+        return $table;
+      });
+    } catch (SeatUnavailableException $e) {
+      return $this->sendError($e->getMessage(), 409);
+    }
+
+    $table->load('seats.user');
+
+    return $this->sendResponse(new TableResource($table), 'Table created successfully.', 201);
   }
 
-  public function createRandomTable(): JsonResponse
+  public function show(Table $table): JsonResponse
   {
-    $table = new Table([
-      'name' => fake()->company,
-    ]);
+    $table->load('seats.user');
 
-    $table->save();
-
-    return response()->json([
-      'success' => true,
-      'message' => 'Table created successfully.',
-      'data' => $table
-    ], 201);
+    return $this->sendResponse(new TableResource($table), 'Table retrieved successfully.');
   }
 }

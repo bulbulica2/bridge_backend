@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Game\CardController;
 use App\Http\Controllers\Game\TableController;
+use App\Http\Controllers\Game\TableSeatController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
@@ -14,11 +15,14 @@ Route::resource('cards', CardController::class, [
 ]);
 
 // table
-Route::resource('tables', TableController::class, [
-  'only' => ['index'],
-]);
-//Route::get('/tables', fn() => Table::all());
-//Route::get('/table/{table}', fn(Table $table) => $table);
-//Route::get('/table', [TableController::class, 'createRandomTable']); // ->middleware('auth:sanctum')
+Route::middleware('auth')->group(function () {
+  Route::resource('tables', TableController::class, [
+    'only' => ['index', 'store', 'show'],
+  ]);
+
+  // take or give up a seat at an existing table
+  Route::post('tables/{table}/seats', [TableSeatController::class, 'store'])->name('tables.seats.store');
+  Route::delete('tables/{table}/seats', [TableSeatController::class, 'destroy'])->name('tables.seats.destroy');
+});
 
 require __DIR__ . '/auth.php';
