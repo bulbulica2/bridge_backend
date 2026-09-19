@@ -59,7 +59,8 @@ vendor/bin/pint                   # format (Laravel Pint, default preset)
   `{status, message, data}` — use them for new endpoints. Validation goes in
   `app/Http/Requests/<Area>/` form requests. `TableController` has
   `index/store/show` and `TableSeatController` has `store`/`destroy`
-  (join/leave a seat), all behind the `auth` middleware. Both serialise a
+  (join/leave a seat) plus `storeUser` (`POST /tables/{table}/seats/users`,
+  a manager seats someone else), all behind the `auth` middleware. Both serialise a
   table through `App\Http\Resources\TableResource` (model fields plus
   `free_seats`), so every table payload has the same shape. `AuctionController`
   (outside `Game/`) and `Game\BidController` are empty.
@@ -69,7 +70,12 @@ vendor/bin/pint                   # format (Laravel Pint, default preset)
   `leave()` frees the user's seat, deletes the table if that was the last
   player, and otherwise passes `moderated_by` to the earliest-joined remaining
   player. Controllers map the exception to `sendError(..., 409)`. Reuse the
-  service for join/move instead of re-checking.
+  service for join/move instead of re-checking; pass `seat()`'s optional `$by`
+  (the acting user) when seating someone else, so the error names "that user".
+- **Authorization**: `App\Policies\TablePolicy::manage` (auto-discovered) is
+  true for a table's `created_by`, its `moderated_by`, or any `is_admin`
+  user. Check it in the form request's `authorize()` so non-managers get 403
+  before validation. Reuse it for kicking.
 - **Domain enums** are plain constant classes in `app/auxiliary/` (lowercase
   namespace `App\auxiliary`): `Suits`, `Seats` (`N,E,S,W`, clockwise),
   `Vulnerability`. Migrations build DB enum columns from these, so changing

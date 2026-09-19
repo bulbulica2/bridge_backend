@@ -4,9 +4,11 @@ namespace App\Http\Controllers\Game;
 
 use App\Exceptions\SeatUnavailableException;
 use App\Http\Controllers\BaseController;
+use App\Http\Requests\Table\AddUserToSeatRequest;
 use App\Http\Requests\Table\JoinTableRequest;
 use App\Http\Resources\TableResource;
 use App\Models\Table;
+use App\Models\User;
 use App\Services\TableSeatService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -27,6 +29,25 @@ class TableSeatController extends BaseController
     $table->load('seats.user');
 
     return $this->sendResponse(new TableResource($table), 'Seat taken successfully.', 201);
+  }
+
+  /**
+   * Seat another user at a free seat. Only a table manager gets this far:
+   * the form request checks `TablePolicy::manage`.
+   */
+  public function storeUser(AddUserToSeatRequest $request, Table $table, TableSeatService $seatService): JsonResponse
+  {
+    $user = User::findOrFail($request->validated('user_id'));
+
+    try {
+      $seatService->seat($table, $user, $request->validated('seat'), $request->user());
+    } catch (SeatUnavailableException $e) {
+      return $this->sendError($e->getMessage(), 409);
+    }
+
+    $table->load('seats.user');
+
+    return $this->sendResponse(new TableResource($table), 'User seated successfully.', 201);
   }
 
   /**

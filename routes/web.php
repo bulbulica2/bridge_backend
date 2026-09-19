@@ -23,6 +23,9 @@ Route::middleware('auth')->group(function () {
   // take or give up a seat at an existing table
   Route::post('tables/{table}/seats', [TableSeatController::class, 'store'])->name('tables.seats.store');
   Route::delete('tables/{table}/seats', [TableSeatController::class, 'destroy'])->name('tables.seats.destroy');
+
+  // a table manager (creator, moderator or admin) seats another user
+  Route::post('tables/{table}/seats/users', [TableSeatController::class, 'storeUser'])->name('tables.seats.users.store');
 });
 
 require __DIR__ . '/auth.php';

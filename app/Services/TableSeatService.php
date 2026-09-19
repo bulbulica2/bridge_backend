@@ -15,12 +15,15 @@ class TableSeatService
   /**
    * Seat a user at a table, holding every availability check.
    *
+   * `$by` is who asked, when that isn't `$user` themselves (a manager seating
+   * another player); it only changes the wording of the error.
+   *
    * @throws SeatUnavailableException
    */
-  public function seat(Table $table, User $user, string $seat): TableSeat
+  public function seat(Table $table, User $user, string $seat, ?User $by = null): TableSeat
   {
     try {
-      return DB::transaction(function () use ($table, $user, $seat) {
+      return DB::transaction(function () use ($table, $user, $seat, $by) {
         // serialize seat changes on this table
         $table = Table::whereKey($table->getKey())->lockForUpdate()->firstOrFail();
 
@@ -33,7 +36,11 @@ class TableSeatService
         }
 
         if ($user->seats()->exists()) {
-          throw new SeatUnavailableException('You are already seated at a table.');
+          throw new SeatUnavailableException(
+            $by === null || $by->id === $user->id
+              ? 'You are already seated at a table.'
+              : 'That user is already seated at a table.'
+          );
         }
 
         return $table->seats()->create([
