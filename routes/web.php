@@ -26,6 +26,9 @@ Route::middleware('auth')->group(function () {
 
   // a table manager (creator, moderator or admin) seats another user
   Route::post('tables/{table}/seats/users', [TableSeatController::class, 'storeUser'])->name('tables.seats.users.store');
+
+  // quit if it is your own seat, otherwise a manager kicking that player out
+  Route::delete('tables/{table}/seats/{user}', [TableSeatController::class, 'destroyUser'])->name('tables.seats.users.destroy');
 });
 
 require __DIR__ . '/auth.php';

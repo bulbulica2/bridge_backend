@@ -59,34 +59,47 @@ class TableSeatService
   }
 
   /**
-   * Free the seat a user holds at a table.
+   * Free the seat a user holds at a table, whether they quit or a manager
+   * kicked them out.
    *
-   * A table lives only while somebody sits at it, so the last player to leave
+   * `$by` is who asked, when that isn't `$user` themselves (a manager
+   * removing another player); it only changes the wording of the error.
+   *
+   * A table lives only while somebody sits at it, so removing the last player
    * deletes it. If anyone is left and the leaver was the moderator, the role
-   * passes to the player who joined earliest. `created_by` never moves: it is
-   * what the per-creator active-table limit counts.
+   * passes to the creator when they are still seated, otherwise to the player
+   * who joined earliest — a table is only ever managed by one person, and
+   * `TablePolicy::manage` already treats a seated creator as that person.
+   * `created_by` never moves: it is what the per-creator active-table limit
+   * counts.
    *
    * Mutates `$table` (moderator handover) and returns true if the table was
    * deleted.
    *
    * @throws SeatUnavailableException
    */
-  public function leave(Table $table, User $user): bool
+  public function remove(Table $table, User $user, ?User $by = null): bool
   {
-    return DB::transaction(function () use ($table, $user) {
+    return DB::transaction(function () use ($table, $user, $by) {
       // serialize seat changes on this table
       Table::whereKey($table->getKey())->lockForUpdate()->firstOrFail();
 
       $seat = $table->seats()->where('user_id', $user->id)->first();
 
       if ($seat === null) {
-        throw new SeatUnavailableException('You are not seated at this table.');
+        throw new SeatUnavailableException(
+          $by === null || $by->id === $user->id
+            ? 'You are not seated at this table.'
+            : 'That user is not seated at this table.'
+        );
       }
 
       $seat->delete();
 
-      // earliest joiner still at the table, if any
-      $next = $table->seats()->orderBy('created_at')->orderBy('id')->first();
+      // the creator if they are still here, else the earliest joiner still at
+      // the table, if any
+      $next = $table->seats()->where('user_id', $table->created_by)->first()
+        ?? $table->seats()->orderBy('created_at')->orderBy('id')->first();
 
       if ($next === null) {
         $table->delete();

@@ -60,22 +60,32 @@ vendor/bin/pint                   # format (Laravel Pint, default preset)
   `app/Http/Requests/<Area>/` form requests. `TableController` has
   `index/store/show` and `TableSeatController` has `store`/`destroy`
   (join/leave a seat) plus `storeUser` (`POST /tables/{table}/seats/users`,
-  a manager seats someone else), all behind the `auth` middleware. Both serialise a
+  a manager seats someone else) and `destroyUser`
+  (`DELETE /tables/{table}/seats/{user}`, quit if it's your own seat,
+  otherwise a manager kicking that player), all behind the `auth` middleware. Both serialise a
   table through `App\Http\Resources\TableResource` (model fields plus
   `free_seats`), so every table payload has the same shape. `AuctionController`
   (outside `Game/`) and `Game\BidController` are empty.
 - **Seating**: all seat logic lives in `App\Services\TableSeatService`.
   `seat()` locks the table row, checks valid/free/not-seated, and turns a
   unique-index SQLSTATE 23000 into `App\Exceptions\SeatUnavailableException`.
-  `leave()` frees the user's seat, deletes the table if that was the last
-  player, and otherwise passes `moderated_by` to the earliest-joined remaining
-  player. Controllers map the exception to `sendError(..., 409)`. Reuse the
-  service for join/move instead of re-checking; pass `seat()`'s optional `$by`
-  (the acting user) when seating someone else, so the error names "that user".
+  `remove()` frees a seat whether the player quit or was kicked: it deletes
+  the table if that was the last player, and otherwise passes `moderated_by`
+  to the creator if they are still seated, else the earliest-joined remaining
+  player. Controllers map the exception to `sendError(..., 409)` on
+  `DELETE /tables/{table}/seats` and to 404 on
+  `DELETE /tables/{table}/seats/{user}`, where the seat is named in the URL.
+  Reuse the service for join/move instead of re-checking; both `seat()` and
+  `remove()` take an optional `$by` (the acting user) for when it isn't the
+  user being seated or removed, so the error names "that user". Being kicked
+  isn't recorded anywhere — there is no ban list, so a kicked player can
+  rejoin at once.
 - **Authorization**: `App\Policies\TablePolicy::manage` (auto-discovered) is
-  true for a table's `created_by`, its `moderated_by`, or any `is_admin`
-  user. Check it in the form request's `authorize()` so non-managers get 403
-  before validation. Reuse it for kicking.
+  true for a table's `moderated_by`, any `is_admin` user, or its `created_by`
+  **while that creator still holds a seat there** — a table has exactly one
+  manager, and a creator who left has already handed the role on. Check it in
+  the form request's `authorize()` so non-managers get 403 before validation
+  (`AddUserToSeatRequest`, `RemoveUserFromSeatRequest`).
 - **Domain enums** are plain constant classes in `app/auxiliary/` (lowercase
   namespace `App\auxiliary`): `Suits`, `Seats` (`N,E,S,W`, clockwise),
   `Vulnerability`. Migrations build DB enum columns from these, so changing
