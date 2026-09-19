@@ -138,4 +138,30 @@ class JoinLeaveTableTest extends TestCase
     $this->actingAs($user)->postJson("/tables/$other->id/seats", ['seat' => 'W'])
       ->assertCreated();
   }
+
+  public function test_joining_a_table_that_does_not_exist_returns_404(): void
+  {
+    $this->actingAs(User::factory()->create())
+      ->postJson('/tables/999999/seats', ['seat' => 'N'])
+      ->assertNotFound();
+  }
+
+  /**
+   * A table has no "closed" state: the last player out deletes the row. So a
+   * table that is over refuses a join with a 404, not a 409 — there is no
+   * longer a table to be full, taken or closed.
+   */
+  public function test_joining_a_table_the_last_player_left_returns_404(): void
+  {
+    $creator = User::factory()->create();
+    $id = $this->actingAs($creator)->postJson('/tables')->assertCreated()->json('data.id');
+
+    $this->actingAs($creator)->deleteJson("/tables/$id/seats")
+      ->assertOk()
+      ->assertJsonPath('data.table_deleted', true);
+
+    $this->actingAs(User::factory()->create())
+      ->postJson("/tables/$id/seats", ['seat' => 'N'])
+      ->assertNotFound();
+  }
 }
