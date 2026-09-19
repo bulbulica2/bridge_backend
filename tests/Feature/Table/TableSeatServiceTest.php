@@ -63,6 +63,17 @@ class TableSeatServiceTest extends TestCase
     $this->service->seat(Table::factory()->create(['board_id' => null]), $user, 'N');
   }
 
+  public function test_seating_someone_else_who_sits_elsewhere_names_them_in_the_error(): void
+  {
+    $user = User::factory()->create();
+    TableSeat::factory()->create(['user_id' => $user->id, 'table_id' => Table::factory()->create(['board_id' => null])->id]);
+
+    $this->expectException(SeatUnavailableException::class);
+    $this->expectExceptionMessage('That user is already seated at a table.');
+
+    $this->service->seat(Table::factory()->create(['board_id' => null]), $user, 'N', User::factory()->create());
+  }
+
   public function test_leaving_an_otherwise_empty_table_deletes_it(): void
   {
     $table = Table::factory()->create(['board_id' => null]);
