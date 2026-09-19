@@ -6,6 +6,7 @@ use App\Exceptions\SeatUnavailableException;
 use App\Http\Controllers\BaseController;
 use App\Http\Requests\Table\AddUserToSeatRequest;
 use App\Http\Requests\Table\JoinTableRequest;
+use App\Http\Requests\Table\RemoveUserFromSeatRequest;
 use App\Http\Resources\TableResource;
 use App\Models\Table;
 use App\Models\User;
@@ -56,20 +57,56 @@ class TableSeatController extends BaseController
   public function destroy(Request $request, Table $table, TableSeatService $seatService): JsonResponse
   {
     try {
-      $tableDeleted = $seatService->leave($table, $request->user());
+      $tableDeleted = $seatService->remove($table, $request->user());
     } catch (SeatUnavailableException $e) {
       return $this->sendError($e->getMessage(), 409);
     }
 
+    return $this->removalResponse($table, $tableDeleted, 'You left the table.');
+  }
+
+  /**
+   * Remove a named user from their seat: a quit when it is the caller
+   * themselves, otherwise a kick. The form request settles which of the two
+   * it is and whether the caller is allowed to do it.
+   */
+  public function destroyUser(
+    RemoveUserFromSeatRequest $request,
+    Table $table,
+    User $user,
+    TableSeatService $seatService
+  ): JsonResponse {
+    $self = $request->user()->id === $user->id;
+
+    try {
+      $tableDeleted = $seatService->remove($table, $user, $request->user());
+    } catch (SeatUnavailableException $e) {
+      // the seat is addressed in the URL, so "nobody sits there" is a 404
+      return $this->sendError($e->getMessage(), 404);
+    }
+
+    return $this->removalResponse(
+      $table,
+      $tableDeleted,
+      $self ? 'You left the table.' : 'Player removed from the table.'
+    );
+  }
+
+  /**
+   * One response shape for both ways out of a seat: the table as it stands
+   * now, or a note that emptying it deleted it.
+   */
+  private function removalResponse(Table $table, bool $tableDeleted, string $message): JsonResponse
+  {
     if ($tableDeleted) {
       return $this->sendResponse(
         ['table_deleted' => true],
-        'You left the table. Nobody was left, so the table was deleted.'
+        $message . ' Nobody was left, so the table was deleted.'
       );
     }
 
     $table->load('seats.user');
 
-    return $this->sendResponse(new TableResource($table), 'You left the table.');
+    return $this->sendResponse(new TableResource($table), $message);
   }
 }
