@@ -33,7 +33,7 @@ class BoardTableFactory extends Factory
   public function auctionEnded(): static
   {
     return $this->state(fn(array $attributes) => [
-      'contract_bid_id' => fn() => Bid::where('special', false)->inRandomOrder()->value('id'),
+      'contract_bid_id' => fn() => Bid::contracts()->inRandomOrder()->value('id'),
       'doubled' => $this->faker->numberBetween(0, 2),
       'declarer_seat' => $this->faker->randomElement(Seats::SEATS),
       'declarer_id' => User::factory(),
