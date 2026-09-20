@@ -53,14 +53,18 @@ class TableSeatServiceTest extends TestCase
     $this->service->seat($table, User::factory()->create(), 'E');
   }
 
-  public function test_a_user_seated_elsewhere_is_rejected(): void
+  public function test_a_user_seated_elsewhere_is_moved(): void
   {
     $user = User::factory()->create();
-    TableSeat::factory()->create(['user_id' => $user->id, 'table_id' => Table::factory()->create(['board_id' => null])->id]);
+    $old = Table::factory()->create(['board_id' => null]);
+    TableSeat::factory()->create(['table_id' => $old->id, 'seat' => 'E']);
+    TableSeat::factory()->create(['user_id' => $user->id, 'table_id' => $old->id, 'seat' => 'N']);
+    $table = Table::factory()->create(['board_id' => null]);
 
-    $this->expectException(SeatUnavailableException::class);
+    $moved = $this->service->seat($table, $user, 'N');
 
-    $this->service->seat(Table::factory()->create(['board_id' => null]), $user, 'N');
+    $this->assertSame($table->id, $moved->table_id);
+    $this->assertSame(1, $user->seats()->count());
   }
 
   public function test_seating_someone_else_who_sits_elsewhere_names_them_in_the_error(): void

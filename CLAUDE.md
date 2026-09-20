@@ -67,8 +67,17 @@ vendor/bin/pint                   # format (Laravel Pint, default preset)
   `free_seats`), so every table payload has the same shape. `AuctionController`
   (outside `Game/`) and `Game\BidController` are empty.
 - **Seating**: all seat logic lives in `App\Services\TableSeatService`.
-  `seat()` locks the table row, checks valid/free/not-seated, and turns a
-  unique-index SQLSTATE 23000 into `App\Exceptions\SeatUnavailableException`.
+  `seat()` checks the seat is valid and free and turns a unique-index SQLSTATE
+  23000 into `App\Exceptions\SeatUnavailableException`. Taking a seat while
+  already holding one **moves** the player rather than failing:
+  `unique(user_id)` is never relaxed, the old seat goes out through `remove()`
+  (so the old table is deleted if it was the last player, moderation is handed
+  on and an unfinished playing is detached), and a seat change at the *same*
+  table updates the row in place instead, so the table isn't deleted under its
+  only player. A manager (`$by` set to somebody else) may only seat a user who
+  sits nowhere — that case keeps its 409. Both tables are locked lowest-id
+  first so opposite moves can't deadlock. `POST /tables` is the exception: it
+  still 409s a seated creator rather than moving them.
   `remove()` frees a seat whether the player quit or was kicked: it deletes
   the table if that was the last player, and otherwise passes `moderated_by`
   to the creator if they are still seated, else the earliest-joined remaining
