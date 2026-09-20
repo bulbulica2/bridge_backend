@@ -20,7 +20,7 @@ class TableSeatServiceTest extends TestCase
   {
     parent::setUp();
 
-    $this->service = new TableSeatService();
+    $this->service = app(TableSeatService::class);
   }
 
   public function test_seats_a_user_at_a_free_seat(): void

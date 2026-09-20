@@ -2,7 +2,6 @@
 
 namespace Database\Seeders;
 
-use App\Models\Board;
 use App\Models\User;
 use Database\Seeders\game\BidSeeder;
 use Database\Seeders\game\BoardSeeder;
@@ -50,7 +49,9 @@ class DatabaseSeeder extends Seeder
   {
     $this->defaultEnvironmentSeed();
 
-    Board::factory(100)->create();
+    // through BoardSeeder, so production boards are dealt hands rather than
+    // being empty shells the board selection would skip
+    $this->callWith(BoardSeeder::class, ['count' => 100]);
   }
 
   private function defaultEnvironmentSeed(): void
