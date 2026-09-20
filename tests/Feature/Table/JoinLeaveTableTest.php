@@ -50,19 +50,23 @@ class JoinLeaveTableTest extends TestCase
       ->assertJsonPath('message', 'Seat E is already taken.');
   }
 
-  public function test_joining_while_seated_elsewhere_returns_409(): void
+  public function test_joining_while_seated_elsewhere_moves_the_player(): void
   {
     $user = User::factory()->create();
+    $old = Table::factory()->create(['board_id' => null]);
+    TableSeat::factory()->create(['table_id' => $old->id, 'seat' => 'E']);
     TableSeat::factory()->create([
-      'table_id' => Table::factory()->create(['board_id' => null])->id,
+      'table_id' => $old->id,
       'user_id' => $user->id,
       'seat' => 'N',
     ]);
     $table = Table::factory()->create(['board_id' => null]);
 
     $this->actingAs($user)->postJson("/tables/$table->id/seats", ['seat' => 'N'])
-      ->assertStatus(409)
-      ->assertJsonPath('message', 'You are already seated at a table.');
+      ->assertCreated();
+
+    $this->assertDatabaseMissing('table_seats', ['table_id' => $old->id, 'user_id' => $user->id]);
+    $this->assertDatabaseHas('table_seats', ['table_id' => $table->id, 'user_id' => $user->id, 'seat' => 'N']);
   }
 
   public function test_join_requires_a_valid_seat(): void

@@ -19,8 +19,18 @@ class TableSeatService
   /**
    * Seat a user at a table, holding every availability check.
    *
+   * A user holds one seat at a time (`table_seats.unique(user_id)`). Somebody
+   * taking a seat while they already hold one is **moved**: the old seat is
+   * freed in the same transaction, so a client never has to leave and rejoin
+   * and can never end up seated nowhere because the second call failed. A
+   * move that cannot complete — the target seat went to somebody else — rolls
+   * back and leaves them where they were.
+   *
    * `$by` is who asked, when that isn't `$user` themselves (a manager seating
-   * another player); it only changes the wording of the error.
+   * another player). Besides the wording of the error, it decides whether a
+   * move is allowed at all: a manager may seat somebody who sits nowhere, but
+   * pulling a player off a table they chose is not theirs to do, so that stays
+   * a 409. A manager pointing at themselves counts as asking for themselves.
    *
    * Filling the last seat deals the table a board and opens its playing, so
    * this mutates `$table` (`board_id`).
@@ -29,25 +39,45 @@ class TableSeatService
    */
   public function seat(Table $table, User $user, string $seat, ?User $by = null): TableSeat
   {
-    try {
-      return DB::transaction(function () use ($table, $user, $seat, $by) {
-        // serialize seat changes on this table
-        Table::whereKey($table->getKey())->lockForUpdate()->firstOrFail();
+    $self = $by === null || $by->id === $user->id;
 
+    try {
+      return DB::transaction(function () use ($table, $user, $seat, $self) {
         if (!in_array($seat, Seats::SEATS, true)) {
           throw new SeatUnavailableException("Unknown seat '$seat'.");
         }
+
+        $held = $user->seats()->first();
+
+        if ($held !== null && !$self) {
+          throw new SeatUnavailableException('That user is already seated at a table.');
+        }
+
+        // both tables are locked up front, lowest id first, so two players
+        // swapping tables at the same moment can't deadlock each other
+        $this->lockTables($table, $held?->table_id);
 
         if ($table->seats()->where('seat', $seat)->exists()) {
           throw new SeatUnavailableException("Seat $seat is already taken.");
         }
 
-        if ($user->seats()->exists()) {
-          throw new SeatUnavailableException(
-            $by === null || $by->id === $user->id
-              ? 'You are already seated at a table.'
-              : 'That user is already seated at a table.'
-          );
+        // changing seat at the table they already sit at: move the row rather
+        // than leave and rejoin, which would delete the table under them if
+        // they were its only player, and would lose their place in the
+        // join order the moderator handover reads
+        if ($held !== null && (int) $held->table_id === (int) $table->getKey()) {
+          $held->update(['seat' => $seat]);
+
+          // a free target seat means the table wasn't full, so it cannot have
+          // become full by shuffling one player around
+          return $held;
+        }
+
+        if ($held !== null) {
+          // through remove(), so leaving has all its usual consequences: the
+          // old table goes if this was its last player, moderation is handed
+          // on, and an unfinished playing is detached
+          $this->remove($held->table, $user);
         }
 
         $seatRow = $table->seats()->create([
@@ -67,6 +97,21 @@ class TableSeatService
       }
 
       throw $e;
+    }
+  }
+
+  /**
+   * Take the row locks for every table a seat change touches, in a fixed
+   * order so concurrent moves in opposite directions queue instead of
+   * deadlocking.
+   */
+  private function lockTables(Table $table, ?int $otherTableId): void
+  {
+    $ids = array_values(array_unique(array_filter([(int) $table->getKey(), (int) $otherTableId])));
+    sort($ids);
+
+    foreach ($ids as $id) {
+      Table::whereKey($id)->lockForUpdate()->firstOrFail();
     }
   }
 
