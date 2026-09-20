@@ -12,11 +12,18 @@ use Illuminate\Support\Facades\DB;
 
 class TableSeatService
 {
+  public function __construct(private BoardSelectionService $boardSelection)
+  {
+  }
+
   /**
    * Seat a user at a table, holding every availability check.
    *
    * `$by` is who asked, when that isn't `$user` themselves (a manager seating
    * another player); it only changes the wording of the error.
+   *
+   * Filling the last seat deals the table a board and opens its playing, so
+   * this mutates `$table` (`board_id`).
    *
    * @throws SeatUnavailableException
    */
@@ -25,7 +32,7 @@ class TableSeatService
     try {
       return DB::transaction(function () use ($table, $user, $seat, $by) {
         // serialize seat changes on this table
-        $table = Table::whereKey($table->getKey())->lockForUpdate()->firstOrFail();
+        Table::whereKey($table->getKey())->lockForUpdate()->firstOrFail();
 
         if (!in_array($seat, Seats::SEATS, true)) {
           throw new SeatUnavailableException("Unknown seat '$seat'.");
@@ -43,10 +50,15 @@ class TableSeatService
           );
         }
 
-        return $table->seats()->create([
+        $seatRow = $table->seats()->create([
           'user_id' => $user->id,
           'seat' => $seat,
         ]);
+
+        // the fourth player to sit down starts the board
+        $this->boardSelection->startPlayingIfFull($table);
+
+        return $seatRow;
       });
     } catch (QueryException $e) {
       // race fallback: unique(table_id, seat) or unique(user_id) hit by a concurrent request
@@ -73,8 +85,11 @@ class TableSeatService
    * `created_by` never moves: it is what the per-creator active-table limit
    * counts.
    *
-   * Mutates `$table` (moderator handover) and returns true if the table was
-   * deleted.
+   * A playing that was under way is dropped: the four who started it are no
+   * longer the four sitting there. See `BoardSelectionService::abandonPlaying`.
+   *
+   * Mutates `$table` (moderator handover, `board_id`) and returns true if the
+   * table was deleted.
    *
    * @throws SeatUnavailableException
    */
@@ -95,6 +110,9 @@ class TableSeatService
       }
 
       $seat->delete();
+
+      // whoever is left is not the four who started the board
+      $this->boardSelection->abandonPlaying($table);
 
       // the creator if they are still here, else the earliest joiner still at
       // the table, if any

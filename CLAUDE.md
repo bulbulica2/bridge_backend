@@ -79,7 +79,20 @@ vendor/bin/pint                   # format (Laravel Pint, default preset)
   `remove()` take an optional `$by` (the acting user) for when it isn't the
   user being seated or removed, so the error names "that user". Being kicked
   isn't recorded anywhere — there is no ban list, so a kicked player can
-  rejoin at once.
+  rejoin at once. Both also call into `BoardSelectionService` (below), so
+  they mutate the passed-in `$table`'s `board_id`.
+- **Boards**: `App\Services\BoardSelectionService` owns which board a table
+  plays. `startPlayingIfFull()` fires from `seat()` when the **fourth** seat
+  is taken — not at `POST /tables`, because the selection rule needs all four
+  players' history and `board_table_seats` snapshots four seats. It applies
+  the §8 rule (a board none of the four has played, else one where nobody
+  holds a seat they've held on it, else `dealBoard()` shuffles a brand-new
+  one), sets `tables.board_id` and opens the `board_table` playing.
+  `abandonPlaying()` fires from `remove()`: an unfinished playing is
+  **detached** (`table_id` set to null), never deleted, so the seat snapshot
+  keeps recording that those four saw the deal. `dealBoard()` needs the 52
+  seeded cards and throws otherwise; boards with no `board_card` rows are
+  never selected.
 - **Authorization**: `App\Policies\TablePolicy::manage` (auto-discovered) is
   true for a table's `moderated_by`, any `is_admin` user, or its `created_by`
   **while that creator still holds a seat there** — a table has exactly one
@@ -126,20 +139,27 @@ vendor/bin/pint                   # format (Laravel Pint, default preset)
     current board. Because tables are deleted rather than closed,
     `board_table.table_id` is nullable and `nullOnDelete`: a playing and its
     `board_table_seats` snapshot outlive the table, so a user's board history
-    survives. `auctions.table_id` and `cardplays.table_id` cascade instead —
-    the call-by-call and card-by-card logs die with the table, while the
-    contract and result saved on `board_table` remain.
+    survives; an unfinished playing is detached the same way when a player
+    leaves mid-board. `auctions.table_id` and `cardplays.table_id` cascade
+    instead — the call-by-call and card-by-card logs die with the table,
+    while the contract and result saved on `board_table` remain.
 - **Seeding** (`DatabaseSeeder`) branches on `APP_ENV`: `production` seeds only
-  cards, bids and 100 boards; anything else also seeds a fixed admin user
-  (`email@email.com` / `pass`), random users, tables, seats, auctions and card
-  plays. Seeders are split between `database/seeders/game/` (namespace
+  cards, bids and 100 dealt boards (through `BoardSeeder`, so they have
+  hands); anything else also seeds a fixed admin user (`email@email.com` /
+  `pass`), random users, tables, seats, auctions and card plays. Seeders are
+  split between `database/seeders/game/` (namespace
   `Database\Seeders\game`) and the root seeders folder. Seeded auctions and
   card plays are random and don't follow bridge rules. `TableSeatSeeder`
   only seats users without a seat, so some tables stay partly or completely
   empty. A completely empty seeded table is **inactive** — a state the API
   itself never leaves behind, since leaving deletes the table.
-- No game rules are enforced anywhere yet (turn order, bid legality, follow
-  suit, trick winner, scoring).
+- Board selection (`GAME-RULES.md` §8) is implemented; no other game rules
+  are enforced yet (turn order, bid legality, follow suit, trick winner,
+  scoring).
+- `AuctionFactory`/`CardplayFactory` default `board_id` to a fresh
+  `Board::factory()`, so seeding leaves ~200 boards with no `board_card` rows.
+  They're inert — board selection only considers boards with a full 52-card
+  deal.
 
 ## Keep API docs in sync — do this in every relevant change, not as a follow-up
 
