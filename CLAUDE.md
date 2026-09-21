@@ -23,6 +23,8 @@ Local stack is XAMPP (MySQL on 3306, DB `bridge`, user `root`, no password).
 
 ```bash
 php artisan serve                 # API on http://127.0.0.1:8000
+php artisan reverb:start          # websocket server on :8080 (live table updates)
+php artisan queue:work --sleep=0.1  # sends queued broadcasts to Reverb
 php artisan migrate:fresh --seed  # rebuild DB with sample data
 php artisan route:list            # actual registered routes
 php artisan test                  # all tests (PHPUnit 11)
@@ -45,6 +47,13 @@ vendor/bin/pint                   # format (Laravel Pint, default preset)
 - `composer dev` won't work: it runs `npm run dev`, but there's no
   `package.json` (only a leftover `package-lock.json`). Use `php artisan serve`.
 - Code style: 2-space indentation (`.editorconfig`), including PHP.
+- `phpunit.xml` sets `BROADCAST_CONNECTION=null`, so tests never need Reverb.
+  Assert broadcasts with `Event::fake()`; to test a channel callback through
+  `POST /broadcasting/auth`, switch to the `reverb` driver inside the test
+  (see `TableBroadcastTest::useReverbBroadcaster`) — the `null` driver lets
+  everyone in.
+- Long-running `reverb:start` and `queue:work` keep old code loaded: restart
+  them after changing PHP.
 
 ## Architecture
 
@@ -109,6 +118,19 @@ vendor/bin/pint                   # format (Laravel Pint, default preset)
   keeps recording that those four saw the deal. `dealBoard()` needs the 52
   seeded cards and throws otherwise; boards with no `board_card` rows are
   never selected.
+- **Realtime**: Laravel Reverb (decision and setup in
+  `../bridge_docs/backend/RUNNING.md`). `App\Events\TableUpdated` is the
+  pattern later events copy: `ShouldBroadcast` (queued, so a Reverb outage
+  fails a job, not the request) + `ShouldDispatchAfterCommit` (dispatched
+  inside the seating transaction, sent only if it commits), payload
+  snapshotted in the constructor as the same `TableResource` JSON the HTTP
+  endpoints return (through `json_encode` — `resolve()` leaves nested
+  resources as objects). `TableSeatService` dispatches it on every seat
+  change except one that deleted the table. Channels are in
+  `routes/channels.php`: `table.{id}` admits players seated there. Channel
+  auth is checked only at subscribe time, so a player who leaves stays
+  subscribed — anything private to one player (their hand) must go on
+  `App.Models.User.{id}`, never on the table channel.
 - **Authorization**: `App\Policies\TablePolicy::manage` (auto-discovered) is
   true for a table's `moderated_by`, any `is_admin` user, or its `created_by`
   **while that creator still holds a seat there** — a table has exactly one
