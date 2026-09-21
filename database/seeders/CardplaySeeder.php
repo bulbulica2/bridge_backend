@@ -37,8 +37,7 @@ class CardplaySeeder extends Seeder
         for ($order = 1; $order <= 4; $order++) {
           Cardplay::create([
             'user_id' => $players[$seat],
-            'table_id' => $play->table_id,
-            'board_id' => $play->board_id,
+            'board_table_id' => $play->id,
             'card_id' => $hands[$seat][$round - 1]->id,
             'seat' => $seat,
             'round' => $round,

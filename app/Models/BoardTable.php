@@ -69,14 +69,24 @@ class BoardTable extends Model
     return $this->hasMany(BoardTableSeat::class);
   }
 
-  // board_id + table_id is unique, so it identifies this playing's calls and cards
   public function auctions(): HasMany
   {
-    return $this->hasMany(Auction::class, 'board_id', 'board_id')->where('table_id', $this->table_id);
+    return $this->hasMany(Auction::class);
   }
 
   public function cardPlays(): HasMany
   {
-    return $this->hasMany(Cardplay::class, 'board_id', 'board_id')->where('table_id', $this->table_id);
+    return $this->hasMany(Cardplay::class);
+  }
+
+  /**
+   * Delete this playing's call-by-call and card-by-card logs. Nothing
+   * cascades them: they hang off `board_table`, which outlives its table.
+   * The contract and result saved on this row are kept.
+   */
+  public function discardLogs(): void
+  {
+    $this->auctions()->delete();
+    $this->cardPlays()->delete();
   }
 }

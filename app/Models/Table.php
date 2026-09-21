@@ -19,6 +19,16 @@ class Table extends Model
    */
   public const MAX_ACTIVE_PER_CREATOR = 3;
 
+  protected static function booted(): void
+  {
+    // the call-by-call and card-by-card logs die with the table. They are
+    // keyed on board_table, which survives the table (table_id goes null),
+    // so no foreign key cascades them
+    static::deleting(function (Table $table) {
+      $table->boardPlays()->each(fn (BoardTable $playing) => $playing->discardLogs());
+    });
+  }
+
   protected $fillable = [
     'name',
     'created_by',
@@ -65,14 +75,16 @@ class Table extends Model
     return $this->hasMany(TableSeat::class);
   }
 
-  public function auctions(): HasMany
+  // calls and cards of every board still attached to this table; a detached
+  // (abandoned) playing no longer counts
+  public function auctions(): HasManyThrough
   {
-    return $this->hasMany(Auction::class);
+    return $this->hasManyThrough(Auction::class, BoardTable::class);
   }
 
-  public function cardPlays(): HasMany
+  public function cardPlays(): HasManyThrough
   {
-    return $this->hasMany(Cardplay::class);
+    return $this->hasManyThrough(Cardplay::class, BoardTable::class);
   }
 
   // boards this table has played

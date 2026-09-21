@@ -117,8 +117,7 @@ class BoardPlayConstraintsTest extends TestCase
   private function playCard(BoardTable $play, int $round, int $order, ?int $cardId = null, bool $wonTrick = false): Cardplay
   {
     return Cardplay::factory()->create(array_filter([
-      'board_id' => $play->board_id,
-      'table_id' => $play->table_id,
+      'board_table_id' => $play->id,
       'round' => $round,
       'order' => $order,
       'card_id' => $cardId,
