@@ -13,9 +13,9 @@ class UserSeeder extends Seeder
    */
   public function run(): void
   {
-    $admins = array();
+    $admins = [];
 
-    $admins[] = array(
+    $admins[] = [
       'name' => 'bulbulica',
       'username' => 'bulbulica',
       'email' => 'email@email.com',
@@ -26,7 +26,7 @@ class UserSeeder extends Seeder
       'remember_token' => str()->random(10),
       'created_at' => now(),
       'updated_at' => now(),
-    );
+    ];
 
     DB::table('users')->insert($admins);
   }

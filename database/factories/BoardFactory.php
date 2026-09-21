@@ -24,8 +24,8 @@ class BoardFactory extends Factory
       // the ones BoardSelectionService deals share one sequence
       'number' => fn () => (int) (Board::max('number') ?? 0) + 1,
       // derived from number, so a state that overrides number stays consistent
-      'dealer' => fn(array $attributes) => Seats::dealerForBoard($attributes['number']),
-      'vulnerable' => fn(array $attributes) => Vulnerability::forBoard($attributes['number']),
+      'dealer' => fn (array $attributes) => Seats::dealerForBoard($attributes['number']),
+      'vulnerable' => fn (array $attributes) => Vulnerability::forBoard($attributes['number']),
     ];
   }
 }

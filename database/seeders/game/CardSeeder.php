@@ -13,7 +13,7 @@ class CardSeeder extends Seeder
    */
   public function run(): void
   {
-    $dbCards = array();
+    $dbCards = [];
     foreach (array_keys(Suits::SUIT_NAME) as $suitAbbreviation) {
       for ($cards = 2; $cards <= 15; $cards++) {
         if ($cards == 11) {
@@ -22,11 +22,11 @@ class CardSeeder extends Seeder
 
         if ($cards == 12) {
           $rankName = 'Jack';
-        } else if ($cards == 13) {
+        } elseif ($cards == 13) {
           $rankName = 'Queen';
-        } else if ($cards == 14) {
+        } elseif ($cards == 14) {
           $rankName = 'King';
-        } else if ($cards == 15) {
+        } elseif ($cards == 15) {
           $rankName = 'Ace';
         } else {
           $rankName = $cards;

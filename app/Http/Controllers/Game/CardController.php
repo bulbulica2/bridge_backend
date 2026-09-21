@@ -11,12 +11,14 @@ class CardController extends BaseController
   public function index(): JsonResponse
   {
     $cards = Card::all();
+
     return $this->sendResponse($cards, 'Cards retrieved successfully.');
   }
 
   public function show($id): JsonResponse
   {
     $card = Card::find($id);
+
     return $this->sendResponse($card, 'Card retrieved successfully.');
   }
 }

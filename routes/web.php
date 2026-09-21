@@ -35,4 +35,4 @@ Route::middleware('auth')->group(function () {
   Route::get('users/{user}', [UserController::class, 'show'])->name('users.show');
 });
 
-require __DIR__ . '/auth.php';
+require __DIR__.'/auth.php';

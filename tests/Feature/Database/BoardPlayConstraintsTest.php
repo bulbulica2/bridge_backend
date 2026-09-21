@@ -78,7 +78,7 @@ class BoardPlayConstraintsTest extends TestCase
     $user = User::factory()->create();
     $play->seats()->create(['user_id' => $user->id, 'seat' => 'W']);
 
-    $this->assertTrue($user->playedSeats()->where('seat', 'W')->whereHas('boardTable', fn($q) => $q->where('board_id', $play->board_id))->exists());
+    $this->assertTrue($user->playedSeats()->where('seat', 'W')->whereHas('boardTable', fn ($q) => $q->where('board_id', $play->board_id))->exists());
     $this->assertFalse($user->playedSeats()->where('seat', 'N')->exists());
   }
 
@@ -122,6 +122,6 @@ class BoardPlayConstraintsTest extends TestCase
       'order' => $order,
       'card_id' => $cardId,
       'won_trick' => $wonTrick,
-    ], fn($value) => $value !== null));
+    ], fn ($value) => $value !== null));
   }
 }

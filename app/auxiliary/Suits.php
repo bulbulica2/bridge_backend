@@ -12,12 +12,13 @@ class Suits
     'H' => 'Hearts',
     'S' => 'Spades',
   ];
+
   public const ALL_SUIT_NAMES = [
     'C' => 'Clubs',
     'D' => 'Diamonds',
     'H' => 'Hearts',
     'S' => 'Spades',
-    'NT' => 'No Trump'
+    'NT' => 'No Trump',
   ];
 
   /**

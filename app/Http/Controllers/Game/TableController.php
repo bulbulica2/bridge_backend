@@ -33,7 +33,7 @@ class TableController extends BaseController
 
     if ($user->createdTables()->active()->count() >= Table::MAX_ACTIVE_PER_CREATOR) {
       return $this->sendError(
-        'You already have ' . Table::MAX_ACTIVE_PER_CREATOR . ' active tables.',
+        'You already have '.Table::MAX_ACTIVE_PER_CREATOR.' active tables.',
         409
       );
     }

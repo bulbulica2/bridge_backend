@@ -20,7 +20,7 @@ class DatabaseSeeder extends Seeder
   {
     if (env('APP_ENV') === 'local') {
       $this->runLocalEnvironmentSeeder();
-    } else if (env('APP_ENV') === 'production') {
+    } elseif (env('APP_ENV') === 'production') {
       $this->runProductionEnvironmentSeeder();
     } else {
       $this->runLocalEnvironmentSeeder();

@@ -101,7 +101,7 @@ class TableSeatController extends BaseController
     if ($tableDeleted) {
       return $this->sendResponse(
         ['table_deleted' => true],
-        $message . ' Nobody was left, so the table was deleted.'
+        $message.' Nobody was left, so the table was deleted.'
       );
     }
 
