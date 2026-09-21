@@ -9,26 +9,31 @@ use Illuminate\Support\Facades\DB;
 class BidSeeder extends Seeder
 {
   /**
-   * Run the database seeds.
+   * The three calls that aren't a contract bid. They have no level or strain,
+   * so they have no rank and are never compared.
+   */
+  private const SPECIAL_CALLS = [
+    'P' => 'Pass',
+    'X' => 'Double',
+    'XX' => 'Redouble',
+  ];
+
+  /**
+   * Run the database seeds. 38 calls: the three special ones, then 1C…7NT.
    */
   public function run(): void
   {
-    $bidding = array();
-    $bidding[] = [
-      'suit' => 'P',
-      'suit_name' => 'Pass',
-      'special' => true,
-    ];
-    $bidding[] = [
-      'suit' => 'X',
-      'suit_name' => 'Double',
-      'special' => true,
-    ];
-    $bidding[] = [
-      'suit' => 'XX',
-      'suit_name' => 'Redouble',
-      'special' => true,
-    ];
+    $bidding = [];
+
+    foreach (self::SPECIAL_CALLS as $abbreviation => $fullName) {
+      $bidding[] = [
+        'suit' => $abbreviation,
+        'suit_name' => $fullName,
+        'special' => true,
+        'level' => null,
+        'strain' => null,
+      ];
+    }
 
     for ($level = 1; $level <= 7; $level++) {
       foreach (Suits::ALL_SUIT_NAMES as $suitAbbreviation => $suitFullName) {
@@ -36,6 +41,8 @@ class BidSeeder extends Seeder
           'suit' => "$level$suitAbbreviation",
           'suit_name' => "$level $suitFullName",
           'special' => false,
+          'level' => $level,
+          'strain' => $suitAbbreviation,
         ];
       }
     }

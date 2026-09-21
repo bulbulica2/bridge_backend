@@ -119,6 +119,12 @@ vendor/bin/pint                   # format (Laravel Pint, default preset)
   - `cards` (52 rows) and `bids` (38 calls: `P`,`X`,`XX` then `1C`…`7NT` in
     rank order) are seeded once and never duplicated. Card `rank` is 2–10,
     then J=12, Q=13, K=14, A=15 (11 skipped). `Card` has no factory.
+  - A bid's rank is its `level` (1–7) and `strain` (`C,D,H,S,NT`) columns,
+    both null for `P`/`X`/`XX`. Compare with `Bid::isHigherThan()`, which
+    uses `Suits::strainRank()`; `Bid::rank()` throws for a special call.
+    **Never compare bids by `id`** — the seeder inserts them in rank order,
+    but nothing enforces that. `Bid::contracts()` / `Bid::specials()` scope
+    the two groups.
   - A `Board` is a deal with `number`, `dealer` and `vulnerable`
     (`BoardFactory` derives the last two from `number`); its hands are the
     `board_card` pivot (`seat` column, primary key `board_id+card_id`).
