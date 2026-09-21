@@ -47,7 +47,7 @@ class TableUpdated implements ShouldBroadcast, ShouldDispatchAfterCommit
    */
   public function broadcastOn(): array
   {
-    return [new PrivateChannel('table.' . $this->tableId)];
+    return [new PrivateChannel('table.'.$this->tableId)];
   }
 
   /**

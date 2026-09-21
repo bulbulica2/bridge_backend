@@ -8,21 +8,21 @@ use Illuminate\Database\Seeder;
 
 class TableSeeder extends Seeder
 {
-    /**
-     * Run the database seeds.
-     */
-    public function run(): void
-    {
-      // use boards BoardSeeder dealt, so seeded plays have cards
-      Table::factory(5)->create([
-        'board_id' => fn() => Board::has('cards')->inRandomOrder()->value('id'),
-      ]);
+  /**
+   * Run the database seeds.
+   */
+  public function run(): void
+  {
+    // use boards BoardSeeder dealt, so seeded plays have cards
+    Table::factory(5)->create([
+      'board_id' => fn () => Board::has('cards')->inRandomOrder()->value('id'),
+    ]);
 
-      $table = Table::find(2);
+    $table = Table::find(2);
 
-      if ($table) {
-        $table->board_id = Table::find(1)->board->id;
-        $table->save();
-      }
+    if ($table) {
+      $table->board_id = Table::find(1)->board->id;
+      $table->save();
     }
+  }
 }

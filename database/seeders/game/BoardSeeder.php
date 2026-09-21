@@ -13,9 +13,7 @@ class BoardSeeder extends Seeder
    */
   public const INITIAL_BOARDS = 5;
 
-  public function __construct(private BoardSelectionService $boards)
-  {
-  }
+  public function __construct(private BoardSelectionService $boards) {}
 
   /**
    * Run the database seeds. Needs CardSeeder to have run.

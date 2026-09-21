@@ -20,11 +20,11 @@ class CardplaySeeder extends Seeder
     $plays = BoardTable::with(['board.cards', 'board', 'seats'])->get();
 
     foreach ($plays as $play) {
-      $hands = $play->board->cards->groupBy(fn($card) => $card->pivot->seat);
+      $hands = $play->board->cards->groupBy(fn ($card) => $card->pivot->seat);
       $players = $play->seats->pluck('user_id', 'seat');
 
       // a full hand per seat and a player per seat, or this playing can't be seeded
-      if ($players->count() < 4 || collect(Seats::SEATS)->contains(fn($seat) => ($hands[$seat] ?? collect())->count() < self::TRICKS_TO_SEED)) {
+      if ($players->count() < 4 || collect(Seats::SEATS)->contains(fn ($seat) => ($hands[$seat] ?? collect())->count() < self::TRICKS_TO_SEED)) {
         continue;
       }
 

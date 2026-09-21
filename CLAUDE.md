@@ -30,7 +30,8 @@ php artisan route:list            # actual registered routes
 php artisan test                  # all tests (PHPUnit 11)
 php artisan test --filter=RegistrationTest            # one class
 php artisan test --filter=test_new_users_can_register # one method
-vendor/bin/pint                   # format (Laravel Pint, default preset)
+vendor/bin/pint                   # format (Laravel Pint, pint.json)
+vendor/bin/pint --test            # check formatting without changing files
 ```
 
 - Tests run on in-memory sqlite (`phpunit.xml`), so they don't touch the
@@ -51,7 +52,13 @@ vendor/bin/pint                   # format (Laravel Pint, default preset)
   won't see them.
 - `composer dev` won't work: it runs `npm run dev`, but there's no
   `package.json` (only a leftover `package-lock.json`). Use `php artisan serve`.
-- Code style: 2-space indentation (`.editorconfig`), including PHP.
+- Code style: 2-space indentation (`.editorconfig`), including PHP, and
+  Pint's `laravel` preset for everything else. Pint can't be told to indent
+  with 2 spaces (it hardcodes 4; laravel/pint#230 was rejected), so
+  `pint.json` turns off its three indentation fixers (`array_`, `statement_`,
+  `method_chaining_indentation`). Pint therefore won't catch or fix bad
+  indentation — keep it at 2 spaces yourself. Don't remove those rules: a
+  plain `pint` run would reindent the whole codebase to 4 spaces.
 - `phpunit.xml` sets `BROADCAST_CONNECTION=null`, so tests never need Reverb.
   Assert broadcasts with `Event::fake()`; to test a channel callback through
   `POST /broadcasting/auth`, switch to the `reverb` driver inside the test

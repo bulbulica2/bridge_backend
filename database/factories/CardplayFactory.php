@@ -24,10 +24,10 @@ class CardplayFactory extends Factory
       'user_id' => User::factory(),
       'board_table_id' => BoardTable::factory(),
       // Card has no factory; cards are static reference data
-      'card_id' => fn() => Card::inRandomOrder()->value('id'),
+      'card_id' => fn () => Card::inRandomOrder()->value('id'),
       'seat' => $this->faker->randomElement(Seats::SEATS),
-      'round' => $this->faker->numberBetween(1,13),
-      'order' => $this->faker->numberBetween(1,4),
+      'round' => $this->faker->numberBetween(1, 13),
+      'order' => $this->faker->numberBetween(1, 4),
     ];
   }
 }

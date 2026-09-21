@@ -107,7 +107,7 @@ class BoardSelectionService
 
     if (count($cardIds) !== 52) {
       throw new RuntimeException(
-        'Cannot deal a board: the cards table holds ' . count($cardIds) . ' rows, expected 52. Run CardSeeder.'
+        'Cannot deal a board: the cards table holds '.count($cardIds).' rows, expected 52. Run CardSeeder.'
       );
     }
 

@@ -48,7 +48,7 @@ class TableBroadcastTest extends TestCase
     Event::assertDispatched(TableUpdated::class, function (TableUpdated $event) use ($user) {
       $player = $event->table['seats'][0]['user'];
 
-      return $player['id'] === $user->id && !array_key_exists('email', $player);
+      return $player['id'] === $user->id && ! array_key_exists('email', $player);
     });
   }
 

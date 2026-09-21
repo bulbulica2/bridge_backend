@@ -13,9 +13,7 @@ use Illuminate\Support\Facades\DB;
 
 class TableSeatService
 {
-  public function __construct(private BoardSelectionService $boardSelection)
-  {
-  }
+  public function __construct(private BoardSelectionService $boardSelection) {}
 
   /**
    * Seat a user at a table, holding every availability check.
@@ -47,13 +45,13 @@ class TableSeatService
 
     try {
       return DB::transaction(function () use ($table, $user, $seat, $self) {
-        if (!in_array($seat, Seats::SEATS, true)) {
+        if (! in_array($seat, Seats::SEATS, true)) {
           throw new SeatUnavailableException("Unknown seat '$seat'.");
         }
 
         $held = $user->seats()->first();
 
-        if ($held !== null && !$self) {
+        if ($held !== null && ! $self) {
           throw new SeatUnavailableException('That user is already seated at a table.');
         }
 

@@ -9,6 +9,4 @@ use RuntimeException;
  * already sits somewhere, or — when leaving — they hold no seat at that table.
  * Controllers map it to a 409.
  */
-class SeatUnavailableException extends RuntimeException
-{
-}
+class SeatUnavailableException extends RuntimeException {}
