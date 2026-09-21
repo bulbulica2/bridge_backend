@@ -75,6 +75,10 @@ class BoardSelectionService
    * a playing survives its table being deleted — and it frees the table from
    * `unique(board_id, table_id)` so it can be dealt a fresh board.
    *
+   * Its calls and cards are deleted, though: the board is never resumed, and
+   * once detached they would no longer go with the table the way every other
+   * playing's logs do (`Table::deleting`).
+   *
    * A finished playing is the duplicate result and is never touched.
    *
    * Mutates `$table` (`board_id`).
@@ -87,6 +91,7 @@ class BoardSelectionService
       return;
     }
 
+    $playing->discardLogs();
     $playing->update(['table_id' => null]);
 
     $table->update(['board_id' => null]);

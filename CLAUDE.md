@@ -143,8 +143,11 @@ vendor/bin/pint                   # format (Laravel Pint, default preset)
   - `auctions` = one row per call, `cardplays` = one row per card played
     (`round` = trick 1–13, `order` = 1–4, `seat` = hand the card came from,
     since declarer plays dummy's cards, `won_trick` = winning card of the
-    trick), both keyed by board+table+user. A card is played once per
-    board+table, and each round+order once.
+    trick), both keyed by `board_table_id` (the playing) + `user_id`; reach
+    the board/table through `boardTable`. A card is played once per playing,
+    and each round+order once. `BoardTable::auctions()`/`cardPlays()` are
+    plain `hasMany`, so they eager-load; `Table`/`Board` reach them
+    `hasManyThrough` `board_table`.
   - `board_table` (model `BoardTable`) = one playing of a board at a table:
     board history (`unique(board_id, table_id)` — a table never replays a
     board), the saved auction result (`contract_bid_id`, `doubled`,
@@ -155,9 +158,13 @@ vendor/bin/pint                   # format (Laravel Pint, default preset)
     `board_table.table_id` is nullable and `nullOnDelete`: a playing and its
     `board_table_seats` snapshot outlive the table, so a user's board history
     survives; an unfinished playing is detached the same way when a player
-    leaves mid-board. `auctions.table_id` and `cardplays.table_id` cascade
-    instead — the call-by-call and card-by-card logs die with the table,
-    while the contract and result saved on `board_table` remain.
+    leaves mid-board. The call-by-call and card-by-card logs still die with
+    the table, but no FK does it (they hang off `board_table`, which
+    survives): a `Table::deleting` hook calls `BoardTable::discardLogs()` on
+    each of its playings, and `abandonPlaying()` discards a detached
+    playing's logs. The contract and result saved on `board_table` remain.
+    Delete tables through Eloquent (`$table->delete()`), not a query-builder
+    delete, or the hook won't run.
 - **Seeding** (`DatabaseSeeder`) branches on `APP_ENV`: `production` seeds only
   cards, bids and 100 dealt boards (through `BoardSeeder`, so they have
   hands); anything else also seeds a fixed admin user (`email@email.com` /
@@ -171,10 +178,11 @@ vendor/bin/pint                   # format (Laravel Pint, default preset)
 - Board selection (`GAME-RULES.md` §8) is implemented; no other game rules
   are enforced yet (turn order, bid legality, follow suit, trick winner,
   scoring).
-- `AuctionFactory`/`CardplayFactory` default `board_id` to a fresh
-  `Board::factory()`, so seeding leaves ~200 boards with no `board_card` rows.
-  They're inert — board selection only considers boards with a full 52-card
-  deal.
+- `AuctionFactory`/`CardplayFactory` default `board_table_id` to a fresh
+  `BoardTable::factory()`, whose board has no `board_card` rows. Such boards
+  are inert — board selection only considers boards with a full 52-card deal.
+  The seeders don't use those factories (`AuctionSeeder`/`CardplaySeeder`
+  write onto the seeded playings), so a seeded DB has only dealt boards.
 
 ## Keep API docs in sync — do this in every relevant change, not as a follow-up
 

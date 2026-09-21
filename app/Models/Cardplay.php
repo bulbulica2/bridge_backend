@@ -14,8 +14,7 @@ class Cardplay extends Model
 
   protected $fillable = [
     'user_id',
-    'table_id',
-    'board_id',
+    'board_table_id',
     'card_id',
     'seat',
     'round',
@@ -35,14 +34,10 @@ class Cardplay extends Model
     return $this->belongsTo(User::class);
   }
 
-  public function table(): BelongsTo
+  // the playing this card was played in; its board and table hang off it
+  public function boardTable(): BelongsTo
   {
-    return $this->belongsTo(Table::class);
-  }
-
-  public function board(): BelongsTo
-  {
-    return $this->belongsTo(Board::class);
+    return $this->belongsTo(BoardTable::class);
   }
 
   public function card(): BelongsTo

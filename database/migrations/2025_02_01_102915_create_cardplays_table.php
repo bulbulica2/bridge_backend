@@ -14,10 +14,11 @@ return new class extends Migration {
     Schema::create('cardplays', function (Blueprint $table) {
       $table->id();
       $table->foreignId('user_id')->constrained('users');
-      // the card-by-card log dies with the table; the result it produced is
-      // saved on board_table, which outlives the table
-      $table->foreignId('table_id')->constrained('tables')->cascadeOnDelete();
-      $table->foreignId('board_id')->constrained('boards');
+      // the playing (board + table) the card was played in. board_table
+      // outlives its table, so the card-by-card log is deleted explicitly when
+      // the table goes (Table::deleting) or the playing is abandoned; the
+      // result it produced stays on board_table
+      $table->foreignId('board_table_id')->constrained('board_table')->cascadeOnDelete();
       $table->foreignId('card_id')->constrained('cards');
       // the hand the card came from; declarer also plays dummy's cards
       $table->enum('seat', Seats::SEATS);
@@ -27,10 +28,10 @@ return new class extends Migration {
       $table->boolean('won_trick')->default(false);
       $table->timestamps();
 
-      // a card is played once per playing (board + table)
-      $table->unique(['board_id', 'table_id', 'card_id']);
+      // a card is played once per playing
+      $table->unique(['board_table_id', 'card_id']);
       // one card per trick position
-      $table->unique(['board_id', 'table_id', 'round', 'order']);
+      $table->unique(['board_table_id', 'round', 'order']);
     });
   }
 

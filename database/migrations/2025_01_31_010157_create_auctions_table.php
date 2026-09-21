@@ -13,10 +13,11 @@ return new class extends Migration {
   {
     Schema::create('auctions', function (Blueprint $table) {
       $table->id();
-      $table->foreignId('board_id')->constrained('boards');
-      // the call-by-call log dies with the table; the contract that came out of
-      // it is saved on board_table, which outlives the table
-      $table->foreignId('table_id')->constrained('tables')->cascadeOnDelete();
+      // the playing (board + table) the call was made in. board_table outlives
+      // its table, so the call-by-call log is deleted explicitly when the table
+      // goes (Table::deleting) or the playing is abandoned; the contract that
+      // came out of it stays on board_table
+      $table->foreignId('board_table_id')->constrained('board_table')->cascadeOnDelete();
       $table->foreignId('user_id')->constrained('users');
       $table->foreignId('bid_id')->constrained('bids');
       $table->enum('seat', Seats::SEATS);

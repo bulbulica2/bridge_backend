@@ -13,21 +13,16 @@ class Auction extends Model
   use HasFactory;
 
   protected $fillable = [
-    'board_id',
-    'table_id',
+    'board_table_id',
     'user_id',
     'bid_id',
     'seat',
   ];
 
-  public function board(): BelongsTo
+  // the playing this call was made in; its board and table hang off it
+  public function boardTable(): BelongsTo
   {
-    return $this->belongsTo(Board::class);
-  }
-
-  public function table(): BelongsTo
-  {
-    return $this->belongsTo(Table::class);
+    return $this->belongsTo(BoardTable::class);
   }
 
   public function user(): BelongsTo
