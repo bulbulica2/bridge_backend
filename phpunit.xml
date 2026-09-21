@@ -19,6 +19,10 @@
     </source>
     <php>
         <env name="APP_ENV" value="testing"/>
+        <!-- never load the dev bootstrap/cache/config.php: it would pin the MySQL dev DB -->
+        <env name="APP_CONFIG_CACHE" value="bootstrap/cache/config.testing.php"/>
+        <!-- test-only key, so the suite runs on a clean checkout with no .env -->
+        <env name="APP_KEY" value="base64:I2i8kaDkLwdNqUFxrNS5qDZ9/VMy4lz8eiQpBuhrrgw="/>
         <env name="APP_MAINTENANCE_DRIVER" value="file"/>
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="BROADCAST_CONNECTION" value="null"/>

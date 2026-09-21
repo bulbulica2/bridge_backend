@@ -35,7 +35,12 @@ vendor/bin/pint                   # format (Laravel Pint, default preset)
 
 - Tests run on in-memory sqlite (`phpunit.xml`), so they don't touch the
   MySQL `bridge` DB and don't need MySQL running. Keep migrations
-  sqlite-compatible.
+  sqlite-compatible. `phpunit.xml` points `APP_CONFIG_CACHE` at a
+  test-only path so a dev `config:cache` can't override it, and
+  `Tests\TestCase::createApplication` fails every test (before
+  `RefreshDatabase` migrates anything) unless the config is `APP_ENV=testing`
+  on in-memory sqlite. Feature tests must extend `Tests\TestCase` to get that
+  guard. `phpunit.xml` also sets a test-only `APP_KEY`, so no `.env` is needed.
 - `AppServiceProvider::register` force-enables laravel-debugbar only when
   `APP_ENV=local`. Don't make it unconditional: `enable()` skips debugbar's
   own testing check, and the HTML it injects breaks `assertNoContent()`.
