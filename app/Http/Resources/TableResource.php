@@ -8,6 +8,7 @@ use Illuminate\Http\Resources\Json\JsonResource;
 /**
  * A table plus the seats nobody is sitting in, so every table payload has the
  * same shape whether it came from index, store, show or leaving a seat.
+ * Seated players go out through UserResource, so their emails never do.
  */
 class TableResource extends JsonResource
 {
@@ -18,6 +19,7 @@ class TableResource extends JsonResource
   {
     return [
       ...parent::toArray($request),
+      'seats' => TableSeatResource::collection($this->whenLoaded('seats')),
       'free_seats' => $this->resource->freeSeats(),
     ];
   }

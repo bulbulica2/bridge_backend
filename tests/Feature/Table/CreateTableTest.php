@@ -44,6 +44,34 @@ class CreateTableTest extends TestCase
     ]);
   }
 
+  public function test_seated_players_are_shown_without_their_email(): void
+  {
+    $user = User::factory()->create();
+    $table = Table::factory()->create(['board_id' => null]);
+    $player = User::factory()->create(['description' => 'Weak twos.']);
+    TableSeat::factory()->create(['table_id' => $table->id, 'user_id' => $player->id, 'seat' => 'N']);
+
+    $this->actingAs($user)->getJson("/tables/$table->id")
+      ->assertOk()
+      ->assertJsonPath('data.seats.0.user', [
+        'id' => $player->id,
+        'name' => $player->name,
+        'username' => $player->username,
+        'description' => 'Weak twos.',
+      ])
+      ->assertJsonMissingPath('data.seats.0.user.email');
+
+    $this->actingAs($user)->getJson('/tables')
+      ->assertOk()
+      ->assertJsonPath('data.0.seats.0.user.username', $player->username)
+      ->assertJsonMissingPath('data.0.seats.0.user.email');
+
+    $this->actingAs($user)->postJson("/tables/$table->id/seats", ['seat' => 'E'])
+      ->assertCreated()
+      ->assertJsonMissingPath('data.seats.0.user.email')
+      ->assertJsonMissingPath('data.seats.1.user.email');
+  }
+
   public function test_creator_sits_north_by_default(): void
   {
     $user = User::factory()->create();
