@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\auxiliary\Seats;
+use App\Events\TableUpdated;
 use App\Exceptions\SeatUnavailableException;
 use App\Models\Table;
 use App\Models\TableSeat;
@@ -34,6 +35,9 @@ class TableSeatService
    *
    * Filling the last seat deals the table a board and opens its playing, so
    * this mutates `$table` (`board_id`).
+   *
+   * Broadcasts `TableUpdated` for the table sat at (and, through remove(), for
+   * the table a move left), once the transaction commits.
    *
    * @throws SeatUnavailableException
    */
@@ -68,6 +72,8 @@ class TableSeatService
         if ($held !== null && (int) $held->table_id === (int) $table->getKey()) {
           $held->update(['seat' => $seat]);
 
+          TableUpdated::dispatch($table);
+
           // a free target seat means the table wasn't full, so it cannot have
           // become full by shuffling one player around
           return $held;
@@ -87,6 +93,8 @@ class TableSeatService
 
         // the fourth player to sit down starts the board
         $this->boardSelection->startPlayingIfFull($table);
+
+        TableUpdated::dispatch($table);
 
         return $seatRow;
       });
@@ -134,7 +142,7 @@ class TableSeatService
    * longer the four sitting there. See `BoardSelectionService::abandonPlaying`.
    *
    * Mutates `$table` (moderator handover, `board_id`) and returns true if the
-   * table was deleted.
+   * table was deleted. Broadcasts `TableUpdated` unless it was.
    *
    * @throws SeatUnavailableException
    */
@@ -173,6 +181,9 @@ class TableSeatService
       if ((int) $table->moderated_by === $user->id) {
         $table->update(['moderated_by' => $next->user_id]);
       }
+
+      // a deleted table has nobody left to tell
+      TableUpdated::dispatch($table);
 
       return false;
     });
