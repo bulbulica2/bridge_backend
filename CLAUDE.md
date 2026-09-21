@@ -51,8 +51,15 @@ vendor/bin/pint                   # format (Laravel Pint, default preset)
 - **Routing** (`bootstrap/app.php`): game endpoints live in `routes/web.php`
   (not `api.php`) so they share the session/cookie stack; `routes/auth.php`
   (stock Breeze, API-only — no views) is `require`d from `web.php`.
-  `routes/api.php` only has `GET /api/user`. Sanctum's
+  `routes/api.php` only has `GET`/`PATCH /api/user` (the caller's own record,
+  email included; `UserController@update` edits `name`/`description`). Sanctum's
   `EnsureFrontendRequestsAreStateful` is prepended to the api group.
+- **Player identity**: `email` is not in `User::$hidden` (the owner needs it),
+  so anything showing a user to *other* players goes through
+  `App\Http\Resources\UserResource` (`id`, `name`, `username`, `description`)
+  — never the raw model. `TableResource` does this for seats via
+  `TableSeatResource`; `GET /users/{user}` (`UserController@show`) serves the
+  same public profile.
 - **Controllers**: game controllers are in `app/Http/Controllers/Game/` and
   extend `BaseController`, whose `sendResponse($data, $message, $code)` and
   `sendError($message, $code, $errors = [])` both return
