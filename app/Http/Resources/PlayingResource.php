@@ -4,19 +4,23 @@ namespace App\Http\Resources;
 
 use App\auxiliary\Seats;
 use App\Models\Bid;
+use App\Models\BoardTable;
+use App\Models\Card;
+use App\Services\CardPlayService;
 use App\Services\PlayingStateService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 /**
  * The public part of a table's current playing — what any of its players may
- * see. Wraps a BoardTable with `board` and `seats.user` loaded, or null while
- * the table has no board, which comes out as the `waiting` phase with every
- * other field null.
+ * see. Wraps a BoardTable as `PlayingStateService::currentPlaying()` loads
+ * it, or null while the table has no board, which comes out as the `waiting`
+ * phase with every other field null.
  *
- * No hand ever goes in here: this is what `PlayingUpdated` broadcasts on the
- * table channel. A player's own cards are added on top by
- * `PlayingStateService::stateFor()`.
+ * No hidden hand ever goes in here: this is what `PlayingUpdated` broadcasts
+ * on the table channel. The only cards in it are face up — the ones played
+ * and, after the opening lead, dummy's. A player's own cards are added on
+ * top by `PlayingStateService::stateFor()`.
  */
 class PlayingResource extends JsonResource
 {
@@ -35,8 +39,10 @@ class PlayingResource extends JsonResource
         'board' => null,
         'players' => null,
         'turn' => null,
+        'acting_user_id' => null,
         'auction' => null,
         'contract' => null,
+        ...self::play(null),
       ];
     }
 
@@ -59,6 +65,7 @@ class PlayingResource extends JsonResource
       ],
       'players' => $players,
       'turn' => $state->turn($playing),
+      'acting_user_id' => $state->actingUserId($playing),
       'auction' => array_map(fn ($call) => [
         'seat' => $call['seat'],
         'bid' => self::bid($call['bid']),
@@ -70,7 +77,49 @@ class PlayingResource extends JsonResource
         'declarer' => $playing->declarer_seat,
         'dummy' => Seats::partner($playing->declarer_seat),
       ],
+      ...self::play($playing),
     ];
+  }
+
+  /**
+   * The complete tricks, the one in progress, tricks won by each side and
+   * dummy's face-up cards. All null until there is a contract to play.
+   *
+   * @return array<string, mixed>
+   */
+  private static function play(?BoardTable $playing): array
+  {
+    if ($playing?->contractBid === null) {
+      return ['tricks' => null, 'current_trick' => null, 'tricks_won' => null, 'dummy_hand' => null];
+    }
+
+    $state = app(PlayingStateService::class);
+    $plays = $state->plays($playing);
+    $trump = $state->trump($playing);
+
+    return [
+      'tricks' => array_map(fn ($trick) => [
+        'round' => $trick['round'],
+        'leader' => $trick['leader'],
+        'cards' => self::cards($trick['plays']),
+        'winner' => $trick['winner'],
+      ], CardPlayService::tricks($plays, $trump)),
+      'current_trick' => self::cards(CardPlayService::currentTrick($plays)),
+      'tricks_won' => CardPlayService::tricksWon($plays, $trump),
+      'dummy_hand' => $state->dummyHand($playing),
+    ];
+  }
+
+  /**
+   * @param  list<array{seat: string, card: Card}>  $plays
+   * @return list<array{seat: string, card: array{id: int, suit: string, rank: int, rank_name: string}}>
+   */
+  private static function cards(array $plays): array
+  {
+    return array_map(fn ($play) => [
+      'seat' => $play['seat'],
+      'card' => PlayingStateService::card($play['card']),
+    ], $plays);
   }
 
   /**

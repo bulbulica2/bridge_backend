@@ -163,7 +163,13 @@ class AuctionTest extends TestCase
     $response = $this->makeCall('S', 'P')
       ->assertCreated()
       ->assertJsonPath('data.phase', 'play')
-      ->assertJsonPath('data.turn', null);
+      // declarer's left-hand opponent leads
+      ->assertJsonPath('data.turn', 'E')
+      ->assertJsonPath('data.acting_user_id', $this->players['E']->id)
+      ->assertJsonPath('data.tricks', [])
+      ->assertJsonPath('data.current_trick', [])
+      ->assertJsonPath('data.tricks_won', ['ns' => 0, 'ew' => 0])
+      ->assertJsonPath('data.dummy_hand', null);
 
     $fourHearts = Bid::where('suit', '4H')->firstOrFail();
 

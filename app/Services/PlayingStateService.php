@@ -2,9 +2,11 @@
 
 namespace App\Services;
 
+use App\auxiliary\Seats;
 use App\Http\Resources\PlayingResource;
 use App\Models\Bid;
 use App\Models\BoardTable;
+use App\Models\Card;
 use App\Models\Table;
 use App\Models\User;
 
@@ -48,7 +50,7 @@ class PlayingStateService
       ->where('table_id', $table->getKey())
       ->where('board_id', $table->board_id)
       ->when($lock, fn ($query) => $query->lockForUpdate())
-      ->with(['board', 'seats.user', 'auctions.bid', 'contractBid'])
+      ->with(['board', 'seats.user', 'auctions.bid', 'contractBid', 'cardPlays.card'])
       ->first();
   }
 
@@ -66,15 +68,77 @@ class PlayingStateService
    * The seat expected to act next, or null when nobody is.
    *
    * During the auction that is the dealer, then clockwise after the last
-   * call. No cards are taken yet, so whose turn it is during the play isn't
-   * known.
+   * call. During the play it is the hand the next card comes from — dummy's
+   * included, though declarer is the one who plays it (`actingUserId()`).
    */
   public function turn(?BoardTable $playing): ?string
   {
     return match ($this->phase($playing)) {
       self::PHASE_AUCTION => AuctionService::nextToCall($this->calls($playing), $playing->board->dealer),
+      self::PHASE_PLAY => CardPlayService::nextToPlay($this->plays($playing), $playing->declarer_seat, $this->trump($playing)),
       default => null,
     };
+  }
+
+  /**
+   * The user who acts for `turn()`: that seat's player, except that
+   * declarer plays dummy's cards.
+   */
+  public function actingUserId(?BoardTable $playing): ?int
+  {
+    $turn = $this->turn($playing);
+
+    if ($turn === null) {
+      return null;
+    }
+
+    if ($this->phase($playing) === self::PHASE_PLAY) {
+      $turn = CardPlayService::actingSeat($turn, $playing->declarer_seat);
+    }
+
+    $userId = $playing->seats->firstWhere('seat', $turn)?->user_id;
+
+    return $userId === null ? null : (int) $userId;
+  }
+
+  /**
+   * The cards played so far, in the order they were played (trick, then
+   * position in it), as the list `CardPlayService`'s rules read.
+   *
+   * @return list<array{seat: string, card: Card}>
+   */
+  public function plays(BoardTable $playing): array
+  {
+    return $playing->cardPlays
+      ->sortBy([['round', 'asc'], ['order', 'asc']])
+      ->map(fn ($play) => ['seat' => $play->seat, 'card' => $play->card])
+      ->values()
+      ->all();
+  }
+
+  /**
+   * The contract's trump suit, or null in NT and when there is no contract.
+   */
+  public function trump(BoardTable $playing): ?string
+  {
+    $strain = $playing->contractBid?->strain;
+
+    return $strain === 'NT' ? null : $strain;
+  }
+
+  /**
+   * Dummy's remaining cards, face up for everyone once the opening lead is
+   * made; null before that and when there is no contract.
+   *
+   * @return list<array{id: int, suit: string, rank: int, rank_name: string}>|null
+   */
+  public function dummyHand(BoardTable $playing): ?array
+  {
+    if ($playing->declarer_seat === null || $playing->cardPlays->isEmpty()) {
+      return null;
+    }
+
+    return $this->hand($playing, Seats::partner($playing->declarer_seat));
   }
 
   /**
@@ -115,14 +179,24 @@ class PlayingStateService
       ->whereNotIn('cards.id', $playing->cardPlays()->select('card_id'))
       ->get()
       ->sort(fn ($a, $b) => [$suitOrder[$a->suit], -$a->rank] <=> [$suitOrder[$b->suit], -$b->rank])
-      ->map(fn ($card) => [
-        'id' => (int) $card->id,
-        'suit' => $card->suit,
-        'rank' => (int) $card->rank,
-        'rank_name' => (string) $card->rank_name,
-      ])
+      ->map(fn ($card) => self::card($card))
       ->values()
       ->all();
+  }
+
+  /**
+   * One card as every payload shows it.
+   *
+   * @return array{id: int, suit: string, rank: int, rank_name: string}
+   */
+  public static function card(Card $card): array
+  {
+    return [
+      'id' => (int) $card->id,
+      'suit' => $card->suit,
+      'rank' => (int) $card->rank,
+      'rank_name' => (string) $card->rank_name,
+    ];
   }
 
   /**
@@ -140,6 +214,8 @@ class PlayingStateService
 
   /**
    * The public state plus what only this user may see: their seat and hand.
+   * Dummy's hand isn't private once it is face up, so it is in the public
+   * part (`dummy_hand`), for declarer and everyone else alike.
    *
    * @return array<string, mixed>
    */

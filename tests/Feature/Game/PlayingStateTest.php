@@ -54,8 +54,13 @@ class PlayingStateTest extends TestCase
           'my_seat' => null,
           'hand' => null,
           'turn' => null,
+          'acting_user_id' => null,
           'auction' => null,
           'contract' => null,
+          'tricks' => null,
+          'current_trick' => null,
+          'tricks_won' => null,
+          'dummy_hand' => null,
         ],
       ]);
   }
@@ -165,9 +170,10 @@ class PlayingStateTest extends TestCase
 
     $this->assertSame('auction', $state->phase($playing));
 
-    $playing->update(['auction_ended_at' => now()]);
+    // the auction ends in a contract with North declaring: East leads
+    $playing->update(['auction_ended_at' => now(), 'declarer_seat' => 'N']);
     $this->assertSame('play', $state->phase($playing));
-    $this->assertNull($state->turn($playing));
+    $this->assertSame('E', $state->turn($playing));
 
     $playing->update(['finished_at' => now()]);
     $this->assertSame('finished', $state->phase($playing));
