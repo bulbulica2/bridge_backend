@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Game\CallController;
 use App\Http\Controllers\Game\CardController;
 use App\Http\Controllers\Game\PlayingController;
 use App\Http\Controllers\Game\TableController;
@@ -34,6 +35,9 @@ Route::middleware('auth')->group(function () {
 
   // the game state of the board the table is on, for its seated players
   Route::get('tables/{table}/playing', [PlayingController::class, 'show'])->name('tables.playing.show');
+
+  // the next call in the auction: bid, pass, double or redouble
+  Route::post('tables/{table}/calls', [CallController::class, 'store'])->name('tables.calls.store');
 
   // another player's public profile (no email)
   Route::get('users/{user}', [UserController::class, 'show'])->name('users.show');
