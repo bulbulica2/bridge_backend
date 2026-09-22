@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Http\Resources\PlayingResource;
+use App\Models\Bid;
 use App\Models\BoardTable;
 use App\Models\Table;
 use App\Models\User;
@@ -32,8 +33,12 @@ class PlayingStateService
   /**
    * The playing of the board the table is on now, or null while it has none
    * (fewer than four players).
+   *
+   * `$lock` takes the row lock a write needs (inside a transaction). A
+   * playing detached by a player leaving has lost its `table_id`, so it is
+   * not found here even if `$table` was loaded before that happened.
    */
-  public function currentPlaying(Table $table): ?BoardTable
+  public function currentPlaying(Table $table, bool $lock = false): ?BoardTable
   {
     if ($table->board_id === null) {
       return null;
@@ -42,7 +47,8 @@ class PlayingStateService
     return BoardTable::query()
       ->where('table_id', $table->getKey())
       ->where('board_id', $table->board_id)
-      ->with(['board', 'seats.user'])
+      ->when($lock, fn ($query) => $query->lockForUpdate())
+      ->with(['board', 'seats.user', 'auctions.bid', 'contractBid'])
       ->first();
   }
 
@@ -59,15 +65,31 @@ class PlayingStateService
   /**
    * The seat expected to act next, or null when nobody is.
    *
-   * No calls or cards are taken yet, so the auction always waits on the
-   * dealer, and whose turn it is during the play isn't known.
+   * During the auction that is the dealer, then clockwise after the last
+   * call. No cards are taken yet, so whose turn it is during the play isn't
+   * known.
    */
   public function turn(?BoardTable $playing): ?string
   {
     return match ($this->phase($playing)) {
-      self::PHASE_AUCTION => $playing->board->dealer,
+      self::PHASE_AUCTION => AuctionService::nextToCall($this->calls($playing), $playing->board->dealer),
       default => null,
     };
+  }
+
+  /**
+   * The calls made so far, in the order they were made (row id), as the
+   * list `AuctionService`'s rules read.
+   *
+   * @return list<array{seat: string, bid: Bid}>
+   */
+  public function calls(BoardTable $playing): array
+  {
+    return $playing->auctions
+      ->sortBy('id')
+      ->map(fn ($auction) => ['seat' => $auction->seat, 'bid' => $auction->bid])
+      ->values()
+      ->all();
   }
 
   /**

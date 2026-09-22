@@ -54,6 +54,8 @@ class PlayingStateTest extends TestCase
           'my_seat' => null,
           'hand' => null,
           'turn' => null,
+          'auction' => null,
+          'contract' => null,
         ],
       ]);
   }

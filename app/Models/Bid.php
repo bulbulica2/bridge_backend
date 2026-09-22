@@ -18,6 +18,12 @@ use LogicException;
  */
 class Bid extends Model
 {
+  public const PASS = 'P';
+
+  public const DOUBLE = 'X';
+
+  public const REDOUBLE = 'XX';
+
   protected $fillable = [
     'suit',
     'suit_name',
@@ -75,6 +81,29 @@ class Bid extends Model
     }
 
     return [$this->level, Suits::strainRank($this->strain)];
+  }
+
+  public function isPass(): bool
+  {
+    return $this->suit === self::PASS;
+  }
+
+  public function isDouble(): bool
+  {
+    return $this->suit === self::DOUBLE;
+  }
+
+  public function isRedouble(): bool
+  {
+    return $this->suit === self::REDOUBLE;
+  }
+
+  /**
+   * A contract bid (`1C`…`7NT`), as opposed to `P`, `X` or `XX`.
+   */
+  public function isContract(): bool
+  {
+    return ! $this->special;
   }
 
   public function auctions(): HasMany

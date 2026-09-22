@@ -92,8 +92,9 @@ vendor/bin/pint --test            # check formatting without changing files
   (`DELETE /tables/{table}/seats/{user}`, quit if it's your own seat,
   otherwise a manager kicking that player), all behind the `auth` middleware. Both serialise a
   table through `App\Http\Resources\TableResource` (model fields plus
-  `free_seats`), so every table payload has the same shape. `AuctionController`
-  (outside `Game/`) and `Game\BidController` are empty.
+  `free_seats`), so every table payload has the same shape.
+  `Game\CallController@store` (`POST /tables/{table}/calls`) is the auction
+  endpoint; `Game\PlayingController@show` serves the game state.
 - **Seating**: all seat logic lives in `App\Services\TableSeatService`.
   `seat()` checks the seat is valid and free and turns a unique-index SQLSTATE
   23000 into `App\Exceptions\SeatUnavailableException`. Taking a seat while
@@ -145,18 +146,34 @@ vendor/bin/pint --test            # check formatting without changing files
   `App.Models.User.{id}`, never on the table channel.
   `startPlayingIfFull()` dispatches `PlayingUpdated` (table channel, the
   public game state only — no hand, no `my_seat`) and one `HandDealt` per
-  player (their own channel, their 13 cards) when it deals a board. The
-  auction and card play are meant to re-dispatch `PlayingUpdated` after each
-  call or card.
+  player (their own channel, their 13 cards) when it deals a board.
+  `AuctionService` re-dispatches `PlayingUpdated` after every accepted call;
+  card play is meant to do the same after each card.
 - **Game state**: `App\Services\PlayingStateService` is the one place that
   works out a playing's phase (`waiting`/`auction`/`play`/`finished`, from
-  `tables.board_id`, `auction_ended_at`, `finished_at`), whose `turn` it is
-  (the dealer during the auction until calls exist) and a seat's hand (its
+  `tables.board_id`, `auction_ended_at`, `finished_at`), the calls so far
+  (`calls()`, by row id), whose `turn` it is (during the auction,
+  `AuctionService::nextToCall()`) and a seat's hand (its
   `board_card` rows less anything in `cardplays`, sorted S/H/D/C high to
   low). `PlayingResource` is the public part; `stateFor()` adds the caller's
   `my_seat` and `hand`. `GET /tables/{table}/playing`
   (`Game\PlayingController`) serves it to seated players only
   (`TablePolicy::play`). Extend these rather than recompute state elsewhere.
+  The payload also carries `auction` (`{seat, bid: {id, call, level,
+  strain, special}}` per call) and `contract` (`{bid, doubled, declarer,
+  dummy}` once the auction ends with a bid).
+- **Auction**: `App\Services\AuctionService::call()` runs one call in a
+  transaction that `lockForUpdate`s the `board_table` row
+  (`PlayingStateService::currentPlaying($table, lock: true)`), so concurrent
+  calls queue. The bidding rules are **static** functions over a list of
+  `['seat' => ..., 'bid' => Bid]` (`nextToCall`, `illegalReason`, `isOver`,
+  `result`), unit-tested without a DB in `tests/Unit/AuctionServiceTest`.
+  An illegal call throws `App\Exceptions\IllegalCallException`, which the
+  controller maps to a 409 carrying the reason. Tell calls apart with
+  `Bid::isPass()/isDouble()/isRedouble()/isContract()`. When the auction ends
+  it saves `contract_bid_id`, `doubled`, `declarer_seat`, `declarer_id` (from
+  the `board_table_seats` snapshot) and `auction_ended_at`; a passed out
+  board also gets `finished_at` (scoring isn't built, so no score of 0).
 - **Authorization**: `App\Policies\TablePolicy::manage` (auto-discovered) is
   true for a table's `moderated_by`, any `is_admin` user, or its `created_by`
   **while that creator still holds a seat there** — a table has exactly one
@@ -230,9 +247,9 @@ vendor/bin/pint --test            # check formatting without changing files
   only seats users without a seat, so some tables stay partly or completely
   empty. A completely empty seeded table is **inactive** — a state the API
   itself never leaves behind, since leaving deletes the table.
-- Board selection (`GAME-RULES.md` §8) is implemented; no other game rules
-  are enforced yet (turn order, bid legality, follow suit, trick winner,
-  scoring).
+- Board selection (`GAME-RULES.md` §8) and the auction (§4: turn order, bid
+  legality, X/XX, end of auction, contract and declarer) are implemented; no
+  other game rules are enforced yet (follow suit, trick winner, scoring).
 - `AuctionFactory`/`CardplayFactory` default `board_table_id` to a fresh
   `BoardTable::factory()`, whose board has no `board_card` rows. Such boards
   are inert — board selection only considers boards with a full 52-card deal.
