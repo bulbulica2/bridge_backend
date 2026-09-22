@@ -24,4 +24,13 @@ class TablePolicy
       || ($user->id === (int) $table->created_by
         && $table->seats()->where('user_id', $user->id)->exists());
   }
+
+  /**
+   * Whether the user may read the table's game state: only the players
+   * seated there, the same audience as the `table.{id}` channel.
+   */
+  public function play(User $user, Table $table): bool
+  {
+    return $table->seats()->where('user_id', $user->id)->exists();
+  }
 }

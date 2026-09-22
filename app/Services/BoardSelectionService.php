@@ -4,6 +4,8 @@ namespace App\Services;
 
 use App\auxiliary\Seats;
 use App\auxiliary\Vulnerability;
+use App\Events\HandDealt;
+use App\Events\PlayingUpdated;
 use App\Models\Board;
 use App\Models\BoardTable;
 use App\Models\Card;
@@ -59,6 +61,13 @@ class BoardSelectionService
         'user_id' => $seat->user_id,
         'seat' => $seat->seat,
       ]);
+    }
+
+    // everyone sees the board; each player alone gets their cards
+    PlayingUpdated::dispatch($table);
+
+    foreach ($seats as $seat) {
+      HandDealt::dispatch($playing, $seat->user_id, $seat->seat);
     }
 
     return $playing;

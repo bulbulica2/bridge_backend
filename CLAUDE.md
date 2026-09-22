@@ -143,6 +143,20 @@ vendor/bin/pint --test            # check formatting without changing files
   auth is checked only at subscribe time, so a player who leaves stays
   subscribed — anything private to one player (their hand) must go on
   `App.Models.User.{id}`, never on the table channel.
+  `startPlayingIfFull()` dispatches `PlayingUpdated` (table channel, the
+  public game state only — no hand, no `my_seat`) and one `HandDealt` per
+  player (their own channel, their 13 cards) when it deals a board. The
+  auction and card play are meant to re-dispatch `PlayingUpdated` after each
+  call or card.
+- **Game state**: `App\Services\PlayingStateService` is the one place that
+  works out a playing's phase (`waiting`/`auction`/`play`/`finished`, from
+  `tables.board_id`, `auction_ended_at`, `finished_at`), whose `turn` it is
+  (the dealer during the auction until calls exist) and a seat's hand (its
+  `board_card` rows less anything in `cardplays`, sorted S/H/D/C high to
+  low). `PlayingResource` is the public part; `stateFor()` adds the caller's
+  `my_seat` and `hand`. `GET /tables/{table}/playing`
+  (`Game\PlayingController`) serves it to seated players only
+  (`TablePolicy::play`). Extend these rather than recompute state elsewhere.
 - **Authorization**: `App\Policies\TablePolicy::manage` (auto-discovered) is
   true for a table's `moderated_by`, any `is_admin` user, or its `created_by`
   **while that creator still holds a seat there** — a table has exactly one

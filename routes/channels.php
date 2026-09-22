@@ -3,8 +3,8 @@
 use App\Models\User;
 use Illuminate\Support\Facades\Broadcast;
 
-// a user's own channel: anything meant for one player only (their hand, once
-// the game broadcasts cards) belongs here, not on the table channel
+// a user's own channel: anything meant for one player only (their hand,
+// HandDealt) belongs here, not on the table channel
 Broadcast::channel('App.Models.User.{id}', function (User $user, $id) {
   return (int) $user->id === (int) $id;
 });
