@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Game\CallController;
 use App\Http\Controllers\Game\CardController;
+use App\Http\Controllers\Game\CardPlayController;
 use App\Http\Controllers\Game\PlayingController;
 use App\Http\Controllers\Game\TableController;
 use App\Http\Controllers\Game\TableSeatController;
@@ -38,6 +39,9 @@ Route::middleware('auth')->group(function () {
 
   // the next call in the auction: bid, pass, double or redouble
   Route::post('tables/{table}/calls', [CallController::class, 'store'])->name('tables.calls.store');
+
+  // the next card of the trick, from your own hand or, as declarer, dummy's
+  Route::post('tables/{table}/cards', [CardPlayController::class, 'store'])->name('tables.cards.store');
 
   // another player's public profile (no email)
   Route::get('users/{user}', [UserController::class, 'show'])->name('users.show');
