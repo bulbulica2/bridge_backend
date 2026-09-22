@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Game\CardController;
+use App\Http\Controllers\Game\PlayingController;
 use App\Http\Controllers\Game\TableController;
 use App\Http\Controllers\Game\TableSeatController;
 use App\Http\Controllers\UserController;
@@ -30,6 +31,9 @@ Route::middleware('auth')->group(function () {
 
   // quit if it is your own seat, otherwise a manager kicking that player out
   Route::delete('tables/{table}/seats/{user}', [TableSeatController::class, 'destroyUser'])->name('tables.seats.users.destroy');
+
+  // the game state of the board the table is on, for its seated players
+  Route::get('tables/{table}/playing', [PlayingController::class, 'show'])->name('tables.playing.show');
 
   // another player's public profile (no email)
   Route::get('users/{user}', [UserController::class, 'show'])->name('users.show');
