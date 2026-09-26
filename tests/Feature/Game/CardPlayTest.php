@@ -3,6 +3,7 @@
 namespace Tests\Feature\Game;
 
 use App\auxiliary\Seats;
+use App\auxiliary\Vulnerability;
 use App\Events\PlayingUpdated;
 use App\Models\Bid;
 use App\Models\BoardTable;
@@ -12,6 +13,7 @@ use App\Models\Table;
 use App\Models\User;
 use App\Services\CardPlayService;
 use App\Services\PlayingStateService;
+use App\Services\ScoringService;
 use App\Services\TableSeatService;
 use Database\Seeders\game\BidSeeder;
 use Database\Seeders\game\CardSeeder;
@@ -271,6 +273,88 @@ class CardPlayTest extends TestCase
       ->assertJsonPath('message', 'The board is finished.');
   }
 
+  public function test_the_13th_trick_scores_the_board_from_north_souths_side(): void
+  {
+    $this->playing->board->update(['vulnerable' => Vulnerability::NS]);
+
+    $this->playOut();
+
+    $playing = $this->playing->fresh();
+    $tricks = $playing->tricks_won;
+    $expected = ScoringService::score(Bid::where('suit', '4H')->sole(), 0, 'N', Vulnerability::NS, $tricks);
+
+    $this->assertSame($expected, $playing->score);
+    $this->assertNotNull($playing->finished_at);
+
+    $this->state('E')
+      ->assertJsonPath('data.phase', 'finished')
+      ->assertJsonPath('data.result.contract.call', '4H')
+      ->assertJsonPath('data.result.doubled', 0)
+      ->assertJsonPath('data.result.declarer', 'N')
+      ->assertJsonPath('data.result.tricks_won', $tricks)
+      ->assertJsonPath('data.result.score_ns', $expected)
+      ->assertJsonPath('data.result.made_by', $tricks - 10);
+  }
+
+  public function test_the_score_is_turned_round_when_east_west_declared(): void
+  {
+    $this->playing->board->update(['vulnerable' => Vulnerability::EW]);
+    $this->contract('2S', 'E', doubled: 1);
+
+    $this->playOut();
+
+    $playing = $this->playing->fresh();
+    $tricks = $playing->tricks_won;
+    $declarerScore = ScoringService::score(Bid::where('suit', '2S')->sole(), 1, 'E', Vulnerability::EW, $tricks);
+
+    $this->assertSame(CardPlayService::tricksWon(app(PlayingStateService::class)->plays($playing), 'S')['ew'], $tricks);
+    $this->assertSame(-$declarerScore, $playing->score);
+
+    $this->state('N')
+      ->assertJsonPath('data.result.declarer', 'E')
+      ->assertJsonPath('data.result.doubled', 1)
+      ->assertJsonPath('data.result.score_ns', -$declarerScore)
+      ->assertJsonPath('data.result.made_by', $tricks - 8);
+  }
+
+  public function test_the_last_card_broadcasts_the_finished_board(): void
+  {
+    Event::fake([PlayingUpdated::class]);
+
+    $this->playOut();
+
+    Event::assertDispatchedTimes(PlayingUpdated::class, 52);
+
+    $last = collect(Event::dispatched(PlayingUpdated::class))->last()[0]->broadcastWith()['playing'];
+
+    $this->assertSame('finished', $last['phase']);
+    $this->assertSame($this->playing->fresh()->score, $last['result']['score_ns']);
+  }
+
+  public function test_there_is_no_result_before_the_board_is_finished(): void
+  {
+    $this->plays('E S10, N S7, W S4, N SA');
+
+    $this->state('N')->assertJsonPath('data.result', null);
+  }
+
+  public function test_a_finished_playing_survives_a_player_leaving(): void
+  {
+    $this->playOut();
+
+    $score = $this->playing->fresh()->score;
+
+    $this->actingAs($this->players['E'])
+      ->deleteJson("/tables/{$this->table->id}/seats")
+      ->assertOk();
+
+    $playing = $this->playing->fresh();
+    $this->assertSame($this->table->id, $playing->table_id);
+    $this->assertSame($score, $playing->score);
+    $this->assertNotNull($playing->finished_at);
+    $this->assertSame(52, $playing->cardPlays()->count());
+  }
+
   public function test_every_card_broadcasts_and_only_face_up_cards(): void
   {
     Event::fake([PlayingUpdated::class]);
@@ -329,14 +413,15 @@ class CardPlayTest extends TestCase
   }
 
   /**
-   * End the auction in `$contract`, declared by North.
+   * End the auction in `$contract`, declared by North unless told otherwise.
    */
-  private function contract(string $contract): void
+  private function contract(string $contract, string $declarer = 'N', int $doubled = 0): void
   {
     $this->playing->update([
       'contract_bid_id' => Bid::where('suit', $contract)->value('id'),
-      'declarer_seat' => 'N',
-      'declarer_id' => $this->players['N']->id,
+      'doubled' => $doubled,
+      'declarer_seat' => $declarer,
+      'declarer_id' => $this->players[$declarer]->id,
       'auction_ended_at' => now(),
     ]);
   }

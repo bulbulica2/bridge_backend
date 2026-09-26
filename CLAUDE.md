@@ -168,8 +168,9 @@ vendor/bin/pint --test            # check formatting without changing files
   strain, special}}` per call), `contract` (`{bid, doubled, declarer,
   dummy}` once the auction ends with a bid) and, once there is a contract,
   `tricks`, `current_trick`, `tricks_won` and `dummy_hand` (null until the
-  opening lead). `dummy_hand` is public — it goes on the table channel —
-  because dummy is face up; no other hand may.
+  opening lead), plus `result` once the board is finished. `dummy_hand` is
+  public — it goes on the table channel — because dummy is face up; no
+  other hand may.
 - **Auction**: `App\Services\AuctionService::call()` runs one call in a
   transaction that `lockForUpdate`s the `board_table` row
   (`PlayingStateService::currentPlaying($table, lock: true)`), so concurrent
@@ -181,7 +182,7 @@ vendor/bin/pint --test            # check formatting without changing files
   `Bid::isPass()/isDouble()/isRedouble()/isContract()`. When the auction ends
   it saves `contract_bid_id`, `doubled`, `declarer_seat`, `declarer_id` (from
   the `board_table_seats` snapshot) and `auction_ended_at`; a passed out
-  board also gets `finished_at` (scoring isn't built, so no score of 0).
+  board is finished at once through `BoardTable::finish(null)` (score 0).
 - **Card play**: `App\Services\CardPlayService::play()`
   (`POST /tables/{table}/cards`, `Game\CardPlayController`) follows the same
   pattern: one transaction with the `board_table` row locked, static rules
@@ -192,7 +193,7 @@ vendor/bin/pint --test            # check formatting without changing files
   dummy's cards, so a `cardplays` row's `user_id` is the caller and its
   `seat` the hand the card came from; dummy's own user is always refused.
   After each 4th card the winner's row gets `won_trick`; after the 13th trick
-  it writes `tricks_won` and `finished_at` (scoring will take that over).
+  it calls `BoardTable::finish($tricksWon)`.
   Compare cards by `rank` (not contiguous: 11 is skipped), never by id.
 - **Authorization**: `App\Policies\TablePolicy::manage` (auto-discovered) is
   true for a table's `moderated_by`, any `is_admin` user, or its `created_by`
@@ -267,10 +268,18 @@ vendor/bin/pint --test            # check formatting without changing files
   only seats users without a seat, so some tables stay partly or completely
   empty. A completely empty seeded table is **inactive** — a state the API
   itself never leaves behind, since leaving deletes the table.
+- **Scoring**: `App\Services\ScoringService::score()` is a pure static
+  function (duplicate scoring, §6) unit-tested in `tests/Unit/ScoringTest`;
+  it returns the score from **declarer's** side. `BoardTable::finish()` is
+  the only place a playing ends: it writes `tricks_won`, `score` (stored
+  **from N-S's side**, negated when E-W declared) and `finished_at`; a passed
+  out board gets `score = 0`, `tricks_won` null. `PlayingResource` shows it
+  as `result` once `finished_at` is set.
 - Board selection (`GAME-RULES.md` §8), the auction (§4: turn order, bid
-  legality, X/XX, end of auction, contract and declarer) and the play (§5:
+  legality, X/XX, end of auction, contract and declarer), the play (§5:
   opening lead, declarer playing dummy, follow suit, trick winner, dummy
-  revealed after the lead, tricks won) are implemented; scoring (§6) isn't.
+  revealed after the lead, tricks won) and duplicate scoring (§6) are
+  implemented; moving to the next board and matchpoints/IMPs aren't.
 - `AuctionFactory`/`CardplayFactory` default `board_table_id` to a fresh
   `BoardTable::factory()`, whose board has no `board_card` rows. Such boards
   are inert — board selection only considers boards with a full 52-card deal.

@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Services\CardPlayService;
+use App\Services\ScoringService;
 use Database\Factories\BoardTableFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -77,6 +79,39 @@ class BoardTable extends Model
   public function cardPlays(): HasMany
   {
     return $this->hasMany(Cardplay::class);
+  }
+
+  /**
+   * Close the playing: write its result and score and mark it finished.
+   * The one place a board ends, whether the auction passed it out or the
+   * 13th trick was played.
+   *
+   * `score` is stored from N-S's point of view, so it is turned round when
+   * E-W declared. A passed out board scores 0 and has no `tricks_won`.
+   *
+   * @param  int|null  $tricksWon  tricks taken by declarer's side; null when passed out
+   */
+  public function finish(?int $tricksWon): void
+  {
+    if ($this->contractBid === null) {
+      $this->update(['tricks_won' => null, 'score' => 0, 'finished_at' => now()]);
+
+      return;
+    }
+
+    $score = ScoringService::score(
+      $this->contractBid,
+      (int) $this->doubled,
+      $this->declarer_seat,
+      $this->board->vulnerable,
+      $tricksWon,
+    );
+
+    $this->update([
+      'tricks_won' => $tricksWon,
+      'score' => CardPlayService::side($this->declarer_seat) === 'ns' ? $score : -$score,
+      'finished_at' => now(),
+    ]);
   }
 
   /**

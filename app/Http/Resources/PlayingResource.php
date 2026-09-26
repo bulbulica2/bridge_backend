@@ -8,6 +8,7 @@ use App\Models\BoardTable;
 use App\Models\Card;
 use App\Services\CardPlayService;
 use App\Services\PlayingStateService;
+use App\Services\ScoringService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -43,6 +44,7 @@ class PlayingResource extends JsonResource
         'auction' => null,
         'contract' => null,
         ...self::play(null),
+        'result' => null,
       ];
     }
 
@@ -78,6 +80,35 @@ class PlayingResource extends JsonResource
         'dummy' => Seats::partner($playing->declarer_seat),
       ],
       ...self::play($playing),
+      'result' => self::result($playing),
+    ];
+  }
+
+  /**
+   * How the board ended, once it is finished: the contract, declarer's
+   * tricks, the score from N-S's side and `made_by`, the overtricks (+) or
+   * undertricks (−) against the contract. A passed out board has only
+   * `score_ns: 0`, every other field null.
+   *
+   * @return array<string, mixed>|null
+   */
+  private static function result(BoardTable $playing): ?array
+  {
+    if ($playing->finished_at === null) {
+      return null;
+    }
+
+    $contract = $playing->contractBid;
+
+    return [
+      'contract' => $contract === null ? null : self::bid($contract),
+      'doubled' => $contract === null ? null : $playing->doubled,
+      'declarer' => $playing->declarer_seat,
+      'tricks_won' => $playing->tricks_won,
+      'score_ns' => $playing->score,
+      'made_by' => $contract === null || $playing->tricks_won === null
+        ? null
+        : $playing->tricks_won - $contract->level - ScoringService::BOOK,
     ];
   }
 
