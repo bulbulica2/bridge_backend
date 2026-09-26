@@ -44,6 +44,8 @@ return new class extends Migration
       $table->foreignId('board_table_id')->constrained('board_table')->onDelete('cascade');
       $table->foreignId('user_id')->constrained('users');
       $table->enum('seat', Seats::SEATS);
+      // once the board is finished: when this player asked for the next one
+      $table->timestamp('ready_at')->nullable();
       $table->timestamps();
 
       $table->unique(['board_table_id', 'seat']);

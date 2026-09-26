@@ -6,10 +6,13 @@ use App\auxiliary\Seats;
 use App\auxiliary\Vulnerability;
 use App\Events\HandDealt;
 use App\Events\PlayingUpdated;
+use App\Events\TableUpdated;
+use App\Exceptions\NextBoardException;
 use App\Models\Board;
 use App\Models\BoardTable;
 use App\Models\Card;
 use App\Models\Table;
+use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
@@ -22,10 +25,13 @@ use RuntimeException;
  * A playing can only start once all four seats are taken: the selection rule
  * needs every player's history, and `board_table_seats` snapshots four seats.
  * That is why `POST /tables` still leaves `tables.board_id` null — the board
- * is dealt by whoever fills the last seat.
+ * is dealt by whoever fills the last seat. After that, a finished board is
+ * followed by the next one once all four players ask for it (`moveOn()`).
  */
 class BoardSelectionService
 {
+  public function __construct(private PlayingStateService $state) {}
+
   /**
    * Deal a board to a table that has just filled up, and open the playing.
    *
@@ -71,6 +77,76 @@ class BoardSelectionService
     }
 
     return $playing;
+  }
+
+  /**
+   * `$user` asks for the table's next board once the current one is
+   * finished. The result stays up until every player has asked, so nobody
+   * has it pulled away before they have read it; the last one to ask deals
+   * the next board, picked by the same rule as the first
+   * (`startPlayingIfFull()`). `$everyone` (a manager's call, checked by the
+   * caller) asks for all four at once.
+   *
+   * Asking twice changes nothing. Returns the new playing once it is dealt,
+   * or null while somebody has still to ask.
+   *
+   * Broadcasts `PlayingUpdated` when a player is newly ready and, once the
+   * board is dealt, `TableUpdated` along with `startPlayingIfFull()`'s own
+   * events — what the fourth seat being taken sends.
+   *
+   * Mutates `$table` (`board_id`).
+   *
+   * @throws NextBoardException
+   */
+  public function moveOn(Table $table, User $user, bool $everyone = false): ?BoardTable
+  {
+    return DB::transaction(function () use ($table, $user, $everyone) {
+      // the lock seat changes take, so a player leaving and the last player
+      // asking queue rather than race; then reread the board, which whoever
+      // held the lock before may have moved on
+      Table::whereKey($table->getKey())->lockForUpdate()->firstOrFail();
+      $table->refresh();
+
+      $playing = $this->state->currentPlaying($table, lock: true);
+
+      $phaseError = match ($this->state->phase($playing)) {
+        PlayingStateService::PHASE_WAITING => 'The table has no board yet: the first one is dealt once four players are seated.',
+        PlayingStateService::PHASE_FINISHED => null,
+        default => 'The board is not finished yet.',
+      };
+
+      if ($phaseError !== null) {
+        throw new NextBoardException($phaseError);
+      }
+
+      if ($table->seats()->count() < count(Seats::SEATS)) {
+        throw new NextBoardException('The table is short of a player: the next board is dealt as soon as a fourth one sits down.');
+      }
+
+      // whoever sits there now played this board: a player leaving and
+      // another filling the seat would already have dealt the next one
+      $asking = $playing->seats()->whereNull('ready_at');
+
+      if (! $everyone) {
+        $asking->where('user_id', $user->id);
+      }
+
+      if ($asking->update(['ready_at' => now()]) === 0) {
+        return null;
+      }
+
+      if ($playing->seats()->whereNull('ready_at')->exists()) {
+        PlayingUpdated::dispatch($table);
+
+        return null;
+      }
+
+      $next = $this->startPlayingIfFull($table);
+
+      TableUpdated::dispatch($table);
+
+      return $next;
+    });
   }
 
   /**

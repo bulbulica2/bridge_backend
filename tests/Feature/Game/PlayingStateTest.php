@@ -62,6 +62,8 @@ class PlayingStateTest extends TestCase
           'tricks_won' => null,
           'dummy_hand' => null,
           'result' => null,
+          'deal' => null,
+          'ready' => null,
         ],
       ]);
   }

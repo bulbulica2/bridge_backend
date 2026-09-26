@@ -37,6 +37,9 @@ Route::middleware('auth')->group(function () {
   // the game state of the board the table is on, for its seated players
   Route::get('tables/{table}/playing', [PlayingController::class, 'show'])->name('tables.playing.show');
 
+  // once the board is finished: ready for the next one (all four, or a manager for everyone)
+  Route::post('tables/{table}/playing/next', [PlayingController::class, 'next'])->name('tables.playing.next');
+
   // the next call in the auction: bid, pass, double or redouble
   Route::post('tables/{table}/calls', [CallController::class, 'store'])->name('tables.calls.store');
 

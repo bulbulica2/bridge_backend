@@ -19,9 +19,10 @@ use Illuminate\Http\Resources\Json\JsonResource;
  * phase with every other field null.
  *
  * No hidden hand ever goes in here: this is what `PlayingUpdated` broadcasts
- * on the table channel. The only cards in it are face up — the ones played
- * and, after the opening lead, dummy's. A player's own cards are added on
- * top by `PlayingStateService::stateFor()`.
+ * on the table channel. The only cards in it are face up — the ones played,
+ * after the opening lead dummy's, and once the board is finished the whole
+ * deal. A player's own cards are added on top by
+ * `PlayingStateService::stateFor()`.
  */
 class PlayingResource extends JsonResource
 {
@@ -45,8 +46,12 @@ class PlayingResource extends JsonResource
         'contract' => null,
         ...self::play(null),
         'result' => null,
+        'deal' => null,
+        'ready' => null,
       ];
     }
+
+    $finished = $playing->finished_at !== null;
 
     $players = [];
 
@@ -81,6 +86,10 @@ class PlayingResource extends JsonResource
       ],
       ...self::play($playing),
       'result' => self::result($playing),
+      // once the board is over nothing is hidden any more: all four hands
+      // as dealt, and who has asked for the next board
+      'deal' => $finished ? $state->deal($playing) : null,
+      'ready' => $finished ? $state->ready($playing) : null,
     ];
   }
 

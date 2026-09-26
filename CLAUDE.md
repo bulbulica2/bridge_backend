@@ -128,6 +128,15 @@ vendor/bin/pint --test            # check formatting without changing files
   the §8 rule (a board none of the four has played, else one where nobody
   holds a seat they've held on it, else `dealBoard()` shuffles a brand-new
   one), sets `tables.board_id` and opens the `board_table` playing.
+  After a board finishes it stays on the table (the state then shows the
+  whole `deal` and `ready`) until `moveOn()`
+  (`POST /tables/{table}/playing/next`, `Game\PlayingController@next`)
+  has marked all four snapshot seats' `board_table_seats.ready_at` — each
+  player for themselves, or a manager with `everyone` — and then calls
+  `startPlayingIfFull()` for the same four; it takes the table row lock
+  like seat changes do, and 409s (`NextBoardException`) unless the board is
+  finished and the table full. Leaving between boards detaches nothing, and
+  whoever refills the seat deals the next board straight away.
   `abandonPlaying()` fires from `remove()`: an unfinished playing is
   **detached** (`table_id` set to null), never deleted, so the seat snapshot
   keeps recording that those four saw the deal. `dealBoard()` needs the 52
@@ -279,7 +288,8 @@ vendor/bin/pint --test            # check formatting without changing files
   legality, X/XX, end of auction, contract and declarer), the play (§5:
   opening lead, declarer playing dummy, follow suit, trick winner, dummy
   revealed after the lead, tricks won) and duplicate scoring (§6) are
-  implemented; moving to the next board and matchpoints/IMPs aren't.
+  implemented, as is moving on to the next board; matchpoints/IMPs
+  aren't.
 - `AuctionFactory`/`CardplayFactory` default `board_table_id` to a fresh
   `BoardTable::factory()`, whose board has no `board_card` rows. Such boards
   are inert — board selection only considers boards with a full 52-card deal.
