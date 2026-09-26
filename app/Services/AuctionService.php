@@ -93,11 +93,8 @@ class AuctionService
     $result = self::result($calls);
 
     if ($result === null) {
-      // TODO 24-scoring: finish a passed out board there, with a score of 0
-      $playing->update([
-        'auction_ended_at' => now(),
-        'finished_at' => now(),
-      ]);
+      $playing->update(['auction_ended_at' => now()]);
+      $playing->finish(null);
 
       return;
     }

@@ -15,7 +15,7 @@ use Illuminate\Support\Facades\DB;
 /**
  * The play: takes one card at a time, checks it against the rules of play
  * (`GAME-RULES.md` §5), decides each trick's winner and, after the 13th
- * trick, saves how many tricks declarer took.
+ * trick, scores the board and closes the playing.
  *
  * Like `AuctionService`, the rules are static functions over a list of plays,
  * each a `['seat' => 'N', 'card' => Card]` pair in the order they were played
@@ -110,7 +110,8 @@ class CardPlayService
   }
 
   /**
-   * Write the outcome of the 13th trick on the playing.
+   * Close the playing after the 13th trick: declarer's tricks, the score
+   * and `finished_at` (`BoardTable::finish()`).
    *
    * @param  list<array{seat: string, card: Card}>  $plays
    */
@@ -118,11 +119,7 @@ class CardPlayService
   {
     $won = self::tricksWon($plays, $this->state->trump($playing));
 
-    // TODO 24-scoring: hand the finished board to scoring, which also writes `score`
-    $playing->update([
-      'tricks_won' => $won[self::side($playing->declarer_seat)],
-      'finished_at' => now(),
-    ]);
+    $playing->finish($won[self::side($playing->declarer_seat)]);
   }
 
   /**

@@ -209,12 +209,22 @@ class AuctionTest extends TestCase
       ->assertJsonPath('data.phase', 'finished')
       ->assertJsonPath('data.turn', null)
       ->assertJsonPath('data.contract', null)
+      ->assertJsonPath('data.result', [
+        'contract' => null,
+        'doubled' => null,
+        'declarer' => null,
+        'tricks_won' => null,
+        'score_ns' => 0,
+        'made_by' => null,
+      ])
       ->assertJsonCount(4, 'data.auction');
 
     $playing = BoardTable::firstOrFail();
     $this->assertNull($playing->contract_bid_id);
     $this->assertNull($playing->declarer_seat);
     $this->assertNull($playing->declarer_id);
+    $this->assertNull($playing->tricks_won);
+    $this->assertSame(0, $playing->score);
     $this->assertNotNull($playing->auction_ended_at);
     $this->assertNotNull($playing->finished_at);
   }
