@@ -11,7 +11,15 @@ class BoardTableSeat extends Model
     'board_table_id',
     'user_id',
     'seat',
+    'ready_at',
   ];
+
+  protected function casts(): array
+  {
+    return [
+      'ready_at' => 'datetime',
+    ];
+  }
 
   public function boardTable(): BelongsTo
   {

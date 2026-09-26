@@ -68,7 +68,7 @@ class PlayingStateService
    * The seat expected to act next, or null when nobody is.
    *
    * During the auction that is the dealer, then clockwise after the last
-   * call. During the play it is the hand the next card comes from — dummy's
+   * call. During the play it is the hand the next card comes from ï¿½ dummy's
    * included, though declarer is the one who plays it (`actingUserId()`).
    */
   public function turn(?BoardTable $playing): ?string
@@ -172,12 +172,56 @@ class PlayingStateService
    */
   public function hand(BoardTable $playing, string $seat): array
   {
+    return self::sorted(
+      $playing->board->cards()
+        ->wherePivot('seat', $seat)
+        ->whereNotIn('cards.id', $playing->cardPlays()->select('card_id'))
+        ->get()
+    );
+  }
+
+  /**
+   * All four hands as they were dealt (`board_card`, not what is left after
+   * the play), each sorted like `hand()`. Only for a finished board: before
+   * that, three of them are hidden from each player.
+   *
+   * @return array<string, list<array{id: int, suit: string, rank: int, rank_name: string}>>
+   */
+  public function deal(BoardTable $playing): array
+  {
+    $cards = $playing->board->cards()->get();
+    $deal = [];
+
+    foreach (Seats::SEATS as $seat) {
+      $deal[$seat] = self::sorted($cards->filter(fn ($card) => $card->pivot->seat === $seat));
+    }
+
+    return $deal;
+  }
+
+  /**
+   * The seats whose players have asked for the next board, in seat order.
+   *
+   * @return list<string>
+   */
+  public function ready(BoardTable $playing): array
+  {
+    $ready = $playing->seats->whereNotNull('ready_at')->pluck('seat')->all();
+
+    return array_values(array_intersect(Seats::SEATS, $ready));
+  }
+
+  /**
+   * Cards spades to clubs, high to low, in the payload's card shape.
+   *
+   * @param  iterable<Card>  $cards
+   * @return list<array{id: int, suit: string, rank: int, rank_name: string}>
+   */
+  private static function sorted(iterable $cards): array
+  {
     $suitOrder = array_flip(self::HAND_SUIT_ORDER);
 
-    return $playing->board->cards()
-      ->wherePivot('seat', $seat)
-      ->whereNotIn('cards.id', $playing->cardPlays()->select('card_id'))
-      ->get()
+    return collect($cards)
       ->sort(fn ($a, $b) => [$suitOrder[$a->suit], -$a->rank] <=> [$suitOrder[$b->suit], -$b->rank])
       ->map(fn ($card) => self::card($card))
       ->values()
