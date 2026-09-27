@@ -34,17 +34,24 @@ Route::middleware('auth')->group(function () {
   // quit if it is your own seat, otherwise a manager kicking that player out
   Route::delete('tables/{table}/seats/{user}', [TableSeatController::class, 'destroyUser'])->name('tables.seats.users.destroy');
 
-  // the game state of the board the table is on, for its seated players
-  Route::get('tables/{table}/playing', [PlayingController::class, 'show'])->name('tables.playing.show');
+  // a seated player is still there; the client sends it every ~30 s while the table is open
+  Route::post('tables/{table}/heartbeat', [TableSeatController::class, 'heartbeat'])->name('tables.heartbeat');
 
-  // once the board is finished: ready for the next one (all four, or a manager for everyone)
-  Route::post('tables/{table}/playing/next', [PlayingController::class, 'next'])->name('tables.playing.next');
+  // playing requests count as a heartbeat too (last_seen_at), so an active
+  // player is never released as idle
+  Route::middleware('seen')->group(function () {
+    // the game state of the board the table is on, for its seated players
+    Route::get('tables/{table}/playing', [PlayingController::class, 'show'])->name('tables.playing.show');
 
-  // the next call in the auction: bid, pass, double or redouble
-  Route::post('tables/{table}/calls', [CallController::class, 'store'])->name('tables.calls.store');
+    // once the board is finished: ready for the next one (all four, or a manager for everyone)
+    Route::post('tables/{table}/playing/next', [PlayingController::class, 'next'])->name('tables.playing.next');
 
-  // the next card of the trick, from your own hand or, as declarer, dummy's
-  Route::post('tables/{table}/cards', [CardPlayController::class, 'store'])->name('tables.cards.store');
+    // the next call in the auction: bid, pass, double or redouble
+    Route::post('tables/{table}/calls', [CallController::class, 'store'])->name('tables.calls.store');
+
+    // the next card of the trick, from your own hand or, as declarer, dummy's
+    Route::post('tables/{table}/cards', [CardPlayController::class, 'store'])->name('tables.cards.store');
+  });
 
   // another player's public profile (no email)
   Route::get('users/{user}', [UserController::class, 'show'])->name('users.show');

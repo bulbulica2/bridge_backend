@@ -93,6 +93,22 @@ class TableSeatController extends BaseController
   }
 
   /**
+   * A sign of life from a seated player, sent every ~30 s while the table is
+   * open, so `tables:release-idle-seats` doesn't free their seat.
+   */
+  public function heartbeat(Request $request, Table $table, TableSeatService $seatService): JsonResponse
+  {
+    $this->authorize('play', $table);
+
+    $seatService->touch($table, $request->user());
+
+    return $this->sendResponse(
+      ['last_seen_at' => $table->seats()->where('user_id', $request->user()->id)->first()->last_seen_at],
+      'Heartbeat received.'
+    );
+  }
+
+  /**
    * One response shape for both ways out of a seat: the table as it stands
    * now, or a note that emptying it deleted it.
    */

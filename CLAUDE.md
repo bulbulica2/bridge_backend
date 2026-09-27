@@ -25,6 +25,8 @@ Local stack is XAMPP (MySQL on 3306, DB `bridge`, user `root`, no password).
 php artisan serve                 # API on http://127.0.0.1:8000
 php artisan reverb:start          # websocket server on :8080 (live table updates)
 php artisan queue:work --sleep=0.1  # sends queued broadcasts to Reverb
+php artisan schedule:work         # runs tables:release-idle-seats every minute
+php artisan tables:release-idle-seats  # free idle players' seats once, by hand
 php artisan migrate:fresh --seed  # rebuild DB with sample data
 php artisan route:list            # actual registered routes
 php artisan test                  # all tests (PHPUnit 11)
@@ -64,8 +66,8 @@ vendor/bin/pint --test            # check formatting without changing files
   `POST /broadcasting/auth`, switch to the `reverb` driver inside the test
   (see `TableBroadcastTest::useReverbBroadcaster`) — the `null` driver lets
   everyone in.
-- Long-running `reverb:start` and `queue:work` keep old code loaded: restart
-  them after changing PHP.
+- Long-running `reverb:start`, `queue:work` and `schedule:work` keep old code
+  loaded: restart them after changing PHP.
 
 ## Architecture
 
@@ -121,6 +123,19 @@ vendor/bin/pint --test            # check formatting without changing files
   isn't recorded anywhere — there is no ban list, so a kicked player can
   rejoin at once. Both also call into `BoardSelectionService` (below), so
   they mutate the passed-in `$table`'s `board_id`.
+- **Idle seats**: `table_seats.last_seen_at` is a player's last sign of life.
+  `TableSeatService::touch()` sets it, from `POST /tables/{table}/heartbeat`
+  (`TableSeatController@heartbeat`, sent by the client every ~30 s) and from
+  the `seen` route middleware (`App\Http\Middleware\TouchTableSeat`) on the
+  playing endpoints; add `seen` to any new playing route. The scheduled
+  `tables:release-idle-seats` command (`routes/console.php`,
+  `App\Console\Commands\ReleaseIdleSeats`) calls `releaseIdleSeats()`,
+  which frees stale seats through `remove()` — so it is exactly a leave —
+  after `config('bridge.idle_seat_minutes')` (5), or
+  `bridge.idle_playing_seat_minutes` (15) while the table has an unfinished
+  playing, re-checking each seat under its table lock. Reverb can't report
+  disconnects back to Laravel, which is why this is a heartbeat and not a
+  presence channel.
 - **Boards**: `App\Services\BoardSelectionService` owns which board a table
   plays. `startPlayingIfFull()` fires from `seat()` when the **fourth** seat
   is taken — not at `POST /tables`, because the selection rule needs all four
