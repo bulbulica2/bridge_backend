@@ -9,6 +9,10 @@ use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\Factory;
 
 /**
+ * Test filler: a random card in a random seat, round and order, not a legal
+ * play. Anything that needs legal play goes through `CardPlayService` (as
+ * `CardplaySeeder` does).
+ *
  * @extends \Illuminate\Database\Eloquent\Factories\Factory<\App\Models\Cardplay>
  */
 class CardplayFactory extends Factory

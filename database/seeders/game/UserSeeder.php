@@ -9,6 +9,12 @@ use Illuminate\Support\Facades\Hash;
 class UserSeeder extends Seeder
 {
   /**
+   * The fixed admin's login (password `pass`). TableSeeder sits them at a
+   * table where it is their turn to call.
+   */
+  public const ADMIN_EMAIL = 'email@email.com';
+
+  /**
    * Run the database seeds.
    */
   public function run(): void
@@ -18,7 +24,7 @@ class UserSeeder extends Seeder
     $admins[] = [
       'name' => 'bulbulica',
       'username' => 'bulbulica',
-      'email' => 'email@email.com',
+      'email' => self::ADMIN_EMAIL,
       'email_verified_at' => now(),
       'password' => Hash::make('pass'),
       'is_admin' => 1,

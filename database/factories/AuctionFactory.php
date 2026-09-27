@@ -10,6 +10,10 @@ use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\Factory;
 
 /**
+ * Test filler: a random call by a random seat, not a legal one. Anything that
+ * needs a legal auction goes through `AuctionService` (as `AuctionSeeder`
+ * does).
+ *
  * @extends Factory<Auction>
  */
 class AuctionFactory extends Factory
