@@ -16,7 +16,23 @@ class TableSeat extends Model
     'table_id',
     'user_id',
     'seat',
+    'last_seen_at',
   ];
+
+  protected function casts(): array
+  {
+    return [
+      'last_seen_at' => 'datetime',
+    ];
+  }
+
+  protected static function booted(): void
+  {
+    // sitting down is a sign of life, so a fresh seat is never idle
+    static::creating(function (TableSeat $seat) {
+      $seat->last_seen_at ??= now();
+    });
+  }
 
   public function table(): BelongsTo
   {

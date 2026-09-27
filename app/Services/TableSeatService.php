@@ -9,6 +9,7 @@ use App\Models\Table;
 use App\Models\TableSeat;
 use App\Models\User;
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 class TableSeatService
@@ -68,7 +69,7 @@ class TableSeatService
         // they were its only player, and would lose their place in the
         // join order the moderator handover reads
         if ($held !== null && (int) $held->table_id === (int) $table->getKey()) {
-          $held->update(['seat' => $seat]);
+          $held->update(['seat' => $seat, 'last_seen_at' => now()]);
 
           TableUpdated::dispatch($table);
 
@@ -184,6 +185,85 @@ class TableSeatService
       TableUpdated::dispatch($table);
 
       return false;
+    });
+  }
+
+  /**
+   * Record a sign of life from a player at a table (`last_seen_at`), so the
+   * idle-seat sweeper leaves them alone. A no-op for somebody who doesn't sit
+   * there. Leaves `updated_at` alone: nothing about the seat changed.
+   */
+  public function touch(Table $table, User $user): void
+  {
+    TableSeat::query()
+      ->where('table_id', $table->getKey())
+      ->where('user_id', $user->id)
+      ->toBase()
+      ->update(['last_seen_at' => now()]);
+  }
+
+  /**
+   * Free the seat of every player who has gone quiet for longer than
+   * `bridge.idle_seat_minutes`, or `bridge.idle_playing_seat_minutes` while
+   * their table is in the middle of a board. Each goes out through remove(),
+   * exactly like a leave: moderation is handed on, an unfinished playing is
+   * detached, an emptied table is deleted and the others are told.
+   *
+   * Returns how many seats were freed.
+   */
+  public function releaseIdleSeats(): int
+  {
+    $lobbyCutoff = now()->subMinutes(config('bridge.idle_seat_minutes'));
+    $playingCutoff = now()->subMinutes(config('bridge.idle_playing_seat_minutes'));
+
+    // every seat idle past the shorter timeout; each is then held to the
+    // timeout its own table calls for
+    $candidates = TableSeat::query()
+      ->where('last_seen_at', '<', $lobbyCutoff->max($playingCutoff))
+      ->orderBy('id')
+      ->pluck('id');
+
+    $freed = 0;
+
+    foreach ($candidates as $seatId) {
+      if ($this->releaseIfIdle($seatId, $lobbyCutoff, $playingCutoff)) {
+        $freed++;
+      }
+    }
+
+    return $freed;
+  }
+
+  /**
+   * Free one seat if it is still idle once its table is locked: between the
+   * sweep's query and here the player may have sent a heartbeat, moved or
+   * left, or the table may have started or finished a board.
+   */
+  private function releaseIfIdle(int $seatId, Carbon $lobbyCutoff, Carbon $playingCutoff): bool
+  {
+    return DB::transaction(function () use ($seatId, $lobbyCutoff, $playingCutoff) {
+      $tableId = TableSeat::whereKey($seatId)->value('table_id');
+
+      if ($tableId === null) {
+        return false;
+      }
+
+      $table = Table::whereKey($tableId)->lockForUpdate()->first();
+      $seat = TableSeat::whereKey($seatId)->where('table_id', $tableId)->with('user')->first();
+
+      if ($table === null || $seat === null) {
+        return false;
+      }
+
+      $cutoff = $this->boardSelection->openPlaying($table) !== null ? $playingCutoff : $lobbyCutoff;
+
+      if ($seat->last_seen_at->gte($cutoff)) {
+        return false;
+      }
+
+      $this->remove($table, $seat->user);
+
+      return true;
     });
   }
 }

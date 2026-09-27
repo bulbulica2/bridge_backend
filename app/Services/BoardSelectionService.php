@@ -279,7 +279,10 @@ class BoardSelectionService
       ->whereNotIn('id', BoardTable::query()->where('table_id', $table->id)->select('board_id'));
   }
 
-  private function openPlaying(Table $table): ?BoardTable
+  /**
+   * The table's unfinished playing, if a board is in its auction or play.
+   */
+  public function openPlaying(Table $table): ?BoardTable
   {
     return BoardTable::query()
       ->where('table_id', $table->id)

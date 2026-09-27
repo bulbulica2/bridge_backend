@@ -17,6 +17,9 @@ return new class extends Migration
       $table->foreignId('table_id')->constrained('tables')->onDelete('cascade');
       $table->foreignId('user_id')->constrained('users')->onDelete('cascade');
       $table->enum('seat', Seats::SEATS);
+      // last sign of life from the player (a heartbeat or a playing request),
+      // read by tables:release-idle-seats to free the seats of players who left
+      $table->timestamp('last_seen_at')->useCurrent()->index();
       $table->timestamps();
 
       // one user per seat at a table
