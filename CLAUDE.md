@@ -285,13 +285,20 @@ vendor/bin/pint --test            # check formatting without changing files
 - **Seeding** (`DatabaseSeeder`) branches on `APP_ENV`: `production` seeds only
   cards, bids and 100 dealt boards (through `BoardSeeder`, so they have
   hands); anything else also seeds a fixed admin user (`email@email.com` /
-  `pass`), random users, tables, seats, auctions and card plays. Seeders are
-  split between `database/seeders/game/` (namespace
-  `Database\Seeders\game`) and the root seeders folder. Seeded auctions and
-  card plays are random and don't follow bridge rules. `TableSeatSeeder`
-  only seats users without a seat, so some tables stay partly or completely
-  empty. A completely empty seeded table is **inactive** — a state the API
-  itself never leaves behind, since leaving deletes the table.
+  `pass`, `UserSeeder::ADMIN_EMAIL`) and `game\TableSeeder`'s tables, one
+  per phase (see `RUNNING.md`): the admin's own table left mid-auction on
+  the admin's turn, another mid-auction, one mid-play, one finished, one
+  passed out and one short of players. Seeders are split between
+  `database/seeders/game/` (namespace `Database\Seeders\game`) and the root
+  seeders folder. Everything is played through the real services:
+  `TableSeatService::seat()` (so the fourth player deals the board),
+  `AuctionSeeder` (plans a random auction from legal calls, then makes it
+  through `AuctionService`, optionally stopping where a seat is to call) and
+  `CardplaySeeder` (random legal cards through `CardPlayService`). They take
+  a `Table` and are run with `callWith()` from `TableSeeder`, which wraps it
+  all in `Event::fakeFor()` so seeding queues no broadcasts.
+  `tests/Feature/Database/DatabaseSeederTest` runs `migrate:fresh --seed`
+  and replays every seeded call and card through the rules.
 - **Scoring**: `App\Services\ScoringService::score()` is a pure static
   function (duplicate scoring, §6) unit-tested in `tests/Unit/ScoringTest`;
   it returns the score from **declarer's** side. `BoardTable::finish()` is
@@ -308,8 +315,9 @@ vendor/bin/pint --test            # check formatting without changing files
 - `AuctionFactory`/`CardplayFactory` default `board_table_id` to a fresh
   `BoardTable::factory()`, whose board has no `board_card` rows. Such boards
   are inert — board selection only considers boards with a full 52-card deal.
-  The seeders don't use those factories (`AuctionSeeder`/`CardplaySeeder`
-  write onto the seeded playings), so a seeded DB has only dealt boards.
+  Both factories make random, non-legal rows — test filler only. The seeders
+  don't use them (they go through the services), so a seeded DB has only
+  dealt boards and legal play.
 
 ## Keep API docs in sync — do this in every relevant change, not as a follow-up
 
