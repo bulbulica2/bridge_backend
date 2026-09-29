@@ -1,0 +1,503 @@
+# Contract Bridge — Domain Primer
+
+_What the app is for, the rules it models, and how those rules map onto the
+backend._
+
+Sources: [Wikipedia — Contract bridge](https://en.wikipedia.org/wiki/Contract_bridge),
+[Bicycle Cards — How to play Bridge](https://bicyclecards.com/how-to-play/bridge),
+[European Bridge League — What is bridge](https://www.eurobridge.org/what-is-bridge/).
+Scoring numbers follow the standard (WBF/ACBL) duplicate scoring table.
+
+## What the app is
+
+An online contract bridge platform: users register, sit at a **table** in one
+of the four seats, and play a **board** (a pre-dealt hand) through its two
+phases — the **auction** (bidding) and the **card play** (13 tricks). The
+result is then recorded per board per table.
+
+The data model is shaped for **duplicate bridge**: a `Board` is a stored deal
+that several `Table`s can play (the `tables.board_id` FK; board selection
+hands the same board to several tables as long as none of their players has
+played it), and the `board_table` record
+stores who sat where, the contract, tricks and score per board+table — which
+is exactly what duplicate needs to compare results across tables.
+
+Design intent (from the project owner):
+- A table has users (`table_seats`) and a **current board** (`tables.board_id`).
+- A board keeps a **history** of the tables that played it and when
+  (`board_table`). A board can be played by many tables, but **the same table
+  never plays the same board again**.
+- Boards should rotate as much as possible so players don't recognise a deal
+  if they meet it again (see the board-selection rule in §8).
+
+---
+
+## 1. Players, partnerships, seats
+
+- 4 players in 2 fixed partnerships. Partners sit opposite each other.
+- Seats are named by compass direction: **North–South** vs **East–West**.
+- Play and bidding proceed **clockwise**: N → E → S → W → N.
+
+**In code:** `Seats::SEATS = ['N','E','S','W']` (already in clockwise order).
+`table_seats` maps a `user_id` to a `seat` at a `table_id`. The database
+enforces one user per seat per table (`unique(table_id, seat)`) and one table
+per user (`unique(user_id)`). Leaving deletes the row; a table exists only
+while someone sits at it, so the last player out deletes the table.
+
+## 2. Cards and the deal
+
+- Standard 52-card deck, no jokers. Each player gets 13 cards.
+- Suit rank (high → low): **Spades ♠, Hearts ♥, Diamonds ♦, Clubs ♣**.
+  Suit rank matters for bidding only; in play no suit beats another except
+  the trump suit.
+- Card rank within a suit (high → low): A K Q J 10 9 8 7 6 5 4 3 2.
+- In rubber/social bridge the dealer deals one card at a time clockwise, and
+  the deal rotates clockwise each hand. In **duplicate**, the deal is fixed on
+  a **board** so it can be replayed identically at other tables.
+
+**In code:**
+- `cards` holds the 52 cards once (seeded by `CardSeeder`). `rank` encoding:
+  `2`–`10` = pip value, **`11` is skipped**, `12`=Jack, `13`=Queen,
+  `14`=King, `15`=Ace. Higher `rank` = higher card, so comparisons work; just
+  don't assume ranks are contiguous.
+- A board's deal is the `board_card` pivot (`board_id`, `card_id`, `seat`):
+  13 rows per seat. `BoardSeeder` shuffles the 52 ids and chunks them. The
+  primary key `(board_id, card_id)` stops a card being dealt twice on one
+  board (it doesn't check 13 cards per seat).
+
+## 3. Boards: dealer and vulnerability
+
+In duplicate, every board number fixes **who deals** and **who is
+vulnerable** (vulnerability raises both bonuses and penalties). The pattern
+repeats every 16 boards:
+
+- **Dealer** = board number mod 4: 1→N, 2→E, 3→S, 0 (4)→W.
+- **Vulnerability:**
+
+| Board | Dealer | Vul | | Board | Dealer | Vul |
+|---|---|---|---|---|---|---|
+| 1 | N | None | | 9 | N | E-W |
+| 2 | E | N-S | | 10 | E | Both |
+| 3 | S | E-W | | 11 | S | None |
+| 4 | W | Both | | 12 | W | N-S |
+| 5 | N | N-S | | 13 | N | Both |
+| 6 | E | E-W | | 14 | E | None |
+| 7 | S | Both | | 15 | S | N-S |
+| 8 | W | None | | 16 | W | E-W |
+
+**In code:** `boards` stores `number` (unsigned int), `dealer` (enum
+`Seats::SEATS`) and `vulnerable` (enum `Vulnerability::VULNERABILITY_SEATS`
+= `'N-S'`, `'E-W'`, `'N-S E-W'` (both), `''` (none); also exposed as
+`Vulnerability::NS/EW/BOTH/NONE`).
+The cycle above is implemented by `Seats::dealerForBoard(int)` and
+`Vulnerability::forBoard(int)` (covered by `tests/Unit/BoardCycleTest.php`).
+`BoardFactory` gives boards sequential numbers and derives `dealer` and
+`vulnerable` from them. The database doesn't check that the three columns
+agree, so code that creates boards outside the factory must use the helpers.
+
+## 4. The auction (bidding)
+
+Starting with the dealer and going clockwise, each player makes one **call**:
+
+- **Bid** = a level **1–7** plus a strain. The level is tricks *above six*
+  ("book"): `1♠` promises 7 tricks, `7NT` all 13.
+- **Strain order** (low → high): ♣ < ♦ < ♥ < ♠ < **NT** (no trump).
+  Every bid must be higher than the last bid: a higher level, or the same
+  level in a higher strain. So the 35 bids have a strict order
+  `1♣ 1♦ 1♥ 1♠ 1NT 2♣ … 7NT`.
+- **Pass** — always legal.
+- **Double (X)** — legal only when the **last non-pass call** is a contract
+  bid made by an **opponent**. Passes in between don't matter: after
+  N `1♥`, E `P`, S `P`, West may still double 1♥. It is illegal on your
+  partner's bid, and on a bid that is already doubled (then the last
+  non-pass call is the `X`, not the bid).
+- **Redouble (XX)** — legal only when the **last non-pass call** is an `X`
+  made by an **opponent**, i.e. your side's bid has been doubled and nobody
+  has bid since. Passes in between don't matter here either: N `1♥`,
+  E `X`, S `P`, W `P`, N `XX` is legal (so is S redoubling straight away).
+  It can't be redoubled twice.
+- A new bid cancels any X/XX.
+- **End of auction:** after a bid/X/XX is followed by **three consecutive
+  passes**. If all four players pass at the start, the board is **passed
+  out** (no play, scores 0).
+
+**Final contract** = the last bid + whether it is doubled/redoubled.
+**Declarer** = the player on the winning side who **first** named that
+contract's strain. **Dummy** = declarer's partner.
+
+**In code:**
+- `bids` is a static list of the 38 possible calls (`BidSeeder`): `P` Pass,
+  `X` Double, `XX` Redouble (`special = true`), then `1C`, `1D`, `1H`, `1S`,
+  `1NT`, `2C` … `7NT` (`special = false`).
+- A contract bid carries its rank in two columns: `level` (1–7) and `strain`
+  (`C`, `D`, `H`, `S`, `NT`). Both are null for the three special calls, which
+  have no rank of their own. `Bid::isHigherThan()` compares
+  `[level, strainRank]`, where `Suits::strainRank()` reads the
+  ♣ < ♦ < ♥ < ♠ < NT order straight off the declaration order of
+  `Suits::ALL_SUIT_NAMES`. Comparing a special call throws.
+- The seeder does insert bids in rank order, so ids happen to ascend with
+  rank — but **nothing enforces that**, so ordering by `id` is not safe and
+  `Bid::rank()` never looks at it. `Bid::contracts()` and `Bid::specials()`
+  scope the two groups.
+- `auctions` holds one row per call: `board_table_id` (the playing — one
+  board at one table), `user_id` (the caller), `bid_id`, `seat` (the caller's
+  seat, enum `Seats::SEATS`). `BoardTable::auctions()` returns a playing's
+  calls. Call order = row `id`. The first caller is `boards.dealer`.
+- When the auction ends, its result is **saved** on the playing's
+  `board_table` row: `contract_bid_id` (the final bid), `doubled` (0 none,
+  1 X, 2 XX), `declarer_seat`, `declarer_id` and `auction_ended_at`. A passed
+  out board has `auction_ended_at` set and `contract_bid_id` null. Dummy is
+  `Seats::partner(declarer_seat)`.
+- **Enforced** by `App\Services\AuctionService` behind
+  `POST /tables/{table}/calls`. The rules are static functions over the list
+  of calls so far (`PlayingStateService::calls()`, ordered by row id):
+  `nextToCall()` (dealer first, then `Seats::next()` of the last caller; null
+  once over), `illegalReason()` (bid must be `isHigherThan()` the last bid;
+  X/XX checked against the last call that isn't a pass and whether its seat
+  is on the caller's side, i.e. the caller or `Seats::partner()`), `isOver()`
+  (four or more calls, the last three passes) and `result()` (last bid, X/XX
+  after it, declarer). `Bid::isPass()/isDouble()/isRedouble()/isContract()`
+  tell the calls apart by their `suit` code (`P`, `X`, `XX`).
+- `AuctionService::call()` locks the `board_table` row for the whole call, so
+  concurrent calls queue and each is checked against the ones before it. When
+  the auction ends it saves the result as above; a passed out board also gets
+  `score = 0` and `finished_at` (`BoardTable::finish()`). Every
+  accepted call dispatches `PlayingUpdated`.
+- `AuctionSeeder` bids through `AuctionService`, picking random calls among
+  the legal ones, so seeded auctions are legal and their results saved the
+  same way. `AuctionFactory` still makes a **random, non-legal** call: test
+  filler only.
+
+## 5. The play
+
+- The player to **declarer's left** makes the **opening lead**. Then dummy
+  lays all 13 cards face up, sorted by suit; **declarer plays both hands**.
+- A **trick** = one card from each player, clockwise, starting with the
+  leader.
+- You **must follow suit** if you can. If you can't, you may play any card,
+  including a trump.
+- The trick is won by the highest **trump** in it, or, if there is no trump,
+  the highest card **of the suit led**. In NT there is no trump suit.
+- The winner of a trick leads to the next one. 13 tricks per board.
+
+**In code:** `cardplays` holds one row per card played: `board_table_id`
+(the playing), `user_id`, `card_id`, `seat` (enum `Seats::SEATS`, the hand the
+card came from), `round` (trick number 1–13), `order` (1–4 position within
+the trick). `user_id` is who played the card and `seat` is whose hand it came
+from, so when declarer plays from dummy the row has declarer's `user_id` and
+dummy's `seat`.
+- **Opening lead:** `Seats::next(board_table.declarer_seat)`, the seat on
+  declarer's left. It plays `round = 1`, `order = 1`.
+- **Trick winner:** when the 4th card of a trick is played, the winning card
+  gets `won_trick = true`. That row's `seat` leads the next trick, and
+  declarer's tricks = winning rows whose `seat` is declarer's or dummy's.
+- The DB rejects the same card twice in a playing
+  (`unique(board_table_id, card_id)`) and two cards in one trick position
+  (`unique(board_table_id, round, order)`). `BoardTable::cardPlays()` returns
+  a playing's cards.
+- `App\Services\CardPlayService` enforces all of this for
+  `POST /tables/{table}/cards`. Like the auction, the rules are static
+  functions over the list of plays (`nextToPlay`, `actingSeat`,
+  `illegalReason`, `trickWinner`, `tricks`, `tricksWon`), unit-tested without
+  a database in `tests/Unit/CardPlayServiceTest`:
+  - **Turn:** declarer's left leads trick 1, then clockwise; each trick's
+    winner leads the next. Each player plays their own hand, except dummy's,
+    which declarer plays; dummy's own player is always refused.
+  - **Legal card:** in the hand being played (its `board_card` rows less what
+    is already in `cardplays`), not already played (checked before the unique
+    index), and of the suit led if that hand still holds it.
+  - **Trick winner:** the highest trump if any was played, else the highest
+    card of the suit led; NT (`contractBid.strain = 'NT'`) has no trump. Card
+    `rank` is compared, never assumed contiguous (it skips 11). The winning
+    row gets `won_trick = true` when the 4th card is played.
+  - **End of play:** after the 13th trick the board is scored (§6):
+    `tricks_won` (declarer's side), `score` and `finished_at` are written.
+  - The `board_table` row is locked for the whole request, so simultaneous
+    cards queue; each accepted card dispatches `PlayingUpdated`.
+- **Dummy** is face up to all four players, and on the table channel, as
+  `dummy_hand` once the opening lead is made; it is null before that.
+- `CardplaySeeder` plays through `CardPlayService`, a random legal card at a
+  time (declarer playing dummy's), so seeded tricks, winners and scores are
+  real. `CardplayFactory` still makes a **random, non-legal** row: test
+  filler only.
+
+**Claims and concessions** (Laws 68–70, simplified for online play): a
+player may stop the play by claiming some or all of the remaining tricks —
+typically when the rest is obvious (declarer holds all the trumps, a defender
+has only winners left). Claiming none of them is a **concession**. At a real
+table the claimer faces their hand and states a line of play; the others
+agree, or the director is called.
+
+**In code:** `App\Services\ClaimService`, over `POST /tables/{table}/claim`
+(`{tricks}`), `POST /tables/{table}/claim/response` (`{accept}`) and
+`DELETE /tables/{table}/claim` (withdraw). The pending claim lives on
+`board_table` (`claim_seat`, `claim_tricks`, `claim_accepted`). The rules are
+static and unit-tested without a database in `tests/Unit/ClaimServiceTest`
+(`illegalPlayerReason`, `responders`, `remaining`, `tricksReason`,
+`declarerTricks`):
+- **Who:** only during the `play`, and any player **except dummy**, whose own
+  player can neither claim nor answer.
+- **How many:** 0 up to the tricks still to play — 13 less the complete
+  tricks, so a trick in progress counts as remaining.
+- **Face up:** while the claim is pending, the claimer's remaining cards are
+  in the public state (`claim.hand`, on the table channel too).
+- **Agreement:** every other non-dummy player must accept — both defenders
+  for declarer's claim, declarer and the other defender for a defender's.
+  One reject clears the claim and play goes on; the claimer may withdraw it
+  while it is pending. There is no director: a disputed claim is simply
+  rejected and played out.
+- **While pending** no card may be played (409) and no other claim made;
+  whose turn it is doesn't change.
+- **Result:** the last accept ends the board through `BoardTable::finish()`,
+  scored as usual (§6), with declarer's tricks = tricks won so far + the
+  claimed share of the rest (`tricks` if the claimer is on declarer's side,
+  the remaining tricks less `tricks` otherwise). The claim columns are kept,
+  and the result shows `claimed: true`.
+- A player leaving mid-claim detaches the playing like any unfinished board.
+- `TableSeeder` seeds one table ended by declarer's accepted claim, and
+  `DatabaseSeederTest` replays it.
+
+Not built yet / open questions:
+- Undoing a card played by mistake.
+- A claim is all-or-nothing: no director to rule on a disputed one, and no
+  stated line of play attached to it.
+
+## 6. Scoring (duplicate)
+
+Let *level* be the contract level and *tricks* the number declarer won.
+Contract made if `tricks >= level + 6`.
+
+### Contract made
+
+**Trick points** (for bid tricks only; doubled ×2, redoubled ×4):
+
+| Strain | Per trick |
+|---|---|
+| ♣ ♦ (minors) | 20 |
+| ♥ ♠ (majors) | 30 |
+| NT | 40 first trick, 30 each after |
+
+If trick points ≥ **100** the contract is a **game**, otherwise a **part-score**.
+Game = 3NT, 4♥/4♠, or 5♣/5♦ (or lower if doubled).
+
+| Bonus | Not vulnerable | Vulnerable |
+|---|---|---|
+| Part-score | 50 | 50 |
+| Game | 300 | 500 |
+| Small slam (level 6) | +500 | +750 |
+| Grand slam (level 7) | +1000 | +1500 |
+| "Insult" for making a doubled contract | 50 | 50 |
+| "Insult" for making a redoubled contract | 100 | 100 |
+
+**Overtricks** (each trick over the contract):
+
+| | Not vulnerable | Vulnerable |
+|---|---|---|
+| Undoubled | trick value (20/30) | trick value (20/30) |
+| Doubled | 100 | 200 |
+| Redoubled | 200 | 400 |
+
+### Contract defeated (undertricks, scored by defenders)
+
+| Undertrick | NV undoubled | NV doubled | NV redoubled | V undoubled | V doubled | V redoubled |
+|---|---|---|---|---|---|---|
+| 1st | 50 | 100 | 200 | 100 | 200 | 400 |
+| 2nd and 3rd, each | 50 | 200 | 400 | 100 | 300 | 600 |
+| 4th and more, each | 50 | 300 | 600 | 100 | 300 | 600 |
+
+Examples: 4♠ making 5, vulnerable → 120 + 30 + 500 = **650** (just made:
+**620**). 3NT doubled, not vulnerable, down 2 → 100 + 200 = **300** to
+defenders (down 3: 100 + 200 + 200 = **500**).
+
+### Comparing results across tables (duplicate only)
+
+The raw score above is then compared with other tables that played the same
+board:
+- **Matchpoints** (pairs events): for each other result on that board, 2 pts
+  if you beat it and 1 if you tied. Example: N-S scores 620, 620, 170, −100
+  get 5, 5, 2 and 0 out of a top of 6; E-W get the top minus N-S's.
+- **IMPs** (teams events): the score difference is converted to International
+  Match Points on a fixed scale.
+
+### Rubber bridge (for reference, not modelled)
+
+Scores build up over several hands until one side wins two games (a
+"rubber"). Trick points go "below the line" towards game. Rubber bonus:
+700 if won 2–0, 500 if won 2–1. Honours bonus: 100 for 4 of the 5 top
+trumps in one hand, 150 for all 5, or 150 for all 4 aces in NT.
+
+**In code:** `App\Services\ScoringService::score($contract, $doubled,
+$declarerSeat, $vulnerable, $tricksWon)` is a pure function (no DB,
+unit-tested in `tests/Unit/ScoringTest`) implementing the tables above —
+trick points, part-score/game/slam bonuses, the insult, overtricks and
+undertricks — and returns the score from **declarer's** side (negative when
+defeated). Vulnerability is the declaring side's, read from
+`boards.vulnerable` (`Vulnerability::BOTH` makes both sides vulnerable).
+`BoardTable::finish()` is the one place a board ends: it stores `tricks_won`
+(declarer's side), `score` **from N-S's point of view** (negated when E-W
+declared) and `finished_at` from the contract (`contract_bid_id` + `doubled`)
+and `declarer_seat`. A passed out board gets `score = 0` and `tricks_won`
+null. An accepted claim (§5) is scored the same way, with the claimed
+tricks. The game state shows it as `result` (`{contract, doubled, declarer,
+tricks_won, score_ns, made_by, claimed}`). Honours and rubber scoring aren't modelled;
+matchpoints across tables are computed by `ScoringService::matchpoints()`
+and served by `GET /boards/{board}/results` (§8 step 7); IMPs aren't built.
+
+## 7. Glossary
+
+| Term | Meaning |
+|---|---|
+| Board | One fixed deal, with its dealer and vulnerability; can be replayed at many tables |
+| Call | Any auction action: a bid, Pass, Double or Redouble |
+| Strain | The trump suit of a bid, or NT |
+| Contract | The final bid, plus X/XX if doubled or redoubled |
+| Declarer | The player who plays the contract, from both their own hand and dummy's |
+| Dummy | Declarer's partner; their cards are face up and they take no part in the play |
+| Defenders | The two opponents of declarer |
+| Opening lead | The first card of the play, by the player to declarer's left |
+| Trick | 4 cards, one per player; won by the highest trump or highest card of the suit led |
+| Book | The first 6 tricks, which bids don't count |
+| Vulnerable | A status set by the board that raises bonuses and penalties |
+| Part-score / Game / Slam | Contract worth <100 trick points / ≥100 / level 6 or 7 |
+| Passed out | All four players pass; no play |
+| Claim / Concession | Stopping the play by stating how many of the remaining tricks your side will take (a concession: none); the opponents accept or dispute it |
+| Matchpoints / IMPs | Duplicate methods for comparing scores across tables |
+
+## 8. Game-flow checklist for implementers
+
+1. Create a table and assign a board (which gives the dealer and
+   vulnerability): set `tables.board_id`, create the `board_table` row and
+   copy the four seats into `board_table_seats`. Choose the board with the
+   selection rule below.
+2. Four users take the N/E/S/W seats (`table_seats`): the creator is seated by
+   `POST /tables`, the others join with `POST /tables/{table}/seats`, or are
+   seated by a table manager with `POST /tables/{table}/seats/users`. The
+   database enforces one user per seat and one table per user. Joining while
+   already seated **moves** the player — the old seat is freed in the same
+   request — so one table per user holds without the client having to leave
+   first. A table is active while somebody sits at it (`Table::active()`
+   scope); `DELETE /tables/{table}/seats` frees a seat, and the last player out
+   deletes the table.
+3. The auction starts at the dealer and goes clockwise. Validate each call
+   and store it in `auctions`. Stop after 3 passes following a bid, or after
+   4 initial passes (passed out).
+4. Work out the contract, declarer and dummy, and save them on `board_table`.
+5. Play: declarer's left-hand opponent (`Seats::next(declarer_seat)`) leads
+   first, then dummy is revealed. Validate each card and store it in
+   `cardplays` (`round`/`order` incremented by the card-play API). After the
+   4th card, set `won_trick` on the winner, who leads next. Any player but
+   dummy may instead claim some of the remaining tricks (0 concedes); once the
+   other non-dummy players all accept, the board ends with the claimed tricks.
+6. After 13 tricks (or an accepted claim), count declarer's tricks, score
+   them (section 6) and store `tricks_won`, `score` and `finished_at` on
+   `board_table`. Once all four
+   players have seen the result, pick the table's next board.
+7. Compare across tables that played the same board (matchpoints/IMPs).
+
+### Board-selection rule
+
+Boards should change as often as possible so players never recognise the
+cards if they meet a deal again. When a table needs its next board:
+
+1. Prefer a board that **none of the four players has played** (no
+   `board_table_seats` row for that user on that board) and that this table
+   hasn't played.
+2. If every board has been played, pick one where **no player has held the
+   seat they are sitting in now**. Example: North played board 10 as N. If they
+   are N again, board 10 is skipped; if they are now E, board 10 is allowed.
+3. A table can never replay a board (`unique(board_id, table_id)`).
+
+The data for this is `board_table_seats` (index on `user_id, seat`). It
+survives the table being deleted: `board_table.table_id` is nullable and
+`nullOnDelete`, so a player's board history stays queryable after the table
+they played at is gone.
+
+**In code:** `App\Services\BoardSelectionService::startPlayingIfFull()`, called
+from `TableSeatService::seat()` when the fourth seat is taken. It applies rule
+1, then rule 2, and if neither leaves a candidate it **deals a brand-new
+board** rather than repeating one — boards are only shuffled deals, so the app
+never has to hand a table a deal somebody at it already knows. A player
+leaving before the board is finished detaches the playing
+(`abandonPlaying()`), which keeps the seat snapshot but frees the table for
+another board; the calls and cards made so far are discarded, since an
+abandoned board has no result to review. A **finished** playing keeps its
+calls and cards even after its table is deleted, so any player who has
+finished the board can replay it call by call and trick by trick
+(`GET /playings/{playing}`); playings finished before that change lost them.
+
+Status today: the data layer for steps 1–6 exists (migrations, models,
+seed data played through the game services, the seating unique indexes, board dealer and vulnerability
+helpers, `board_table` history, the saved-contract columns and `won_trick`).
+Over HTTP:
+- **Step 1 is built**, but it happens when the table *fills*, not when it is
+  created — the selection rule needs all four players' history, and
+  `board_table_seats` snapshots four seats, so neither is knowable at
+  `POST /tables`. That call still leaves `board_id` null; the player who takes
+  the fourth seat triggers `BoardSelectionService::startPlayingIfFull()`, which
+  picks or deals a board, sets `tables.board_id`, creates the `board_table` row
+  and copies the four seats into `board_table_seats`.
+- Step 2 is built as far as seating goes. The creator is seated by
+  `POST /tables`, others join with `POST /tables/{table}/seats`, and anyone
+  leaves with `DELETE /tables/{table}/seats` — all through `TableSeatService`,
+  which enforces a valid free seat and one table per user. Leaving hands
+  `moderated_by` to the creator if still seated, else the earliest-joined
+  remaining player, and the last player out deletes the table. A table manager
+  can seat another user (`POST /tables/{table}/seats/users`) or kick a player
+  (`DELETE /tables/{table}/seats/{user}`); a kick is not recorded, so the
+  player may rejoin at once.
+- Once dealt, the board can be **seen**: `GET /tables/{table}/playing`
+  (`PlayingStateService`) gives each seated player the phase, board number,
+  dealer, vulnerability, the four players from the `board_table_seats`
+  snapshot, whose turn it is, and **only their own** hand (13 cards less any
+  played) — plus dummy's, face up to everyone, once the opening lead is made. At the deal, `PlayingUpdated` pushes the public part on the table
+  channel and `HandDealt` sends each player their cards on their own user
+  channel. Phase is `auction` until `auction_ended_at` is set, then `play`
+  until `finished_at`, then `finished`.
+- **Steps 3–4 are built**: `POST /tables/{table}/calls`
+  (`AuctionService`) takes each call in turn, refuses illegal ones with a 409
+  giving the reason, and once the auction ends saves the contract, `doubled`,
+  declarer and `auction_ended_at` on `board_table`. The state's `auction`,
+  `turn` and `contract` (with dummy = declarer's partner) follow it, and every
+  call is pushed as `PlayingUpdated`. A passed out board is finished
+  straight away with a score of 0.
+- **Step 5 is built**: `POST /tables/{table}/cards` (`CardPlayService`)
+  takes each card in turn — declarer playing dummy's — refuses illegal ones
+  with a 409 giving the reason (wrong turn, dummy's own player, a card not in
+  that hand or already played, not following suit), sets `won_trick` on each
+  trick's winner, who leads next, and pushes every card as `PlayingUpdated`.
+  The state gains `acting_user_id`, `tricks`, `current_trick`, `tricks_won`
+  and `dummy_hand`. **Claims and concessions are built too**
+  (`ClaimService`, `/tables/{table}/claim`): any player but dummy claims,
+  the other non-dummy players accept or reject, the claimer may withdraw; no
+  card is played while a claim is pending, whose hand is shown as the state's
+  `claim`. An accepted claim finishes the board with `result.claimed: true`.
+  Undoing a card is not built.
+- **Step 6's scoring is built**: after the 13th trick (or an accepted claim)
+  `BoardTable::finish()` saves `tricks_won`, the §6 `score` (N-S's side,
+  from `ScoringService`) and `finished_at`; the phase becomes `finished` and
+  the state gains `result`.
+- **Step 6's "pick the table's next board" is built**: a finished board
+  (played out, claimed or passed out) stays on the table, whole deal shown, until each
+  of the four sends `POST /tables/{table}/playing/next` (or a manager sends it
+  with `everyone`); the last one deals the next board with the same selection
+  rule and the same four players in the same seats
+  (`BoardSelectionService::moveOn()`). Leaving between boards detaches
+  nothing; whoever fills the empty seat deals the next board at once, as with
+  the first one.
+- **Step 7 is built for matchpoints**: `GET /boards/{board}/results`
+  (`BoardResultsService::results()`) lists every finished playing of a board
+  — the four players, contract, declarer, tricks, N-S score — with each
+  result's matchpoints for N-S and E-W against all the others
+  (`ScoringService::matchpoints()`, pure and unit-tested: 2 per result
+  beaten, 1 per tie, out of a top of 2 × (results − 1); E-W get top − N-S).
+  They are worked out on every read, never stored, because every new playing
+  changes everyone's. Only players who have **finished** the board may read
+  them (or its deal, `GET /boards/{board}`) — anyone else may still be dealt
+  it — and results from tables since deleted are kept. Each player's
+  finished boards are listed by `GET /users/{user}/playings` (their own:
+  `GET /api/user/playings`), and any finished playing of a board they have
+  finished can be reviewed call by call and trick by trick with
+  `GET /playings/{playing}`, since a finished playing's calls and cards now
+  outlive its table. IMPs aren't built.
+
+See [`API.md`](API.md).
