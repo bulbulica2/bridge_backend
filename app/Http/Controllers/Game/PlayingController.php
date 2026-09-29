@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Game;
 use App\Exceptions\NextBoardException;
 use App\Http\Controllers\BaseController;
 use App\Http\Requests\Game\NextBoardRequest;
+use App\Http\Resources\PlayingResource;
+use App\Models\BoardTable;
 use App\Models\Table;
 use App\Services\BoardSelectionService;
 use App\Services\PlayingStateService;
@@ -22,6 +24,25 @@ class PlayingController extends BaseController
     $this->authorize('play', $table);
 
     return $this->sendResponse($state->stateFor($table, $request->user()), 'Playing retrieved successfully.');
+  }
+
+  /**
+   * One finished playing after the fact, to review how the board was bid
+   * and played: the same shape as the live state, less `ready`. Only for
+   * players who have finished the board themselves (`BoardPolicy::view`),
+   * like its results and its deal. The table may have been deleted since.
+   *
+   * An unfinished playing is a 404, like one that doesn't exist.
+   */
+  public function review(BoardTable $playing): JsonResponse
+  {
+    abort_if($playing->finished_at === null, 404);
+
+    $this->authorize('view', $playing->board);
+
+    $playing->load(PlayingStateService::RELATIONS);
+
+    return $this->sendResponse((new PlayingResource($playing))->forReview(), 'Playing retrieved successfully.');
   }
 
   /**
