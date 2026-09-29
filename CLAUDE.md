@@ -16,7 +16,7 @@ the PR against `main` straight away — don't stop to ask first. The PR title
 is the commit subject, and the body says `Closes #<issue>`.
 
 If you don't know bridge rules (auction legality, declarer/dummy, trick
-winner, scoring), read `../bridge_docs/GAME-RULES.md` before touching game
+winner, scoring), read `docs/GAME-RULES.md` before touching game
 logic — it also maps each rule onto the tables below and lists what isn't
 enforced yet.
 
@@ -172,7 +172,7 @@ vendor/bin/pint --test            # check formatting without changing files
   seeded cards and throws otherwise; boards with no `board_card` rows are
   never selected.
 - **Realtime**: Laravel Reverb (decision and setup in
-  `../bridge_docs/backend/RUNNING.md`). `App\Events\TableUpdated` is the
+  `docs/RUNNING.md`). `App\Events\TableUpdated` is the
   pattern later events copy: `ShouldBroadcast` (queued, so a Reverb outage
   fails a job, not the request) + `ShouldDispatchAfterCommit` (dispatched
   inside the seating transaction, sent only if it commits), payload
@@ -302,7 +302,7 @@ vendor/bin/pint --test            # check formatting without changing files
     board), the saved auction result (`contract_bid_id`, `doubled`,
     `declarer_seat`, `declarer_id`), `tricks_won`, `score` and timestamps.
     `board_table_seats` snapshots who sat where, for the board-selection
-    rule in `../bridge_docs/GAME-RULES.md` §8. `tables.board_id` is only the
+    rule in `docs/GAME-RULES.md` §8. `tables.board_id` is only the
     current board. Because tables are deleted rather than closed,
     `board_table.table_id` is nullable and `nullOnDelete`: a playing and its
     `board_table_seats` snapshot outlive the table, so a user's board history
@@ -374,11 +374,13 @@ vendor/bin/pint --test            # check formatting without changing files
   don't use them (they go through the services), so a seeded DB has only
   dealt boards and legal play.
 
-## Keep API docs in sync — do this in every relevant change, not as a follow-up
+## Update `docs/` in the same PR — every relevant change, not a follow-up
 
-Docs for this API live at `../bridge_docs/backend`
-(`C:\xampp\htdocs\bridge_docs\backend`), a sibling project docs folder shared
-with the (future) frontend:
+Docs for this backend live in `docs/` in this repo, so they're versioned and
+reviewed with the code. The frontend (https://github.com/bulbulica2/bridge,
+an Ionic Vue SPA with its own `docs/`) reads them from this repo's `main`.
+Keep links inside `docs/` relative, and link to the frontend's docs with
+GitHub URLs (`https://github.com/bulbulica2/bridge/blob/main/docs/…`).
 
 | File | Update it when you change... |
 |---|---|
@@ -386,14 +388,16 @@ with the (future) frontend:
 | `DATA-MODEL.md` | a model's fillable fields, relations, casts, or a migration (new table/column, enum values, FK) |
 | `AUTH.md` | auth routes/middleware, Sanctum config (`config/sanctum.php`), CORS config, or how a client is expected to authenticate |
 | `RUNNING.md` | local setup/run steps, `.env` keys required to run the app, or seeders/commands needed to get a working local DB |
-| `README.md` | none of the above changed but the overall status/summary line (branch/commit reference) is stale |
-| `../GAME-RULES.md` | you implement or change enforcement of a bridge rule (auction, play, scoring), or its "In code" / status notes become wrong |
+| `ARCHITECTURE.md` | a service, policy, event or channel, job, middleware, console command or schedule, seeder, or one of the gotchas it lists |
+| `GAME-RULES.md` | you implement or change enforcement of a bridge rule (auction, play, scoring), or its "In code" / status notes become wrong |
+| `README.md` | a file is added to or removed from `docs/`, or its one-line summaries go stale |
 
 Rules:
 - Treat this as part of the same change, in the same turn — not a separate
   pass or a TODO. If you touch a route file, a controller, a migration, or a
-  model's `$fillable`/relations, check whether `bridge_docs/backend` needs a
-  matching edit before considering the task done.
+  model's `$fillable`/relations, check whether `docs/` needs a matching edit
+  before considering the task done. The doc edit goes in the same commit and
+  PR as the code.
 - If one logical change touches multiple files above (e.g. a new endpoint
   with a new model field), update all of the relevant docs together.
 - Docs must reflect actual current behavior, never aspiration. Explicitly

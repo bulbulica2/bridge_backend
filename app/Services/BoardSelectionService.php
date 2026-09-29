@@ -224,7 +224,7 @@ class BoardSelectionService
   }
 
   /**
-   * The board-selection rule from `bridge_docs/GAME-RULES.md` §8: boards
+   * The board-selection rule from `docs/GAME-RULES.md` §8: boards
    * should rotate as much as possible, so players never recognise a deal.
    *
    * @param  Collection<int, \App\Models\TableSeat>  $seats
