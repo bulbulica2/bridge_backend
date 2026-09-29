@@ -53,6 +53,10 @@ class CardPlayService
         throw new IllegalPlayException($phaseError);
       }
 
+      if ($playing->hasPendingClaim()) {
+        throw new IllegalPlayException("{$playing->claim_seat} has claimed: no card may be played until the claim is rejected or withdrawn.");
+      }
+
       $seat = $this->state->seatOf($playing, $user);
 
       if ($seat === null) {

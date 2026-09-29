@@ -20,9 +20,9 @@ use Illuminate\Http\Resources\Json\JsonResource;
  *
  * No hidden hand ever goes in here: this is what `PlayingUpdated` broadcasts
  * on the table channel. The only cards in it are face up — the ones played,
- * after the opening lead dummy's, and once the board is finished the whole
- * deal. A player's own cards are added on top by
- * `PlayingStateService::stateFor()`.
+ * after the opening lead dummy's, the claimer's while a claim is pending,
+ * and once the board is finished the whole deal. A player's own cards are
+ * added on top by `PlayingStateService::stateFor()`.
  */
 class PlayingResource extends JsonResource
 {
@@ -45,6 +45,7 @@ class PlayingResource extends JsonResource
         'auction' => null,
         'contract' => null,
         ...self::play(null),
+        'claim' => null,
         'result' => null,
         'deal' => null,
         'ready' => null,
@@ -85,6 +86,7 @@ class PlayingResource extends JsonResource
         'dummy' => Seats::partner($playing->declarer_seat),
       ],
       ...self::play($playing),
+      'claim' => self::claim($playing),
       'result' => self::result($playing),
       // once the board is over nothing is hidden any more: all four hands
       // as dealt, and who has asked for the next board
@@ -96,8 +98,9 @@ class PlayingResource extends JsonResource
   /**
    * How the board ended, once it is finished: the contract, declarer's
    * tricks, the score from N-S's side and `made_by`, the overtricks (+) or
-   * undertricks (−) against the contract. A passed out board has only
-   * `score_ns: 0`, every other field null.
+   * undertricks (−) against the contract, and `claimed`, whether the play
+   * ended by an accepted claim rather than at trick 13. A passed out board
+   * has only `score_ns: 0` and `claimed: false`, every other field null.
    *
    * @return array<string, mixed>|null
    */
@@ -118,6 +121,29 @@ class PlayingResource extends JsonResource
       'made_by' => $contract === null || $playing->tricks_won === null
         ? null
         : $playing->tricks_won - $contract->level - ScoringService::BOOK,
+      'claimed' => $playing->claim_seat !== null,
+    ];
+  }
+
+  /**
+   * The pending claim: the claimer's seat, the tricks they claim of those
+   * still to play, their remaining cards — face up to everyone while it is
+   * pending, as at a real table — and the seats that have accepted it.
+   * Null when there is none.
+   *
+   * @return array{seat: string, tricks: int, hand: list<array<string, mixed>>, accepted: list<string>}|null
+   */
+  private static function claim(BoardTable $playing): ?array
+  {
+    if (! $playing->hasPendingClaim()) {
+      return null;
+    }
+
+    return [
+      'seat' => $playing->claim_seat,
+      'tricks' => $playing->claim_tricks,
+      'hand' => app(PlayingStateService::class)->hand($playing, $playing->claim_seat),
+      'accepted' => $playing->claim_accepted ?? [],
     ];
   }
 

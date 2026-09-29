@@ -105,7 +105,10 @@ vendor/bin/pint --test            # check formatting without changing files
   `Game\CallController@store` (`POST /tables/{table}/calls`) is the auction
   endpoint, `Game\CardPlayController@store` (`POST /tables/{table}/cards`)
   the card-play one (`Game\CardController` is the unrelated read-only
-  `/cards` reference list); `Game\PlayingController@show` serves the game state.
+  `/cards` reference list), and `Game\ClaimController` the claim ones
+  (`POST`/`DELETE /tables/{table}/claim`,
+  `POST /tables/{table}/claim/response`); `Game\PlayingController@show`
+  serves the game state.
   `Game\BidController@index` (`GET /bids`, public) lists the 38 calls in
   `PlayingResource::bid`'s shape, so clients learn the `bid_id`s they send;
   it orders them P, X, XX, then by `Bid::rank()`, never by id.
@@ -184,7 +187,8 @@ vendor/bin/pint --test            # check formatting without changing files
   public game state only — no hand, no `my_seat`) and one `HandDealt` per
   player (their own channel, their 13 cards) when it deals a board.
   `AuctionService` re-dispatches `PlayingUpdated` after every accepted call,
-  and `CardPlayService` after every accepted card.
+  `CardPlayService` after every accepted card and `ClaimService` after every
+  accepted claim action.
 - **Game state**: `App\Services\PlayingStateService` is the one place that
   works out a playing's phase (`waiting`/`auction`/`play`/`finished`, from
   `tables.board_id`, `auction_ended_at`, `finished_at`), the calls so far
@@ -202,9 +206,10 @@ vendor/bin/pint --test            # check formatting without changing files
   strain, special}}` per call), `contract` (`{bid, doubled, declarer,
   dummy}` once the auction ends with a bid) and, once there is a contract,
   `tricks`, `current_trick`, `tricks_won` and `dummy_hand` (null until the
-  opening lead), plus `result` once the board is finished. `dummy_hand` is
-  public — it goes on the table channel — because dummy is face up; no
-  other hand may.
+  opening lead), `claim` while one is pending, plus `result` once the board
+  is finished. `dummy_hand` and `claim.hand` are public — they go on the
+  table channel — because dummy and a claimer are face up; no other hand
+  may.
 - **Auction**: `App\Services\AuctionService::call()` runs one call in a
   transaction that `lockForUpdate`s the `board_table` row
   (`PlayingStateService::currentPlaying($table, lock: true)`), so concurrent
@@ -229,6 +234,18 @@ vendor/bin/pint --test            # check formatting without changing files
   After each 4th card the winner's row gets `won_trick`; after the 13th trick
   it calls `BoardTable::finish($tricksWon)`.
   Compare cards by `rank` (not contiguous: 11 is skipped), never by id.
+  It refuses every card while a claim is pending.
+- **Claims**: `App\Services\ClaimService` (`claim`, `respond`, `withdraw`)
+  is the same pattern again, with `App\Exceptions\IllegalClaimException` as
+  the 409 and static rules (`illegalPlayerReason`, `responders`,
+  `remaining`, `tricksReason`, `declarerTricks`) unit-tested in
+  `tests/Unit/ClaimServiceTest`. The pending claim is stored on
+  `board_table` (`claim_seat`, `claim_tricks`, `claim_accepted` JSON list);
+  `BoardTable::hasPendingClaim()` is `claim_seat` set and not finished, and
+  `clearClaim()` wipes it on reject/withdraw. The last accept calls
+  `finish()` with tricks so far plus the claimed share; the columns are then
+  kept, which is what `result.claimed` reads. A claim doesn't change
+  `turn()`/`actingUserId()`.
 - **Authorization**: `App\Policies\TablePolicy::manage` (auto-discovered) is
   true for a table's `moderated_by`, any `is_admin` user, or its `created_by`
   **while that creator still holds a seat there** — a table has exactly one
@@ -302,6 +319,7 @@ vendor/bin/pint --test            # check formatting without changing files
   `pass`, `UserSeeder::ADMIN_EMAIL`) and `game\TableSeeder`'s tables, one
   per phase (see `RUNNING.md`): the admin's own table left mid-auction on
   the admin's turn, another mid-auction, one mid-play, one finished, one
+  finished by declarer's accepted claim (through `ClaimService`), one
   passed out and one short of players. Seeders are split between
   `database/seeders/game/` (namespace `Database\Seeders\game`) and the root
   seeders folder. Everything is played through the real services:
@@ -337,7 +355,8 @@ vendor/bin/pint --test            # check formatting without changing files
 - Board selection (`GAME-RULES.md` §8), the auction (§4: turn order, bid
   legality, X/XX, end of auction, contract and declarer), the play (§5:
   opening lead, declarer playing dummy, follow suit, trick winner, dummy
-  revealed after the lead, tricks won), duplicate scoring (§6) and
+  revealed after the lead, tricks won, claims and concessions), duplicate
+  scoring (§6) and
   matchpoints across tables are implemented, as is moving on to the next
   board; IMPs aren't.
 - `AuctionFactory`/`CardplayFactory` default `board_table_id` to a fresh

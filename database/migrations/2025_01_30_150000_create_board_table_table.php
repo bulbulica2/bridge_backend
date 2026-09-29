@@ -29,6 +29,15 @@ return new class extends Migration
       $table->unsignedTinyInteger('tricks_won')->nullable(); // by declarer's side
       $table->integer('score')->nullable(); // from N-S perspective
 
+      // a claim (GAME-RULES.md §5): the claimer's seat, the tricks they claim
+      // for their side of those still to play, and the seats that have
+      // accepted so far. Null while none is pending; a rejected or withdrawn
+      // claim clears them, an accepted one keeps them, so the result can say
+      // the board ended by claim
+      $table->enum('claim_seat', Seats::SEATS)->nullable();
+      $table->unsignedTinyInteger('claim_tricks')->nullable();
+      $table->json('claim_accepted')->nullable();
+
       $table->timestamp('started_at')->useCurrent();
       $table->timestamp('auction_ended_at')->nullable();
       $table->timestamp('finished_at')->nullable();

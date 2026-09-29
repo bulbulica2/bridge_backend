@@ -2,11 +2,13 @@
 
 namespace Tests\Feature\Database;
 
+use App\auxiliary\Seats;
 use App\Models\BoardTable;
 use App\Models\Table;
 use App\Models\User;
 use App\Services\AuctionService;
 use App\Services\CardPlayService;
+use App\Services\ClaimService;
 use App\Services\PlayingStateService;
 use App\Services\ScoringService;
 use Database\Seeders\game\UserSeeder;
@@ -36,7 +38,8 @@ class DatabaseSeederTest extends TestCase
 
     $finished = BoardTable::whereNotNull('finished_at')->get();
     $this->assertTrue($finished->contains(fn ($playing) => $playing->contract_bid_id === null), 'no passed out board');
-    $this->assertTrue($finished->contains(fn ($playing) => $playing->contract_bid_id !== null), 'no board played out');
+    $this->assertTrue($finished->contains(fn ($playing) => $playing->contract_bid_id !== null && $playing->claim_seat === null), 'no board played out');
+    $this->assertTrue($finished->contains(fn ($playing) => $playing->claim_seat !== null), 'no board finished by claim');
 
     $inPlay = Table::all()->first(fn (Table $table) => $this->state->phase($this->state->currentPlaying($table)) === PlayingStateService::PHASE_PLAY);
     $this->assertNotNull($this->state->dummyHand($this->state->currentPlaying($inPlay)), 'the table in play has no opening lead');
@@ -123,13 +126,21 @@ class DatabaseSeederTest extends TestCase
         $this->assertSame([$trick['winner']], $winners->pluck('seat')->all());
       }
 
-      if (count($played) < CardPlayService::TRICKS * 4) {
+      if ($playing->claim_seat !== null) {
+        // an accepted claim: every non-dummy player but the claimer agreed to it
+        $this->assertNotSame(Seats::partner($declarer), $playing->claim_seat);
+        $this->assertSame(ClaimService::responders($playing->claim_seat, $declarer), $playing->claim_accepted);
+        $this->assertNull(ClaimService::tricksReason($playing->claim_tricks, ClaimService::remaining($played)));
+
+        $won = ClaimService::declarerTricks($played, $trump, $declarer, $playing->claim_seat, $playing->claim_tricks);
+      } elseif (count($played) < CardPlayService::TRICKS * 4) {
         $this->assertNull($playing->finished_at);
 
         continue;
+      } else {
+        $won = CardPlayService::tricksWon($played, $trump)[CardPlayService::side($declarer)];
       }
 
-      $won = CardPlayService::tricksWon($played, $trump)[CardPlayService::side($declarer)];
       $score = ScoringService::score($playing->contractBid, (int) $playing->doubled, $declarer, $playing->board->vulnerable, $won);
 
       $this->assertNotNull($playing->finished_at);

@@ -216,6 +216,7 @@ class AuctionTest extends TestCase
         'tricks_won' => null,
         'score_ns' => 0,
         'made_by' => null,
+        'claimed' => false,
       ])
       ->assertJsonCount(4, 'data.auction');
 

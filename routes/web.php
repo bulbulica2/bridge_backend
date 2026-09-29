@@ -5,6 +5,7 @@ use App\Http\Controllers\Game\BoardController;
 use App\Http\Controllers\Game\CallController;
 use App\Http\Controllers\Game\CardController;
 use App\Http\Controllers\Game\CardPlayController;
+use App\Http\Controllers\Game\ClaimController;
 use App\Http\Controllers\Game\PlayingController;
 use App\Http\Controllers\Game\TableController;
 use App\Http\Controllers\Game\TableSeatController;
@@ -56,6 +57,11 @@ Route::middleware('auth')->group(function () {
 
     // the next card of the trick, from your own hand or, as declarer, dummy's
     Route::post('tables/{table}/cards', [CardPlayController::class, 'store'])->name('tables.cards.store');
+
+    // claim some of the remaining tricks (0 concedes), answer a claim, or withdraw your own
+    Route::post('tables/{table}/claim', [ClaimController::class, 'store'])->name('tables.claim.store');
+    Route::post('tables/{table}/claim/response', [ClaimController::class, 'respond'])->name('tables.claim.respond');
+    Route::delete('tables/{table}/claim', [ClaimController::class, 'destroy'])->name('tables.claim.destroy');
   });
 
   // look users up by username or name, e.g. a manager picking someone to seat
