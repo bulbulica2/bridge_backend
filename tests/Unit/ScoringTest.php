@@ -100,6 +100,28 @@ class ScoringTest extends TestCase
     ScoringService::score($this->bid('P'), 0, 'N', Vulnerability::NONE, 7);
   }
 
+  /**
+   * N-S scores, expected N-S matchpoints, top
+   */
+  public static function matchpoints(): array
+  {
+    return [
+      'the issue example, with a tie' => [[620, 620, 170, -100], [5, 5, 2, 0], 6],
+      'any order' => [[-100, 620, 170, 620], [0, 5, 2, 5], 6],
+      'all tied' => [[400, 400, 400], [2, 2, 2], 4],
+      'passed out among others' => [[0, 110, -50], [2, 4, 0], 4],
+      'played once' => [[620], [0], 0],
+      'not played' => [[], [], 0],
+    ];
+  }
+
+  #[DataProvider('matchpoints')]
+  public function test_matchpoints_compare_each_result_with_every_other(array $scores, array $expected, int $top): void
+  {
+    $this->assertSame($expected, ScoringService::matchpoints($scores));
+    $this->assertSame($top, ScoringService::matchpointTop(count($scores)));
+  }
+
   private function bid(string $name): Bid
   {
     $special = in_array($name, [Bid::PASS, Bid::DOUBLE, Bid::REDOUBLE], true);

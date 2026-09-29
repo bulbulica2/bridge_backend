@@ -101,7 +101,7 @@ class PlayingResource extends JsonResource
    *
    * @return array<string, mixed>|null
    */
-  private static function result(BoardTable $playing): ?array
+  public static function result(BoardTable $playing): ?array
   {
     if ($playing->finished_at === null) {
       return null;
@@ -168,7 +168,7 @@ class PlayingResource extends JsonResource
    *
    * @return array{id: int, call: string, level: int|null, strain: string|null, special: bool}
    */
-  private static function bid(Bid $bid): array
+  public static function bid(Bid $bid): array
   {
     return [
       'id' => (int) $bid->id,

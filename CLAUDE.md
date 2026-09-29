@@ -75,7 +75,8 @@ vendor/bin/pint --test            # check formatting without changing files
   (not `api.php`) so they share the session/cookie stack; `routes/auth.php`
   (stock Breeze, API-only — no views) is `require`d from `web.php`.
   `routes/api.php` only has `GET`/`PATCH /api/user` (the caller's own record,
-  email included; `UserController@update` edits `name`/`description`). Sanctum's
+  email included; `UserController@update` edits `name`/`description`) and
+  `GET /api/user/playings` (the caller's own board history). Sanctum's
   `EnsureFrontendRequestsAreStateful` is prepended to the api group.
 - **Player identity**: `email` is not in `User::$hidden` (the owner needs it),
   so anything showing a user to *other* players goes through
@@ -305,13 +306,27 @@ vendor/bin/pint --test            # check formatting without changing files
   the only place a playing ends: it writes `tricks_won`, `score` (stored
   **from N-S's side**, negated when E-W declared) and `finished_at`; a passed
   out board gets `score = 0`, `tricks_won` null. `PlayingResource` shows it
-  as `result` once `finished_at` is set.
+  as `result` once `finished_at` is set (`PlayingResource::result()`, which
+  the results endpoints reuse).
+- **Results across tables**: `App\Services\BoardResultsService` reads
+  finished playings back from `board_table` + `board_table_seats`, so
+  nothing is lost when a table is deleted. `results()` serves
+  `GET /boards/{board}/results` (`Game\BoardController`): every finished
+  playing of a board with matchpoints from the pure
+  `ScoringService::matchpoints()` — computed on every read, **never
+  stored**, since each new playing changes everyone's. `history()` serves
+  the paginated `GET /users/{user}/playings` and `GET /api/user/playings`
+  (`UserController`). `GET /boards/{board}` shows the deal
+  (`PlayingStateService::boardDeal()`). Both board endpoints go through
+  `BoardPolicy::view` (auto-discovered): only a player who has **finished**
+  that board (`hasFinished()`) — no admin override, since anyone else may
+  still be dealt it.
 - Board selection (`GAME-RULES.md` §8), the auction (§4: turn order, bid
   legality, X/XX, end of auction, contract and declarer), the play (§5:
   opening lead, declarer playing dummy, follow suit, trick winner, dummy
-  revealed after the lead, tricks won) and duplicate scoring (§6) are
-  implemented, as is moving on to the next board; matchpoints/IMPs
-  aren't.
+  revealed after the lead, tricks won), duplicate scoring (§6) and
+  matchpoints across tables are implemented, as is moving on to the next
+  board; IMPs aren't.
 - `AuctionFactory`/`CardplayFactory` default `board_table_id` to a fresh
   `BoardTable::factory()`, whose board has no `board_card` rows. Such boards
   are inert — board selection only considers boards with a full 52-card deal.

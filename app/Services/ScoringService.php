@@ -22,6 +22,43 @@ class ScoringService
   public const BOOK = 6;
 
   /**
+   * Matchpoints (§6, "Comparing results"): each result on a board against
+   * every other one, 2 for a better score and 1 for a tie. Takes the N-S
+   * scores and returns N-S's matchpoints in the same order; E-W's are
+   * `matchpointTop()` minus N-S's.
+   *
+   * Example: 620, 620, 170, −100 → 5, 5, 2, 0 out of a top of 6.
+   *
+   * @param  list<int>  $scoresNs
+   * @return list<int>
+   */
+  public static function matchpoints(array $scoresNs): array
+  {
+    return array_map(function (int $score) use ($scoresNs) {
+      $points = 0;
+
+      foreach ($scoresNs as $other) {
+        $points += match (true) {
+          $score > $other => 2,
+          $score === $other => 1,
+          default => 0,
+        };
+      }
+
+      // the loop compared the result with itself too: a tie
+      return $points - 1;
+    }, array_values($scoresNs));
+  }
+
+  /**
+   * The most matchpoints a result can get on a board played `$results` times.
+   */
+  public static function matchpointTop(int $results): int
+  {
+    return max(0, 2 * ($results - 1));
+  }
+
+  /**
    * The score of a contract for declarer's side: positive when made,
    * negative (the defenders' score) when defeated.
    *
