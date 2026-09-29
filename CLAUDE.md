@@ -100,6 +100,9 @@ vendor/bin/pint --test            # check formatting without changing files
   endpoint, `Game\CardPlayController@store` (`POST /tables/{table}/cards`)
   the card-play one (`Game\CardController` is the unrelated read-only
   `/cards` reference list); `Game\PlayingController@show` serves the game state.
+  `Game\BidController@index` (`GET /bids`, public) lists the 38 calls in
+  `PlayingResource::bid`'s shape, so clients learn the `bid_id`s they send;
+  it orders them P, X, XX, then by `Bid::rank()`, never by id.
 - **Seating**: all seat logic lives in `App\Services\TableSeatService`.
   `seat()` checks the seat is valid and free and turns a unique-index SQLSTATE
   23000 into `App\Exceptions\SeatUnavailableException`. Taking a seat while
