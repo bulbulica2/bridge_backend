@@ -234,7 +234,11 @@ vendor/bin/pint --test            # check formatting without changing files
   **while that creator still holds a seat there** — a table has exactly one
   manager, and a creator who left has already handed the role on. Check it in
   the form request's `authorize()` so non-managers get 403 before validation
-  (`AddUserToSeatRequest`, `RemoveUserFromSeatRequest`).
+  (`AddUserToSeatRequest`, `RemoveUserFromSeatRequest`). Every HTTP table
+  payload carries `can_manage` (the policy for the caller), so clients never
+  mirror it; `TableUpdated` builds its `TableResource` `withoutViewer()`, since
+  the request user there is whoever made the change. `is_admin` is shown only
+  on the caller's own record (`User::toOwnArray()`, `GET`/`PATCH /api/user`).
 - **Domain enums** are plain constant classes in `app/auxiliary/` (lowercase
   namespace `App\auxiliary`): `Suits`, `Seats` (`N,E,S,W`, clockwise),
   `Vulnerability`. Migrations build DB enum columns from these, so changing

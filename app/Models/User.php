@@ -52,6 +52,17 @@ class User extends Authenticatable
     ];
   }
 
+  /**
+   * The user's record as shown to themselves (GET and PATCH /api/user):
+   * email included, plus `is_admin`, which stays hidden everywhere else.
+   *
+   * @return array<string, mixed>
+   */
+  public function toOwnArray(): array
+  {
+    return [...$this->toArray(), 'is_admin' => (bool) $this->is_admin];
+  }
+
   public function createdTables(): HasMany
   {
     return $this->hasMany(Table::class, 'created_by');

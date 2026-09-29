@@ -10,6 +10,7 @@ use Database\Seeders\game\CardSeeder;
 use Illuminate\Broadcasting\BroadcastManager;
 use Illuminate\Broadcasting\PrivateChannel;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Event;
 use Tests\TestCase;
 
@@ -30,9 +31,10 @@ class TableBroadcastTest extends TestCase
 
     Event::assertDispatchedTimes(TableUpdated::class, 1);
     Event::assertDispatched(TableUpdated::class, function (TableUpdated $event) use ($table, $response) {
-      // one table shape, whether it came over HTTP or the socket
+      // one table shape, whether it came over HTTP or the socket, less
+      // can_manage, which depends on who asks
       return $event->broadcastOn() == [new PrivateChannel("table.$table->id")]
-        && $event->broadcastWith() === ['table' => $response->json('data')];
+        && $event->broadcastWith() === ['table' => Arr::except($response->json('data'), 'can_manage')];
     });
   }
 
