@@ -23,9 +23,25 @@ use Illuminate\Http\Resources\Json\JsonResource;
  * after the opening lead dummy's, the claimer's while a claim is pending,
  * and once the board is finished the whole deal. A player's own cards are
  * added on top by `PlayingStateService::stateFor()`.
+ *
+ * `forReview()` serves a finished playing after the fact
+ * (`GET /playings/{playing}`), away from any live table.
  */
 class PlayingResource extends JsonResource
 {
+  private bool $live = true;
+
+  /**
+   * Leave out what only means something at a live table: `ready`, who has
+   * asked for the next board.
+   */
+  public function forReview(): static
+  {
+    $this->live = false;
+
+    return $this;
+  }
+
   /**
    * @return array<string, mixed>
    */
@@ -91,7 +107,7 @@ class PlayingResource extends JsonResource
       // once the board is over nothing is hidden any more: all four hands
       // as dealt, and who has asked for the next board
       'deal' => $finished ? $state->deal($playing) : null,
-      'ready' => $finished ? $state->ready($playing) : null,
+      'ready' => $this->when($this->live, fn () => $finished ? $state->ready($playing) : null),
     ];
   }
 

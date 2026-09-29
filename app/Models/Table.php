@@ -21,11 +21,16 @@ class Table extends Model
 
   protected static function booted(): void
   {
-    // the call-by-call and card-by-card logs die with the table. They are
-    // keyed on board_table, which survives the table (table_id goes null),
-    // so no foreign key cascades them
+    // a finished playing keeps its call-by-call and card-by-card logs, so
+    // the board can be reviewed after the table is gone (GET
+    // /playings/{playing}); an unfinished one has no result to review and
+    // loses them. remove() has already detached (and discarded) an
+    // unfinished playing by the time the last player deletes the table, so
+    // this only guards against a table deleted some other way
     static::deleting(function (Table $table) {
-      $table->boardPlays()->each(fn (BoardTable $playing) => $playing->discardLogs());
+      $table->boardPlays()
+        ->whereNull('finished_at')
+        ->each(fn (BoardTable $playing) => $playing->discardLogs());
     });
   }
 

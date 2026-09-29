@@ -74,9 +74,11 @@ Route::middleware('auth')->group(function () {
   Route::get('users/{user}/playings', [UserController::class, 'playings'])->name('users.playings');
 
   // a board after the fact, only for players who have finished it: its deal,
-  // and its results at every table with matchpoints
+  // its results at every table with matchpoints, and each finished playing's
+  // auction and tricks (the results' playing_id)
   Route::get('boards/{board}', [BoardController::class, 'show'])->name('boards.show');
   Route::get('boards/{board}/results', [BoardController::class, 'results'])->name('boards.results');
+  Route::get('playings/{playing}', [PlayingController::class, 'review'])->name('playings.show');
 });
 
 require __DIR__.'/auth.php';

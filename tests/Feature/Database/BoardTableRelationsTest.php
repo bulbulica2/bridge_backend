@@ -77,13 +77,28 @@ class BoardTableRelationsTest extends TestCase
     $this->assertSame(3, $play->board->auctions()->count());
   }
 
-  public function test_the_logs_die_with_the_table_but_the_playing_does_not(): void
+  public function test_a_finished_playings_logs_outlive_the_table(): void
   {
     $play = BoardTable::factory()->finished()->create();
     Auction::factory(2)->create(['board_table_id' => $play->id]);
     $this->playCards($play, 2);
 
     $this->assertSame(2, $play->table->auctions()->count());
+
+    $play->table->delete();
+
+    $this->assertDatabaseHas('board_table', ['id' => $play->id, 'table_id' => null]);
+    $this->assertSame(2, $play->auctions()->count());
+    $this->assertSame(2, $play->cardPlays()->count());
+  }
+
+  public function test_an_unfinished_playing_still_attached_loses_its_logs_with_the_table(): void
+  {
+    // remove() detaches it first, so only a table deleted some other way
+    // gets here
+    $play = BoardTable::factory()->create();
+    Auction::factory(2)->create(['board_table_id' => $play->id]);
+    $this->playCards($play, 2);
 
     $play->table->delete();
 

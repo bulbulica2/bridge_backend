@@ -108,7 +108,8 @@ vendor/bin/pint --test            # check formatting without changing files
   `/cards` reference list), and `Game\ClaimController` the claim ones
   (`POST`/`DELETE /tables/{table}/claim`,
   `POST /tables/{table}/claim/response`); `Game\PlayingController@show`
-  serves the game state.
+  serves the game state and `@review` (`GET /playings/{playing}`) one
+  finished playing after the fact.
   `Game\BidController@index` (`GET /bids`, public) lists the 38 calls in
   `PlayingResource::bid`'s shape, so clients learn the `bid_id`s they send;
   it orders them P, X, XX, then by `Bid::rank()`, never by id.
@@ -306,13 +307,17 @@ vendor/bin/pint --test            # check formatting without changing files
     `board_table.table_id` is nullable and `nullOnDelete`: a playing and its
     `board_table_seats` snapshot outlive the table, so a user's board history
     survives; an unfinished playing is detached the same way when a player
-    leaves mid-board. The call-by-call and card-by-card logs still die with
-    the table, but no FK does it (they hang off `board_table`, which
-    survives): a `Table::deleting` hook calls `BoardTable::discardLogs()` on
-    each of its playings, and `abandonPlaying()` discards a detached
-    playing's logs. The contract and result saved on `board_table` remain.
-    Delete tables through Eloquent (`$table->delete()`), not a query-builder
-    delete, or the hook won't run.
+    leaves mid-board. A **finished** playing's call-by-call and card-by-card
+    logs outlive the table too (they hang off `board_table`, so no FK
+    cascades them), for `GET /playings/{playing}`. Only an unfinished
+    playing loses them, through `BoardTable::discardLogs()`:
+    `abandonPlaying()` discards a detached playing's logs, and a
+    `Table::deleting` hook discards those of any unfinished playing still
+    attached (normally none, since `remove()` has detached it first — the
+    hook is a guard). Playings finished before this change lost their logs,
+    so they review with `auction: []`/`tricks: []`. Delete tables through
+    Eloquent (`$table->delete()`), not a query-builder delete, or the hook
+    won't run.
 - **Seeding** (`DatabaseSeeder`) branches on `APP_ENV`: `production` seeds only
   cards, bids and 100 dealt boards (through `BoardSeeder`, so they have
   hands); anything else also seeds a fixed admin user (`email@email.com` /
@@ -348,10 +353,13 @@ vendor/bin/pint --test            # check formatting without changing files
   stored**, since each new playing changes everyone's. `history()` serves
   the paginated `GET /users/{user}/playings` and `GET /api/user/playings`
   (`UserController`). `GET /boards/{board}` shows the deal
-  (`PlayingStateService::boardDeal()`). Both board endpoints go through
-  `BoardPolicy::view` (auto-discovered): only a player who has **finished**
-  that board (`hasFinished()`) — no admin override, since anyone else may
-  still be dealt it.
+  (`PlayingStateService::boardDeal()`), and `GET /playings/{playing}`
+  (`Game\PlayingController@review`) one finished playing — auction, tricks,
+  result, deal — as `PlayingResource::forReview()` (the live shape less
+  `ready`); an unfinished playing is a 404. All three go through
+  `BoardPolicy::view` (auto-discovered; for a playing, on its board): only
+  a player who has **finished** that board (`hasFinished()`) — no admin
+  override, since anyone else may still be dealt it.
 - Board selection (`GAME-RULES.md` §8), the auction (§4: turn order, bid
   legality, X/XX, end of auction, contract and declarer), the play (§5:
   opening lead, declarer playing dummy, follow suit, trick winner, dummy

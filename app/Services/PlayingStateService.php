@@ -34,6 +34,11 @@ class PlayingStateService
   public const HAND_SUIT_ORDER = ['S', 'H', 'D', 'C'];
 
   /**
+   * What `PlayingResource` reads from a playing, loaded up front.
+   */
+  public const RELATIONS = ['board', 'seats.user', 'auctions.bid', 'contractBid', 'cardPlays.card'];
+
+  /**
    * The playing of the board the table is on now, or null while it has none
    * (fewer than four players).
    *
@@ -51,7 +56,7 @@ class PlayingStateService
       ->where('table_id', $table->getKey())
       ->where('board_id', $table->board_id)
       ->when($lock, fn ($query) => $query->lockForUpdate())
-      ->with(['board', 'seats.user', 'auctions.bid', 'contractBid', 'cardPlays.card'])
+      ->with(self::RELATIONS)
       ->first();
   }
 
