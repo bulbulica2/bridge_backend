@@ -29,6 +29,9 @@ class BoardTable extends Model
     'declarer_id',
     'tricks_won',
     'score',
+    'claim_seat',
+    'claim_tricks',
+    'claim_accepted',
     'started_at',
     'auction_ended_at',
     'finished_at',
@@ -40,6 +43,8 @@ class BoardTable extends Model
       'doubled' => 'integer',
       'tricks_won' => 'integer',
       'score' => 'integer',
+      'claim_tricks' => 'integer',
+      'claim_accepted' => 'array',
       'started_at' => 'datetime',
       'auction_ended_at' => 'datetime',
       'finished_at' => 'datetime',
@@ -82,9 +87,26 @@ class BoardTable extends Model
   }
 
   /**
+   * Whether a claim is waiting for its answers: made, and the board not yet
+   * finished by it.
+   */
+  public function hasPendingClaim(): bool
+  {
+    return $this->claim_seat !== null && $this->finished_at === null;
+  }
+
+  /**
+   * Forget a claim that was rejected or withdrawn.
+   */
+  public function clearClaim(): void
+  {
+    $this->update(['claim_seat' => null, 'claim_tricks' => null, 'claim_accepted' => null]);
+  }
+
+  /**
    * Close the playing: write its result and score and mark it finished.
-   * The one place a board ends, whether the auction passed it out or the
-   * 13th trick was played.
+   * The one place a board ends, whether the auction passed it out, the
+   * 13th trick was played or a claim was accepted.
    *
    * `score` is stored from N-S's point of view, so it is turned round when
    * E-W declared. A passed out board scores 0 and has no `tricks_won`.

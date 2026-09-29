@@ -9,6 +9,8 @@ use App\Events\TableUpdated;
 use App\Models\Table;
 use App\Models\User;
 use App\Services\CardPlayService;
+use App\Services\ClaimService;
+use App\Services\PlayingStateService;
 use App\Services\TableSeatService;
 use Database\Seeders\AuctionSeeder;
 use Database\Seeders\CardplaySeeder;
@@ -18,7 +20,11 @@ use Illuminate\Support\Facades\Event;
 
 class TableSeeder extends Seeder
 {
-  public function __construct(private TableSeatService $seats) {}
+  public function __construct(
+    private TableSeatService $seats,
+    private ClaimService $claims,
+    private PlayingStateService $state,
+  ) {}
 
   /**
    * One table in each phase a player can find a board in, all reached
@@ -53,6 +59,12 @@ class TableSeeder extends Seeder
     $this->callWith(AuctionSeeder::class, ['table' => $table]);
     $this->callWith(CardplaySeeder::class, ['table' => $table]);
 
+    // ended mid-play by declarer's claim, which both defenders accepted
+    $table = $this->table('Claimed', User::factory(4)->create());
+    $this->callWith(AuctionSeeder::class, ['table' => $table]);
+    $this->callWith(CardplaySeeder::class, ['table' => $table, 'cards' => mt_rand(1, CardPlayService::TRICKS * 4 - 1)]);
+    $this->claim($table);
+
     $table = $this->table('Passed out', User::factory(4)->create());
     $this->callWith(AuctionSeeder::class, ['table' => $table, 'end' => AuctionSeeder::PASSED_OUT]);
 
@@ -82,6 +94,23 @@ class TableSeeder extends Seeder
     }
 
     return $table;
+  }
+
+  /**
+   * Declarer claims a random share of the tricks still to play, through
+   * `ClaimService`, and both defenders accept, which finishes the board.
+   */
+  private function claim(Table $table): void
+  {
+    $playing = $this->state->currentPlaying($table);
+    $declarer = $playing->declarer_seat;
+    $player = fn (string $seat) => $playing->seats->firstWhere('seat', $seat)->user;
+
+    $this->claims->claim($table, $player($declarer), mt_rand(0, ClaimService::remaining($this->state->plays($playing))));
+
+    foreach (ClaimService::responders($declarer, $declarer) as $seat) {
+      $this->claims->respond($table, $player($seat), true);
+    }
   }
 
   private function seatOf(Table $table, User $user): string
