@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\User\SearchUsersRequest;
 use App\Http\Requests\User\UpdateProfileRequest;
 use App\Http\Resources\UserResource;
 use App\Models\User;
@@ -11,6 +12,33 @@ use Illuminate\Http\Request;
 
 class UserController extends BaseController
 {
+  /** How many users `index()` returns at most. */
+  public const SEARCH_LIMIT = 10;
+
+  /**
+   * Users whose username or name contains `?search=` (case-insensitive), as
+   * public profiles plus `seated` (holds a seat anywhere, so a manager can't
+   * seat them). Email is neither matched nor returned, so this can't tell
+   * anyone whether an address has an account.
+   */
+  public function index(SearchUsersRequest $request): JsonResponse
+  {
+    // '!' escapes LIKE wildcards on both MySQL and sqlite, so a search for
+    // "%%" matches a literal "%%", not everyone
+    $like = '%'.str_replace(['!', '%', '_'], ['!!', '!%', '!_'], mb_strtolower($request->validated('search'))).'%';
+
+    $users = User::query()
+      ->where(fn ($query) => $query
+        ->whereRaw("lower(username) like ? escape '!'", [$like])
+        ->orWhereRaw("lower(name) like ? escape '!'", [$like]))
+      ->withExists('seats as seated')
+      ->orderBy('username')
+      ->limit(self::SEARCH_LIMIT)
+      ->get();
+
+    return $this->sendResponse(UserResource::collection($users), 'Users retrieved successfully.');
+  }
+
   /**
    * Another user's public profile.
    */

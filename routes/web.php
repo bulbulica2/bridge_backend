@@ -54,6 +54,9 @@ Route::middleware('auth')->group(function () {
     Route::post('tables/{table}/cards', [CardPlayController::class, 'store'])->name('tables.cards.store');
   });
 
+  // look users up by username or name, e.g. a manager picking someone to seat
+  Route::get('users', [UserController::class, 'index'])->middleware('throttle:30,1')->name('users.index');
+
   // another player's public profile (no email)
   Route::get('users/{user}', [UserController::class, 'show'])->name('users.show');
 

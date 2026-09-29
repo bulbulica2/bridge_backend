@@ -10,7 +10,10 @@ schema is shaped for duplicate bridge). Uses Sanctum (SPA/cookie auth) and
 MySQL. GitHub repo: https://github.com/bulbulica2/bridge_backend. Branches
 are named `<issue-title-prefix>-<topic>` (e.g. `7-fix-database`, tracked by
 the GitHub issue whose title starts with it) and merged to `main` via PR;
-commit messages are prefixed with the branch name.
+commit messages are prefixed with the branch name. When the work on an issue
+is done (tests and `pint --test` pass, docs updated), commit, push and open
+the PR against `main` straight away — don't stop to ask first. The PR title
+is the commit subject, and the body says `Closes #<issue>`.
 
 If you don't know bridge rules (auction legality, declarer/dummy, trick
 winner, scoring), read `../bridge_docs/GAME-RULES.md` before touching game
@@ -83,7 +86,10 @@ vendor/bin/pint --test            # check formatting without changing files
   `App\Http\Resources\UserResource` (`id`, `name`, `username`, `description`)
   — never the raw model. `TableResource` does this for seats via
   `TableSeatResource`; `GET /users/{user}` (`UserController@show`) serves the
-  same public profile.
+  same public profile. `GET /users?search=` (`UserController@index`,
+  `throttle:30,1`) finds up to 10 users by `username`/`name` — never by
+  email — and loads `withExists('seats as seated')`, which `UserResource`
+  adds as `seated` only when the query loaded it (`whenHas`).
 - **Controllers**: game controllers are in `app/Http/Controllers/Game/` and
   extend `BaseController`, whose `sendResponse($data, $message, $code)` and
   `sendError($message, $code, $errors = [])` both return
