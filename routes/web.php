@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Game\BidController;
 use App\Http\Controllers\Game\BoardController;
 use App\Http\Controllers\Game\CallController;
 use App\Http\Controllers\Game\CardController;
@@ -18,6 +19,9 @@ Route::get('/', function () {
 Route::resource('cards', CardController::class, [
   'only' => ['index', 'show'],
 ]);
+
+// the 38 calls with their ids, which POST tables/{table}/calls takes as bid_id
+Route::get('bids', [BidController::class, 'index'])->name('bids.index');
 
 // table
 Route::middleware('auth')->group(function () {
