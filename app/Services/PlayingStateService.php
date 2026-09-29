@@ -5,6 +5,7 @@ namespace App\Services;
 use App\auxiliary\Seats;
 use App\Http\Resources\PlayingResource;
 use App\Models\Bid;
+use App\Models\Board;
 use App\Models\BoardTable;
 use App\Models\Card;
 use App\Models\Table;
@@ -189,7 +190,18 @@ class PlayingStateService
    */
   public function deal(BoardTable $playing): array
   {
-    $cards = $playing->board->cards()->get();
+    return $this->boardDeal($playing->board);
+  }
+
+  /**
+   * A board's four hands as dealt, like `deal()`. Show it only to someone
+   * who has finished the board (`BoardPolicy::view`).
+   *
+   * @return array<string, list<array{id: int, suit: string, rank: int, rank_name: string}>>
+   */
+  public function boardDeal(Board $board): array
+  {
+    $cards = $board->cards()->get();
     $deal = [];
 
     foreach (Seats::SEATS as $seat) {

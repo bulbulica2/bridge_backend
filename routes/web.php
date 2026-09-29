@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Game\BoardController;
 use App\Http\Controllers\Game\CallController;
 use App\Http\Controllers\Game\CardController;
 use App\Http\Controllers\Game\CardPlayController;
@@ -55,6 +56,14 @@ Route::middleware('auth')->group(function () {
 
   // another player's public profile (no email)
   Route::get('users/{user}', [UserController::class, 'show'])->name('users.show');
+
+  // a user's finished playings, latest first, paginated
+  Route::get('users/{user}/playings', [UserController::class, 'playings'])->name('users.playings');
+
+  // a board after the fact, only for players who have finished it: its deal,
+  // and its results at every table with matchpoints
+  Route::get('boards/{board}', [BoardController::class, 'show'])->name('boards.show');
+  Route::get('boards/{board}/results', [BoardController::class, 'results'])->name('boards.results');
 });
 
 require __DIR__.'/auth.php';

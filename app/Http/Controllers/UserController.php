@@ -5,7 +5,9 @@ namespace App\Http\Controllers;
 use App\Http\Requests\User\UpdateProfileRequest;
 use App\Http\Resources\UserResource;
 use App\Models\User;
+use App\Services\BoardResultsService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 class UserController extends BaseController
 {
@@ -15,6 +17,22 @@ class UserController extends BaseController
   public function show(User $user): JsonResponse
   {
     return $this->sendResponse(new UserResource($user), 'User retrieved successfully.');
+  }
+
+  /**
+   * A user's finished playings, latest first, paginated (`?page=`).
+   */
+  public function playings(User $user, BoardResultsService $results): JsonResponse
+  {
+    return $this->sendResponse($results->history($user), 'Playings retrieved successfully.');
+  }
+
+  /**
+   * The caller's own finished playings, like `playings()`.
+   */
+  public function ownPlayings(Request $request, BoardResultsService $results): JsonResponse
+  {
+    return $this->playings($request->user(), $results);
   }
 
   /**
