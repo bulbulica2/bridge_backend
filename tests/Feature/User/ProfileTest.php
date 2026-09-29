@@ -41,6 +41,24 @@ class ProfileTest extends TestCase
       ->assertJsonMissingPath('data.email');
   }
 
+  public function test_the_own_record_says_whether_you_are_an_admin(): void
+  {
+    $user = User::factory()->create();
+    $admin = User::factory()->isAdmin()->create();
+
+    $this->actingAs($user)->getJson('/api/user')
+      ->assertOk()
+      ->assertJsonPath('id', $user->id)
+      ->assertJsonPath('email', $user->email)
+      ->assertJsonPath('is_admin', false);
+
+    $this->actingAs($admin)->getJson('/api/user')->assertJsonPath('is_admin', true);
+    $this->actingAs($admin)->patchJson('/api/user', ['name' => 'Boss'])->assertJsonPath('data.is_admin', true);
+
+    // nobody else's view of a user shows it
+    $this->actingAs($user)->getJson("/users/$admin->id")->assertJsonMissingPath('data.is_admin');
+  }
+
   public function test_show_unknown_user_is_404(): void
   {
     $viewer = User::factory()->create();

@@ -14,7 +14,9 @@ use Illuminate\Foundation\Events\Dispatchable;
  * A table's seats changed: somebody sat down, moved seat, left or was
  * kicked. Goes to everyone subscribed to `private-table.{id}`, carrying the
  * same TableResource shape the HTTP endpoints return, so a client has one
- * table shape to parse whichever way it arrived.
+ * table shape to parse whichever way it arrived — except `can_manage`, which
+ * depends on who asks and so is left out (withoutViewer()). A client keeps its
+ * last value and refetches GET /tables/{table} when `moderated_by` changes.
  *
  * Fired from inside the seating transaction but only sent once it commits
  * (ShouldDispatchAfterCommit), so a move that rolls back announces nothing.
@@ -38,8 +40,10 @@ class TableUpdated implements ShouldBroadcast, ShouldDispatchAfterCommit
   {
     $this->tableId = (int) $table->getKey();
     // through JSON, as an HTTP response would be: resolve() leaves the nested
-    // seat and user resources as objects, still holding the models
-    $this->table = json_decode(json_encode(new TableResource($table->fresh(['seats.user']))), true);
+    // seat and user resources as objects, still holding the models. There is
+    // no viewer: the request user here is whoever made the change, and their
+    // can_manage must not go to everyone, so it is left out
+    $this->table = json_decode(json_encode((new TableResource($table->fresh(['seats.user'])))->withoutViewer()), true);
   }
 
   /**

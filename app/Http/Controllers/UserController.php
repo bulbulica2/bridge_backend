@@ -72,7 +72,7 @@ class UserController extends BaseController
     $user = $request->user();
     $user->update($request->validated());
 
-    // the caller's own record, email included, like GET /api/user
-    return $this->sendResponse($user, 'Profile updated successfully.');
+    // the caller's own record, email and is_admin included, like GET /api/user
+    return $this->sendResponse($user->toOwnArray(), 'Profile updated successfully.');
   }
 }
