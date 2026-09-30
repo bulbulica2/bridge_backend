@@ -273,7 +273,11 @@ vendor/bin/pint --test            # check formatting without changing files
   and the table isn't unattended. The decisions are pure classes in
   `app/Robots/` (`RobotHand`, `RobotBidder`, `RobotCardPlayer` + `PlayView`,
   `RobotClaims`) over the robot's own `stateFor()` arrays — never another
-  hand — unit-tested in `tests/Unit/Robots/`. Tests run the queue on
+  hand — unit-tested in `tests/Unit/Robots/`. The bidding system is the
+  ordered rule list in `BiddingSystem` (`BidRule` → `BidMeaning`, over an
+  `AuctionView`): a robot makes the first legal rule its hand fits, and
+  every call is read back through the same rules — change a rule there,
+  never a separate "what partner means" table. Tests run the queue on
   `sync`, so the listener trampolines (a nested run only queues its table)
   instead of nesting 52 deep past xdebug's limit; fake `PlayingUpdated` to
   hold robots back while setting a table up. What they bid and play is in

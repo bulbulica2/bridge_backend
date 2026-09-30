@@ -53,6 +53,20 @@ class RobotHandTest extends TestCase
     $this->assertFalse($this->hand('K.Q2.J32.5432')->hasStopper('C'));
   }
 
+  public function test_aces_honours_and_suit_quality(): void
+  {
+    $hand = $this->hand('AKJ932.QT4.A2.32');
+
+    $this->assertSame(2, $hand->aces());
+    $this->assertSame(2, $hand->honours('S'));
+    $this->assertSame(3, $hand->honours('S', 5));
+    $this->assertTrue($hand->isGoodSuit('S'));        // two of the top three
+    $this->assertTrue($this->hand('QJT932.-.-.-')->isGoodSuit('S')); // three of the top five
+    $this->assertFalse($this->hand('KJ9876.-.-.-')->isGoodSuit('S'));
+    $this->assertTrue($hand->stops(['S', 'D']));
+    $this->assertFalse($hand->stops(['S', 'C']));
+  }
+
   public function test_longest_prefers_the_higher_suit_on_a_tie(): void
   {
     $hand = $this->hand('AK432.Q5432.2.32');

@@ -128,7 +128,13 @@ Robot players are `users` rows with `is_robot` (see
   services' static rules, unit-tested in `tests/Unit/Robots/`.
   `RobotHand` (points, lengths, shape of a hand), `RobotBidder` (a call),
   `RobotCardPlayer` with its `PlayView` (a card), `RobotClaims` (accept or
-  reject a claim). Each reads only the arrays
+  reject a claim). The bidding system itself is one ordered list of rules
+  per auction position, `BiddingSystem` (each a `BidRule`: a call, its
+  `BidMeaning`, the hands that make it), over an `AuctionView` of the calls
+  so far. A robot makes the first legal rule its hand fits, and every call
+  — its partner's, a human's — is read back through the same rules, so
+  what a robot means and what its partner understands can't drift apart;
+  `BidMeaning::explanation()` is the text for future bid alerts. Each reads only the arrays
   `PlayingStateService::stateFor()` serves the robot's seat — its own hand,
   dummy once face up, a claimer's hand, the cards played — never another
   hand, so a robot knows no more than a human in its seat. Each returns a
