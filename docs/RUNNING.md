@@ -73,6 +73,12 @@ The other seeded users all have the password `password`. Calls, cards and
 dealt boards are random, so each `migrate:fresh --seed` gives a different
 game. The seeders don't queue any broadcasts.
 
+No seeded table has robots. To play against robots, log in and create one
+with `POST /tables` and `{"robots": true}` (the admin must leave `Your call`
+first): the board is dealt at once. Robots move only through the queue, so
+**`queue:work` must be running** or they never act (see
+[Robots](#robots)).
+
 The seeded players never send heartbeats, so if `schedule:work` is running
 their seats are freed like anyone else's (after 5 minutes, or 15 at a table
 mid-board), which deletes their tables. Re-seed to get them back. The
@@ -112,7 +118,7 @@ What runs where:
 |---|---|---|
 | API | `php artisan serve` | HTTP, including `POST /broadcasting/auth` |
 | Websocket server | `php artisan reverb:start` (add `--debug` to log every frame) | holds the players' connections on port 8080 |
-| Queue worker | `php artisan queue:work --sleep=0.1` | broadcasts are queued jobs; the worker sends them to Reverb |
+| Queue worker | `php artisan queue:work --sleep=0.1` | broadcasts are queued jobs; the worker sends them to Reverb. It also runs the robots' moves (`DriveRobots`) |
 
 Broadcast events implement `ShouldBroadcast`, so they go through the queue: a
 Reverb server that is down fails a queued job, not the player's request. The
@@ -140,20 +146,53 @@ from `.env.example`) or broadcasts fail in the queue worker.
 
 ## Scheduler (idle seats)
 
-`routes/console.php` schedules `tables:release-idle-seats` every minute: it
-frees the seat of every player who has sent no heartbeat or playing request
-for too long, exactly as if they had left (see
-[`API.md`](API.md#post-tablestableheartbeat)). Locally run
-`php artisan schedule:work` in its own terminal; in production use one cron
-entry, `* * * * * php /path/to/artisan schedule:run`. Run the sweep once by
-hand with `php artisan tables:release-idle-seats`. Without the scheduler
-nothing is freed and a player who vanished keeps their seat until somebody
-kicks them.
+`routes/console.php` schedules two commands every minute:
+
+- `tables:release-idle-seats` frees the seat of every human player who has
+  sent no heartbeat or playing request for too long, exactly as if they had
+  left (see [`API.md`](API.md#post-tablestableheartbeat)). Robots are never
+  idle.
+- `tables:delete-unattended` deletes every table that only robots have kept
+  for longer than `BRIDGE_UNATTENDED_TABLE_MINUTES` since its last human
+  left (see [`API.md`](API.md#tables)).
+
+Locally run `php artisan schedule:work` in its own terminal; in production
+use one cron entry, `* * * * * php /path/to/artisan schedule:run`. Run either
+once by hand with `php artisan tables:release-idle-seats` or
+`php artisan tables:delete-unattended`. Without the scheduler nothing is
+freed: a player who vanished keeps their seat until somebody kicks them, and
+an unattended table stays until somebody kicks its robots.
 
 | Key | Default | Meaning |
 |---|---|---|
 | `BRIDGE_IDLE_SEAT_MINUTES` | `5` | minutes without a sign of life before a seat is freed (`config/bridge.php`) |
 | `BRIDGE_IDLE_PLAYING_SEAT_MINUTES` | `15` | the same while the table is in the middle of a board, where freeing the seat abandons it for the other three |
+| `BRIDGE_UNATTENDED_TABLE_MINUTES` | `10` | minutes a table with only robots left is kept before it is deleted |
+
+## Robots
+
+Robot players (see [`ROBOTS.md`](ROBOTS.md)) make their moves in the **queue
+worker**: after every `PlayingUpdated`, the queued listener
+`App\Listeners\DriveRobots` waits `BRIDGE_ROBOT_DELAY_SECONDS` and makes
+one robot move if one is due, which sends the next `PlayingUpdated`, and so
+on. So locally:
+
+- `php artisan queue:work --sleep=0.1` must be running, or robots never
+  move (their jobs wait in the `jobs` table and all run once a worker
+  starts);
+- restart it after changing robot code, like any PHP change;
+- a robot move that throws something unexpected fails its job and the table
+  waits on that robot: `php artisan queue:failed` shows it, and
+  `php artisan queue:retry all` runs it again. A move the rules refuse (the
+  table changed in between) is dropped quietly and logged at `info`, since the
+  change that caused it sends its own event.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `BRIDGE_ROBOT_DELAY_SECONDS` | `1` | how long each robot waits before its move, so a human can follow the play. `0` makes them instant |
+
+Robots are ordinary `users` rows (`is_robot`), made the first time they are
+needed; `migrate:fresh` wipes them with everything else.
 
 Like `queue:work`, restart `schedule:work` after changing PHP code.
 
@@ -190,6 +229,11 @@ If you see that, do what it says. On a checkout with no `.env`,
 `php artisan test` also prints a `file_get_contents(...\.env)` warning per
 test; that is Dotenv probing for the file and is harmless (plain
 `vendor/bin/phpunit` doesn't show it).
+
+It also sets `QUEUE_CONNECTION=sync`, so the robots' queued moves run inside
+the request that made them due (one after another, not nested) and a test
+sees a board with robots advance to the human's turn straight away; the
+`robot_delay_seconds` delay doesn't apply there.
 
 It also sets `BROADCAST_CONNECTION=null`, so tests never need Reverb running.
 Broadcast tests use `Event::fake()`; the channel-authorization tests switch to

@@ -7,6 +7,7 @@ use App\Http\Controllers\BaseController;
 use App\Http\Requests\Table\StoreTableRequest;
 use App\Http\Resources\TableResource;
 use App\Models\Table;
+use App\Services\RobotService;
 use App\Services\TableSeatService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
@@ -23,7 +24,11 @@ class TableController extends BaseController
     return $this->sendResponse(TableResource::collection($tables), 'Tables retrieved successfully.');
   }
 
-  public function store(StoreTableRequest $request, TableSeatService $seatService): JsonResponse
+  /**
+   * Create a table with the caller in `seat` (N by default). With `robots`,
+   * robots take the other three seats, which deals the first board at once.
+   */
+  public function store(StoreTableRequest $request, TableSeatService $seatService, RobotService $robots): JsonResponse
   {
     $user = $request->user();
 
@@ -31,7 +36,8 @@ class TableController extends BaseController
       return $this->sendError('You are already seated at a table. Leave it before creating another.', 409);
     }
 
-    if ($user->createdTables()->active()->count() >= Table::MAX_ACTIVE_PER_CREATOR) {
+    // tables only robots are keeping don't count
+    if ($user->createdTables()->attended()->count() >= Table::MAX_ACTIVE_PER_CREATOR) {
       return $this->sendError(
         'You already have '.Table::MAX_ACTIVE_PER_CREATOR.' active tables.',
         409
@@ -39,7 +45,7 @@ class TableController extends BaseController
     }
 
     try {
-      $table = DB::transaction(function () use ($request, $seatService, $user) {
+      $table = DB::transaction(function () use ($request, $seatService, $robots, $user) {
         $table = Table::create([
           'name' => $request->validated('name'),
           'created_by' => $user->id,
@@ -48,6 +54,12 @@ class TableController extends BaseController
         ]);
 
         $seatService->seat($table, $user, $request->validated('seat', 'N'));
+
+        if ($request->boolean('robots')) {
+          foreach ($table->freeSeats() as $seat) {
+            $robots->seatRobot($table, $seat, $user);
+          }
+        }
 
         return $table;
       });

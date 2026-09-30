@@ -26,6 +26,19 @@ class TablePolicy
   }
 
   /**
+   * Whether the user may take `$target`'s seat away: their own always (a
+   * quit), anybody's if they manage the table, and a robot's at an
+   * unattended table — one only robots are keeping — by anyone at all,
+   * since nobody manages it.
+   */
+  public function kick(User $user, Table $table, User $target): bool
+  {
+    return $user->id === $target->id
+      || ($target->is_robot && $table->unattended_since !== null)
+      || $this->manage($user, $table);
+  }
+
+  /**
    * Whether the user may read the table's game state: only the players
    * seated there, the same audience as the `table.{id}` channel.
    */

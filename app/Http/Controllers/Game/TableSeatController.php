@@ -4,12 +4,14 @@ namespace App\Http\Controllers\Game;
 
 use App\Exceptions\SeatUnavailableException;
 use App\Http\Controllers\BaseController;
+use App\Http\Requests\Table\AddRobotToSeatRequest;
 use App\Http\Requests\Table\AddUserToSeatRequest;
 use App\Http\Requests\Table\JoinTableRequest;
 use App\Http\Requests\Table\RemoveUserFromSeatRequest;
 use App\Http\Resources\TableResource;
 use App\Models\Table;
 use App\Models\User;
+use App\Services\RobotService;
 use App\Services\TableSeatService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -49,6 +51,24 @@ class TableSeatController extends BaseController
     $table->load('seats.user');
 
     return $this->sendResponse(new TableResource($table), 'User seated successfully.', 201);
+  }
+
+  /**
+   * Seat a robot at a free seat. Only a table manager gets this far: the
+   * form request checks `TablePolicy::manage`. The fourth seat deals the
+   * board, as for a human.
+   */
+  public function storeRobot(AddRobotToSeatRequest $request, Table $table, RobotService $robots): JsonResponse
+  {
+    try {
+      $robots->seatRobot($table, $request->validated('seat'), $request->user());
+    } catch (SeatUnavailableException $e) {
+      return $this->sendError($e->getMessage(), 409);
+    }
+
+    $table->load('seats.user');
+
+    return $this->sendResponse(new TableResource($table), 'Robot seated successfully.', 201);
   }
 
   /**

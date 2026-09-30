@@ -21,6 +21,8 @@ class StoreTableRequest extends FormRequest
     return [
       'name' => ['nullable', 'string', 'max:255'],
       'seat' => ['sometimes', 'string', Rule::in(Seats::SEATS)],
+      // robots take the other three seats, and the first board is dealt at once
+      'robots' => ['sometimes', 'boolean'],
     ];
   }
 }

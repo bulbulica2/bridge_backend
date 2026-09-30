@@ -40,7 +40,7 @@ class BoardSelectionService
    */
   public function startPlayingIfFull(Table $table): ?BoardTable
   {
-    $seats = $table->seats()->get();
+    $seats = $table->seats()->with('user')->get();
 
     if ($seats->count() < count(Seats::SEATS)) {
       return null;
@@ -72,7 +72,9 @@ class BoardSelectionService
     // everyone sees the board; each player alone gets their cards
     PlayingUpdated::dispatch($table);
 
-    foreach ($seats as $seat) {
+    // a robot reads its hand from the state when it moves: nobody listens
+    // on its channel
+    foreach ($seats->reject(fn ($seat) => $seat->user->is_robot) as $seat) {
       HandDealt::dispatch($playing, $seat->user_id, $seat->seat);
     }
 
@@ -227,10 +229,15 @@ class BoardSelectionService
    * The board-selection rule from `docs/GAME-RULES.md` §8: boards
    * should rotate as much as possible, so players never recognise a deal.
    *
-   * @param  Collection<int, \App\Models\TableSeat>  $seats
+   * Robots' history doesn't count: they don't remember deals, and a busy
+   * robot pool would soon have played every board.
+   *
+   * @param  Collection<int, \App\Models\TableSeat>  $seats  with their users
    */
   private function selectBoard(Table $table, Collection $seats): Board
   {
+    $seats = $seats->reject(fn ($seat) => $seat->user->is_robot);
+
     // 1. a board none of these four has ever played
     $playedByAnyone = BoardTable::query()
       ->whereHas('seats', fn (Builder $q) => $q->whereIn('user_id', $seats->pluck('user_id')))

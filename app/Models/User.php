@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Database\Factories\UserFactory;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasManyThrough;
@@ -49,7 +50,22 @@ class User extends Authenticatable
       'email_verified_at' => 'datetime',
       'password' => 'hashed',
       'is_admin' => 'boolean',
+      'is_robot' => 'boolean',
     ];
+  }
+
+  /**
+   * Robot players. `is_robot` is never mass assignable, so only
+   * `RobotService` makes them.
+   */
+  public function scopeRobots(Builder $query): void
+  {
+    $query->where('is_robot', true);
+  }
+
+  public function scopeHumans(Builder $query): void
+  {
+    $query->where('is_robot', false);
   }
 
   /**

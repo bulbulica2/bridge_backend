@@ -19,6 +19,9 @@ return new class extends Migration
       $table->timestamp('email_verified_at')->nullable();
       $table->string('password');
       $table->boolean('is_admin')->default(false);
+      // a robot player (`robot-<n>`), seated by RobotService and moved by
+      // DriveRobots; it can't log in
+      $table->boolean('is_robot')->default(false)->index();
       $table->text('description')->nullable();
       $table->rememberToken();
       $table->timestamps();

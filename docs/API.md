@@ -34,12 +34,13 @@ and policy failures get Laravel's default `403 {"message": "..."}`.
 | GET | `/cards/{card}` | `Game\CardController@show` | none | one `Card` by id |
 | GET | `/bids` | `Game\BidController@index` | none | the 38 calls with their ids (`bid_id` for `POST /tables/{table}/calls`), P, X, XX, then by rank |
 | GET | `/tables` | `Game\TableController@index` | `auth` | all tables, newest first, with `seats.user`, `free_seats` and `can_manage` |
-| POST | `/tables` | `Game\TableController@store` | `auth` | creates a table and seats the creator (201) |
+| POST | `/tables` | `Game\TableController@store` | `auth` | creates a table and seats the creator, with `robots` in the other three seats if asked (201) |
 | GET | `/tables/{table}` | `Game\TableController@show` | `auth` | one table with `seats.user`, `free_seats` and `can_manage` |
 | POST | `/tables/{table}/seats` | `Game\TableSeatController@store` | `auth` | take a free seat at an existing table, moving off your old one if you had one (201) |
 | DELETE | `/tables/{table}/seats` | `Game\TableSeatController@destroy` | `auth` | give up your seat; deletes the table if you were the last player |
 | POST | `/tables/{table}/seats/users` | `Game\TableSeatController@storeUser` | `auth` + `TablePolicy::manage` | a table manager seats another user (201) |
-| DELETE | `/tables/{table}/seats/{user}` | `Game\TableSeatController@destroyUser` | `auth` (+ `TablePolicy::manage` to remove anyone but yourself) | quit your seat, or a manager kicks that player out |
+| POST | `/tables/{table}/seats/robots` | `Game\TableSeatController@storeRobot` | `auth` + `TablePolicy::manage` | a table manager puts a robot in a free seat (201) |
+| DELETE | `/tables/{table}/seats/{user}` | `Game\TableSeatController@destroyUser` | `auth` (+ `TablePolicy::kick`: a manager, to remove anyone but yourself; anyone, to remove a robot from an unattended table) | quit your seat, or kick that player out |
 | POST | `/tables/{table}/heartbeat` | `Game\TableSeatController@heartbeat` | `auth` + seated at the table (`TablePolicy::play`) | "still here": keeps the caller's seat from being freed as idle (200, `{last_seen_at}`) |
 | GET | `/tables/{table}/playing` | `Game\PlayingController@show` | `auth` + seated at the table (`TablePolicy::play`) | the game state of the table's current board, with the caller's own hand |
 | POST | `/tables/{table}/calls` | `Game\CallController@store` | `auth` + seated at the table (`TablePolicy::play`) | make your call in the auction (201, the updated game state) |
@@ -106,7 +107,8 @@ See [`DATA-MODEL.md`](DATA-MODEL.md#table-tables) for the lifecycle.
 
 Every table payload — from index, store, show or leave — is built by
 `App\Http\Resources\TableResource` and has the same shape: the `Table` fields
-(`id`, `name`, `created_by`, `moderated_by`, `board_id`, timestamps), plus
+(`id`, `name`, `created_by`, `moderated_by`, `board_id`, `unattended_since`,
+timestamps), plus
 `seats` (`TableSeat` rows — `id`, `table_id`, `user_id`, `seat`, timestamps —
 each with its `user`), `free_seats` (the unoccupied seats in `N, E, S, W`
 order) and `can_manage`. The `TableUpdated` websocket event carries this same
@@ -122,9 +124,30 @@ caller.
 
 A seated player's `user` is their **public profile** only
 (`App\Http\Resources\UserResource`, via `TableSeatResource`): `id`, `name`,
-`username`, `description`. It never carries `email` (or anything else from
-the `users` row), so listing tables does not reveal who plays under which
-address. The same profile is served by `GET /users/{user}`.
+`username`, `description`, `is_robot`. It never carries `email` (or anything
+else from the `users` row), so listing tables does not reveal who plays under
+which address. The same profile is served by `GET /users/{user}`.
+
+**Robots.** A seat can hold a robot player instead of a human: a `users` row
+with `is_robot: true`, username `robot-<n>`, from a pool that grows as it is
+needed (`App\Services\RobotService`). Robots are seated by
+`POST /tables` with `robots: true` or by a manager with
+`POST /tables/{table}/seats/robots`; they bid, play, answer claims and ask
+for the next board on their own, through the same rules as a human, about a
+second (`BRIDGE_ROBOT_DELAY_SECONDS`) after each move — see
+[`ROBOTS.md`](ROBOTS.md) for how they decide. They act **only while at least
+one human sits at the table**. A robot never becomes `moderated_by`, and
+nobody else ever takes a seat a human left: it stays free until somebody
+(human, or a robot a manager adds) fills it.
+
+**Unattended tables.** When the last human leaves a table that still has
+robots, the table is kept but **unattended**: `unattended_since` is set,
+`moderated_by` goes to null (so only admins manage it), its robots stop
+acting, and **anyone** may kick a robot from it. The first human to sit down
+clears `unattended_since` and becomes `moderated_by`. Otherwise the scheduled
+`tables:delete-unattended` deletes it `BRIDGE_UNATTENDED_TABLE_MINUTES`
+(default 10) after its last human left (no event is sent: no human is
+there). `unattended_since` is null at every other table.
 
 `board_id` is null until the table has all four players. Taking the **fourth**
 seat deals the table a board and opens its playing, so the response to that
@@ -135,7 +158,8 @@ if a player leaves before the board is finished.
 Every table. Ordered by `created_at` then `id`, newest first.
 
 Tables always have at least one player: the API deletes a table when its
-last player leaves, and the seeders create theirs the same way.
+last player leaves, and the seeders create theirs the same way. That player
+may be a robot, at an unattended table.
 
 ### `POST /tables`
 Body (JSON, both optional):
@@ -144,6 +168,7 @@ Body (JSON, both optional):
 |---|---|---|
 | `name` | nullable string, max 255 | `null` |
 | `seat` | one of `N`, `E`, `S`, `W` | `N` |
+| `robots` | boolean | `false` |
 
 Rules:
 - **409** if the user already holds a seat at any table (`table_seats.user_id`
@@ -151,17 +176,24 @@ Rules:
   way `POST /tables/{table}/seats` does: a new table also counts against the
   3-active-tables limit, so leaving is made an explicit step.
 - **409** if the user already has **3 active tables** they created
-  (`Table::MAX_ACTIVE_PER_CREATOR`). A table counts while at least one player
-  sits at it. `created_by` never changes hands, so tables a user created and
-  then walked away from still count against their limit until they empty out.
+  (`Table::MAX_ACTIVE_PER_CREATOR`). A table counts while at least one
+  **human** sits at it (`Table::attended()`); an unattended table, kept only
+  by robots, doesn't. `created_by` never changes hands, so tables a user
+  created and then left to other humans still count against their limit
+  until those humans leave too.
 - Otherwise, in one DB transaction: create the table with `created_by` and
   `moderated_by` set to the user and `board_id` null, then seat the user
   through `App\Services\TableSeatService::seat()`. If the seat fails, including
   a concurrent request hitting a unique index, nothing is created and the
   response is 409.
 - `board_id` stays null: a board is only dealt once all four seats are taken
-  (see `POST /tables/{table}/seats`).
-- **422** (default Laravel shape) for an invalid `name`/`seat`.
+  (see `POST /tables/{table}/seats`) — unless `robots` is true: then, in the
+  same transaction, a robot takes each of the other three seats and the
+  fourth one deals the first board, so the response already has a
+  `board_id` and empty `free_seats`. The robots start calling at once if
+  one of them deals; the human sees the auction reach their turn through
+  `PlayingUpdated` (or `GET /tables/{table}/playing`).
+- **422** (default Laravel shape) for an invalid `name`/`seat`/`robots`.
 
 201 response (`data` has the same shape as `GET /tables/{table}`):
 ```json
@@ -171,8 +203,9 @@ Rules:
   "data": {
     "id": 7, "name": "Friday club", "created_by": 3, "moderated_by": 3,
     "board_id": null, "created_at": "...", "updated_at": "...",
+    "unattended_since": null,
     "seats": [{"id": 12, "table_id": 7, "user_id": 3, "seat": "E", "created_at": "...", "updated_at": "...",
-               "user": {"id": 3, "name": "Ann", "username": "ann", "description": "Plays a strong club."}}],
+               "user": {"id": 3, "name": "Ann", "username": "ann", "description": "Plays a strong club.", "is_robot": false}}],
     "free_seats": ["N", "S", "W"],
     "can_manage": true
   }
@@ -234,8 +267,11 @@ Give up the seat you hold at this table. No body.
   ```
 - **200** and the updated table (same shape as `GET /tables/{table}`) if
   players remain. If the leaver was `moderated_by`, the role passes to the
-  player who joined earliest (`table_seats.created_at`, then `id`);
-  `created_by` is left alone.
+  creator if still seated, else the **human** who joined earliest
+  (`table_seats.created_at`, then `id`) — never a robot; `created_by` is
+  left alone. If only robots remain, the table becomes **unattended**
+  (`unattended_since` set, `moderated_by: null`; see [Tables](#tables)).
+  The seat you left stays free: no robot takes it.
 - **409** `"You are not seated at this table."` if you hold no seat there.
 - **404** if the table id doesn't exist.
 
@@ -291,18 +327,42 @@ flags users who are already `seated` somewhere (they would 409 here).
 - **404** if the table id doesn't exist (tables are deleted when their last
   player leaves, so there is no "closed table" case).
 
+### `POST /tables/{table}/seats/robots`
+A table manager (as for `POST /tables/{table}/seats/users`) puts a **robot**
+in a free seat. The robot is the pool's first one that sits nowhere; a new
+`robot-<n>` is made when they are all busy.
+
+| Field | Rules | Default |
+|---|---|---|
+| `seat` | **required**, one of `N`, `E`, `S`, `W` | — |
+
+- **403** `"Only the table creator, its moderator or an admin can seat a
+  robot."` (Laravel's default `{message}` shape) for anyone else, checked
+  before the body is validated.
+- **201** with the updated table (same shape as `GET /tables/{table}`,
+  message `"Robot seated successfully."`). Taking the **fourth** seat deals
+  the board and opens the playing, exactly as for a human.
+- **409** if the seat is taken (`"Seat E is already taken."`).
+- **422** if `seat` is missing or not one of the four.
+- **404** if the table id doesn't exist.
+
+Robots are sent away like any player, with `DELETE /tables/{table}/seats/{user}`.
+
 ### `DELETE /tables/{table}/seats/{user}`
 Take a player out of their seat. No body. `{user}` is a `users.id`.
 
 - If `{user}` is the logged-in user this is a **quit** and is always allowed.
-- Otherwise it is a **kick** and requires `TablePolicy::manage`; anyone else
-  gets **403** `"Only the table creator, its moderator or an admin can remove
-  other players."` (Laravel's default `{message}` shape).
+- Otherwise it is a **kick** and requires `TablePolicy::kick`: the table's
+  manager (`TablePolicy::manage`) may kick anyone, and at an **unattended**
+  table (only robots left) **any** logged-in user may kick a **robot**.
+  Anyone else gets **403** `"Only the table creator, its moderator or an
+  admin can remove other players."` (Laravel's default `{message}` shape).
 - **200** and the updated table (same shape as `GET /tables/{table}`), with
   message `"You left the table."` for a quit or `"Player removed from the
   table."` for a kick. If the removed player was `moderated_by`, the role
-  passes to the creator when they are still seated, otherwise to the player
-  who joined earliest; `created_by` is left alone.
+  passes to the creator when they are still seated, otherwise to the human
+  who joined earliest; `created_by` is left alone. Removing the last human
+  leaves the table unattended, as `DELETE /tables/{table}/seats` does.
 - **200** and the table is **deleted** if that was the last player:
   ```json
   {"status": 200, "message": "You left the table. Nobody was left, so the table was deleted.", "data": {"table_deleted": true}}
@@ -339,7 +399,8 @@ card itself is refused. Taking or changing a seat also sets it.
 
 **Idle seats are freed.** The scheduled command `tables:release-idle-seats`
 (every minute; see [`RUNNING.md`](RUNNING.md#scheduler-idle-seats)) frees the
-seat of every player whose `last_seen_at` is older than
+seat of every **human** player (robots send no heartbeat and are never
+idle) whose `last_seen_at` is older than
 `BRIDGE_IDLE_SEAT_MINUTES` (default 5), or `BRIDGE_IDLE_PLAYING_SEAT_MINUTES`
 (default 15) while their table has a board in its auction or play. It goes
 through `TableSeatService::remove()`, so it is exactly a leave: `moderated_by`
@@ -385,10 +446,10 @@ page refresh or a reconnect. No body. Built by
     "playing_id": 42,
     "board": {"id": 7, "number": 7, "dealer": "S", "vulnerable": "N-S E-W"},
     "players": {
-      "N": {"id": 1, "name": "Ann", "username": "ann", "description": null},
-      "E": {"id": 2, "name": "Bob", "username": "bob", "description": null},
-      "S": {"id": 3, "name": "Cy", "username": "cy", "description": null},
-      "W": {"id": 4, "name": "Di", "username": "di", "description": null}
+      "N": {"id": 1, "name": "Ann", "username": "ann", "description": null, "is_robot": false},
+      "E": {"id": 2, "name": "Bob", "username": "bob", "description": null, "is_robot": false},
+      "S": {"id": 3, "name": "Cy", "username": "cy", "description": null, "is_robot": false},
+      "W": {"id": 9, "name": "Robot 1", "username": "robot-1", "description": "A robot player.", "is_robot": true}
     },
     "turn": "N",
     "acting_user_id": 1,
@@ -420,7 +481,7 @@ page refresh or a reconnect. No body. Built by
 | `phase` | `waiting` — the table has no board (`tables.board_id` null, fewer than four players); `auction` — `board_table.auction_ended_at` is null; `play` — the auction ended with a contract (`finished_at` still null); `finished` — `finished_at` is set: after the 13th trick, when a claim is accepted, or straight away on a **passed out** board. |
 | `playing_id` | the `board_table.id` |
 | `board` | `id`, `number`, `dealer` (`N/E/S/W`) and `vulnerable` (a `Vulnerability` value) from `boards` |
-| `players` | seat → public profile (`UserResource`, no email), from the playing's `board_table_seats` snapshot, not from `table_seats` |
+| `players` | seat → public profile (`UserResource`, no email; `is_robot` marks a robot), from the playing's `board_table_seats` snapshot, not from `table_seats` |
 | `turn` | the seat expected to act. During the `auction`: the dealer first, then clockwise after the last call. During the `play`: the **hand** the next card comes from — declarer's left-hand opponent leads the first trick, then clockwise, and each trick's winner leads the next. When it is dummy's seat, declarer plays it (see `acting_user_id`). `null` while `waiting` and once `finished` |
 | `acting_user_id` | the id of the user who must act for `turn`: that seat's player, except that on dummy's turn it is **declarer**. A client compares it with its own user id to know it is its move (and, for declarer, that it is playing dummy's cards). `null` whenever `turn` is |
 | `auction` | the calls made so far, in order: `{seat, bid}`, where `bid` is `{id, call, level, strain, special}` — `call` is the short name (`P`, `X`, `XX`, `1C`…`7NT`) and the only field telling pass, double and redouble apart; `level`/`strain` are null for those three. `[]` before the first call |
@@ -689,7 +750,7 @@ table or detached, are left out. Built by
       {
         "playing_id": 42,
         "table_id": 3,
-        "players": {"N": {"id": 1, "name": "Ann", "username": "ann", "description": null}, "E": {...}, "S": {...}, "W": {...}},
+        "players": {"N": {"id": 1, "name": "Ann", "username": "ann", "description": null, "is_robot": false}, "E": {...}, "S": {...}, "W": {...}},
         "contract": {"id": 22, "call": "4S", "level": 4, "strain": "S", "special": false},
         "doubled": 0,
         "declarer": "N",
@@ -758,7 +819,8 @@ result and deal are still there.
 
 A user's profile has two views:
 
-- **Public** (`UserResource`): `id`, `name`, `username`, `description`. This is
+- **Public** (`UserResource`): `id`, `name`, `username`, `description`,
+  `is_robot` (true for a robot player, see [Tables](#tables)). This is
   what other players see — in `GET /users/{user}`, in `GET /users?search=`
   (which adds `seated`) and nested in every table payload.
 - **Own**: the full serialised `User` (adds `email`, `email_verified_at`,
@@ -779,6 +841,8 @@ guests).
 
 - Matches users whose `username` **or** `name` contains `search`,
   case-insensitively. `%` and `_` are matched literally, not as wildcards.
+- Never returns **robots** (`is_robot`): they are seated with
+  `POST /tables/{table}/seats/robots`, not picked by name.
 - Never matches on `email` and never returns it, so it can't be used to check
   whether an address has an account.
 - **200** with at most **10** public profiles, ordered by `username` (there is
@@ -793,8 +857,8 @@ guests).
   "status": 200,
   "message": "Users retrieved successfully.",
   "data": [
-    {"id": 3, "name": "Ann", "username": "ann", "description": "Plays a strong club.", "seated": false},
-    {"id": 7, "name": "Joanna", "username": "jo", "description": null, "seated": true}
+    {"id": 3, "name": "Ann", "username": "ann", "description": "Plays a strong club.", "is_robot": false, "seated": false},
+    {"id": 7, "name": "Joanna", "username": "jo", "description": null, "is_robot": false, "seated": true}
   ]
 }
 ```
@@ -807,7 +871,7 @@ doesn't exist. Requires a logged-in session (**401** for guests).
 {
   "status": 200,
   "message": "User retrieved successfully.",
-  "data": {"id": 3, "name": "Ann", "username": "ann", "description": "Plays a strong club."}
+  "data": {"id": 3, "name": "Ann", "username": "ann", "description": "Plays a strong club.", "is_robot": false}
 }
 ```
 
@@ -913,18 +977,21 @@ Event name on the wire: `App\Events\TableUpdated` (Echo:
 **Sent when** a seat at that table changes — every path goes through
 `TableSeatService`:
 - a player takes a seat (`POST /tables`, `POST /tables/{table}/seats`), or a
-  manager seats someone (`POST /tables/{table}/seats/users`);
+  manager seats someone (`POST /tables/{table}/seats/users`) or a robot
+  (`POST /tables/{table}/seats/robots`, and each robot `POST /tables` seats
+  with `robots: true`);
 - a player changes seat at the same table;
 - a player leaves or is kicked (`DELETE /tables/{table}/seats`,
   `DELETE /tables/{table}/seats/{user}`), which may also hand the moderator
-  role on;
+  role on, or leave the table unattended (`unattended_since` set);
 - a player **moves** to another table: one event for the table they left and
   one for the table they joined;
 - the fourth seat is taken, dealing a board: that event is the first with a
   non-null `board_id`; a player leaving mid-board sends it back to null.
 
-**Not sent** when the change deleted the table (the last player left) —
-nobody is left to receive it — nor for a request that failed (409/404/403/422).
+**Not sent** when the change deleted the table (the last player left, or
+`tables:delete-unattended` removed an unattended one) — nobody is left to
+receive it — nor for a request that failed (409/404/403/422).
 Events fire only once the database transaction commits, so a move that rolls
 back announces nothing.
 
@@ -945,18 +1012,19 @@ the request (the one who did gets it in their HTTP response).
     "created_by": 12,
     "moderated_by": 12,
     "board_id": null,
+    "unattended_since": null,
     "created_at": "2026-09-22T10:15:02.000000Z",
     "updated_at": "2026-09-22T10:15:02.000000Z",
     "seats": [
       {
         "id": 21, "table_id": 7, "user_id": 12, "seat": "N",
         "created_at": "...", "updated_at": "...",
-        "user": {"id": 12, "name": "Alice", "username": "alice", "description": null}
+        "user": {"id": 12, "name": "Alice", "username": "alice", "description": null, "is_robot": false}
       },
       {
         "id": 22, "table_id": 7, "user_id": 13, "seat": "E",
         "created_at": "...", "updated_at": "...",
-        "user": {"id": 13, "name": "Bob", "username": "bob", "description": null}
+        "user": {"id": 13, "name": "Bob", "username": "bob", "description": null, "is_robot": false}
       }
     ],
     "free_seats": ["S", "W"]
@@ -986,7 +1054,10 @@ sent only once the transaction commits, payload snapshotted at dispatch.
   `/tables/{table}/claim` endpoints), including the accept that finishes the
   board;
 - a player asks for the next board (`POST /tables/{table}/playing/next`) —
-  `ready` changes — and again when the last one deals it.
+  `ready` changes — and again when the last one deals it;
+- a **robot** does any of the above: its moves go through the same services,
+  so each one sends `PlayingUpdated` exactly like a human's. Robot moves come
+  about a second apart, so a board with robots streams one event per move.
 
 It is **not** sent when a player leaving abandons the board; that shows up as
 `TableUpdated` with `board_id` back to null.
@@ -1030,8 +1101,10 @@ Class `App\Events\HandDealt`, on `private-App.Models.User.{id}` (Echo:
 delivery as `TableUpdated`.
 
 **Sent when** a board is dealt (the first, or the next one after
-`POST /tables/{table}/playing/next`): one event to **each** of the four players,
-on their own channel, carrying only their own cards. A client can render its
+`POST /tables/{table}/playing/next`): one event to **each** human of the four
+players, on their own channel, carrying only their own cards. Robots get none:
+nobody listens on their channel, and a robot reads its hand from the state
+when it moves. A client can render its
 hand from this without polling `GET /tables/{table}/playing`.
 
 ```json
@@ -1056,6 +1129,9 @@ hand, which that player's client can drop itself (or re-read from
   assigning a board to a table by hand (one is dealt automatically when the
   table fills, and after each finished board once the players move on).
 - No ban list: kicking a player doesn't stop them rejoining.
+- Robots bid a small SAYC core and play by rules of thumb
+  ([`ROBOTS.md`](ROBOTS.md)); better bidding and card play are planned as
+  separate issues. Robots never double, redouble or claim.
 - No presence channel ("who is online"): idle players are detected by the
   heartbeat only.
 
@@ -1096,7 +1172,11 @@ You can currently only:
 12. Keep your seat with `POST /tables/{table}/heartbeat` every ~30 s: a
     player who goes quiet (closed tab, lost connection) has their seat freed
     after 5 minutes, or 15 during a board.
-13. Once you have finished a board, compare its results at every table
+13. Play alone against robots: `POST /tables` with `robots: true` deals a
+    board at once, or a manager fills any free seat with
+    `POST /tables/{table}/seats/robots`. The robots bid, play, answer claims
+    and move on to the next board by themselves while a human is seated.
+14. Once you have finished a board, compare its results at every table
     by matchpoints (`GET /boards/{board}/results`) and see all four hands
     (`GET /boards/{board}`); list any player's finished boards
     (`GET /users/{user}/playings`, yours at `GET /api/user/playings`); and
@@ -1104,7 +1184,8 @@ You can currently only:
     (`GET /playings/{playing}`), even after its table is gone.
 
 So a full lobby flow (browse, create, sit down, stand up, kick) works end to
-end, through the auction, the play, the score and the next board, and a
+end, through the auction, the play, the score and the next board — with
+robots filling any seats nobody else takes — and a
 player who disappears doesn't block the table for long; afterwards the
 results can be compared across tables by matchpoints and each playing
 reviewed. IMPs aren't built.

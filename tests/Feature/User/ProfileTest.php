@@ -36,6 +36,7 @@ class ProfileTest extends TestCase
           'name' => $other->name,
           'username' => $other->username,
           'description' => 'Plays a strong club.',
+          'is_robot' => false,
         ],
       ])
       ->assertJsonMissingPath('data.email');

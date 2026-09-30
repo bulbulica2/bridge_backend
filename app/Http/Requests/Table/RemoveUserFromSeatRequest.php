@@ -9,14 +9,14 @@ class RemoveUserFromSeatRequest extends FormRequest
 {
   /**
    * Taking your own seat away is quitting and always allowed; taking
-   * somebody else's is a kick, which only a table manager may do. A manager
-   * aiming at themselves falls in the first branch, so they quit rather than
-   * kick themselves out of their own table.
+   * somebody else's is a kick, which only a table manager may do — except a
+   * robot's at an unattended table, which anyone may (`TablePolicy::kick`).
+   * A manager aiming at themselves quits rather than kicks themselves out of
+   * their own table.
    */
   public function authorize(): bool
   {
-    return $this->user()->id === $this->route('user')->id
-      || $this->user()->can('manage', $this->route('table'));
+    return $this->user()->can('kick', [$this->route('table'), $this->route('user')]);
   }
 
   /**

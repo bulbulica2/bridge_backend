@@ -30,18 +30,29 @@ header.
 | Method | Path | Controller | Middleware | Notes |
 |---|---|---|---|---|
 | POST | `/register` | `Auth\RegisteredUserController@store` | `guest` | body `{name, username, email, password, password_confirmation}`; creates user, logs them in, 204 |
-| POST | `/login` | `Auth\AuthenticatedSessionController@store` | `guest` | validated via `Auth\LoginRequest` |
+| POST | `/login` | `Auth\AuthenticatedSessionController@store` | `guest` | validated via `Auth\LoginRequest`; never logs in a robot |
 | POST | `/forgot-password` | `Auth\PasswordResetLinkController@store` | `guest` | sends reset link email |
 | POST | `/reset-password` | `Auth\NewPasswordController@store` | `guest` | |
 | GET | `/verify-email/{id}/{hash}` | `Auth\VerifyEmailController` | `auth`, `signed`, `throttle:6,1` | signed link from email |
 | POST | `/email/verification-notification` | `Auth\EmailVerificationNotificationController@store` | `auth`, `throttle:6,1` | resend verification email |
 | POST | `/logout` | `Auth\AuthenticatedSessionController@destroy` | `auth` | |
 
-These are the stock Laravel Breeze auth controllers. The only customization
-is `/register`, which also takes `username` (required, string, max 255, unique),
-because `users.username` is NOT NULL. Without it, registration failed with a
-500 until `7-fix-database`. See [`DATA-MODEL.md`](DATA-MODEL.md#user-users)
-for the `User` fields.
+These are the stock Laravel Breeze auth controllers, with two
+customizations:
+
+- `/register` also takes `username` (required, string, max 255, unique, and
+  not starting with `robot-`, case-insensitively — that prefix is the robot
+  pool's), because `users.username` is NOT NULL. Without it, registration
+  failed with a 500 until `7-fix-database`.
+- **Robots can't log in.** `LoginRequest::authenticate()` adds
+  `is_robot = false` to the credentials, so a robot user (`users.is_robot`)
+  gets the ordinary "these credentials do not match" 422 even with its
+  password. Robots never need a session: their moves are made server-side by
+  `App\Services\RobotService`. Their emails are `@robots.invalid`, so a
+  password-reset link for one reaches nobody (and would still not let it log
+  in).
+
+See [`DATA-MODEL.md`](DATA-MODEL.md#user-users) for the `User` fields.
 
 ## Authenticated API check
 
@@ -139,7 +150,10 @@ Policies live in `app/Policies/` and are auto-discovered by name
   player manages a table at a time. It allows:
   - its current `moderated_by` user. This starts as the creator and moves on
     when that manager leaves — to the creator if they are still seated,
-    otherwise to the earliest-joined remaining player;
+    otherwise to the earliest-joined remaining **human** (a robot never
+    manages a table). With only robots left the table is *unattended* and
+    `moderated_by` is null, so only admins manage it until a human sits
+    down and takes the role;
   - its `created_by` user **only while they still hold a seat at that table**.
     A creator who has left keeps `created_by` (it is what the 3-active-tables
     limit counts) but no longer manages the table they walked away from;
@@ -147,11 +161,12 @@ Policies live in `app/Policies/` and are auto-discovered by name
     seated there.
 
   It gates `POST /tables/{table}/seats/users` (seat another user) through
-  `AddUserToSeatRequest::authorize()`, and `DELETE /tables/{table}/seats/{user}`
-  when `{user}` is somebody else (a kick) through
-  `RemoveUserFromSeatRequest::authorize()`. A failure is a **403** in
-  Laravel's default `{message}` shape, returned before the body is validated.
-  See [`API.md`](API.md#post-tablestableseatsusers) and
+  `AddUserToSeatRequest::authorize()`, `POST /tables/{table}/seats/robots`
+  (seat a robot) through `AddRobotToSeatRequest::authorize()`, and kicks
+  through `kick` below. A failure is a **403** in Laravel's default
+  `{message}` shape, returned before the body is validated.
+  See [`API.md`](API.md#post-tablestableseatsusers),
+  [`API.md`](API.md#post-tablestableseatsrobots) and
   [`API.md`](API.md#delete-tablestableseatsuser).
 
   Clients don't re-implement it: every HTTP table payload carries
@@ -162,6 +177,13 @@ Policies live in `app/Policies/` and are auto-discovered by name
   changes. `GET /api/user` also returns the caller's own `is_admin`
   (read-only), hidden from every other view of a user. See
   [`API.md`](API.md#tables).
+- **`TablePolicy::kick(User, Table, User $target)`** decides who may take
+  `$target`'s seat away (`DELETE /tables/{table}/seats/{user}`, through
+  `RemoveUserFromSeatRequest::authorize()`): the target themselves (a quit),
+  anyone who passes `manage` (a kick), and — at an **unattended** table
+  (`unattended_since` set, only robots left) — **any** logged-in user when
+  the target is a robot, since nobody manages that table. While a human sits
+  at the table, only its manager may kick a robot.
 - **`TablePolicy::play(User, Table)`** is true for players seated at the
   table right now — the same audience as the `private-table.{id}` channel. It
   gates `GET /tables/{table}/playing` (checked in `PlayingController`); anyone
@@ -175,7 +197,7 @@ Policies live in `app/Policies/` and are auto-discovered by name
 - `User.is_admin` has no endpoint to set it; it is only set in the database
   (the seeded `email@email.com` admin, or `UserFactory::isAdmin()` in tests).
 - Registration rules are in `Auth/RegisteredUserController`: `name` required
-  max 255; `username` required, max 255, unique; `email` required, lowercase,
+  max 255; `username` required, max 255, unique, not `robot-…`; `email` required, lowercase,
   valid, max 255, unique; `password` confirmed, Breeze `Password::defaults()`.
   Validation errors come back as Laravel's standard 422 JSON, not the
   `{status, message, data}` shape. Login still uses `email`, not `username`.

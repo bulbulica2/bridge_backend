@@ -88,6 +88,7 @@ class UserSearchTest extends TestCase
           'name' => 'Ann',
           'username' => 'ann',
           'description' => 'Plays a strong club.',
+          'is_robot' => false,
           'seated' => false,
         ]],
       ]);

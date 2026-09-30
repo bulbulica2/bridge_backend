@@ -21,6 +21,7 @@ class UserResource extends JsonResource
       'name' => $this->name,
       'username' => $this->username,
       'description' => $this->description,
+      'is_robot' => (bool) $this->is_robot,
       // only where the query loaded it (`withExists('seats as seated')`, GET /users)
       'seated' => $this->whenHas('seated'),
     ];

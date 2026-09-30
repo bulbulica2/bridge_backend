@@ -35,7 +35,7 @@ routes/*.php
   map its exceptions to HTTP codes.
 - **Form requests** hold validation, and authorization where it depends on
   the table: checking the policy in `authorize()` gives a non-manager a 403
-  before validation runs (`AddUserToSeatRequest`,
+  before validation runs (`AddUserToSeatRequest`, `AddRobotToSeatRequest`,
   `RemoveUserFromSeatRequest`).
 - **Services** in `app/Services/` own every rule and every write. Reuse them
   instead of re-checking a rule in a controller (see [below](#game-services)).
@@ -43,7 +43,8 @@ routes/*.php
   appears: `TableResource` (every table payload, including the broadcast
   one), `TableSeatResource`, `PlayingResource` (the game state) and
   `UserResource`. Anything that shows a user to *other* players goes
-  through `UserResource` (`id`, `name`, `username`, `description`), never
+  through `UserResource` (`id`, `name`, `username`, `description`,
+  `is_robot`), never
   the raw `User` model: `email` isn't in `$hidden`, because the owner needs
   it on `GET /api/user`.
 
@@ -77,7 +78,7 @@ the same pattern:
 
 | Service | Responsible for | Tests |
 |---|---|---|
-| `TableSeatService` | joining, moving, leaving and kicking (`seat()`, `remove()`), heartbeats (`touch()`) and freeing idle seats (`releaseIdleSeats()`) | `tests/Feature/Table*` |
+| `TableSeatService` | joining, moving, leaving and kicking (`seat()`, `remove()`), heartbeats (`touch()`), freeing idle seats (`releaseIdleSeats()`) and deleting unattended tables (`deleteUnattendedTables()`) | `tests/Feature/Table*` |
 | `BoardSelectionService` | which board a table plays: deals when the fourth seat fills (`startPlayingIfFull()`), moves on after a finished board (`moveOn()`), detaches a board abandoned mid-play (`abandonPlaying()`) | feature tests |
 | `PlayingStateService` | the one place that works out a playing's phase, calls, cards, turn, who acts, the hands and dummy | feature tests |
 | `AuctionService` | one call (`call()`); `nextToCall`, `illegalReason`, `isOver`, `result` | `tests/Unit/AuctionServiceTest` |
@@ -85,6 +86,7 @@ the same pattern:
 | `ClaimService` | claims and concessions (`claim`, `respond`, `withdraw`) | `tests/Unit/ClaimServiceTest` |
 | `ScoringService` | duplicate scoring (`score()`, from declarer's side) and matchpoints (`matchpoints()`), pure static functions | `tests/Unit/ScoringTest` |
 | `BoardResultsService` | reads finished playings back for results across tables and a player's history | feature tests |
+| `RobotService` | robot players: the pool they are seated from (`seatRobot()`), and one robot move at a time (`act()`) through the services above | `tests/Feature/Game/RobotPlayTest`, `tests/Feature/Table/RobotSeatingTest` |
 
 Things worth knowing before you change them:
 
@@ -99,7 +101,11 @@ Things worth knowing before you change them:
 - **Leaving** is the same code whether the player quit, was kicked or timed
   out: `remove()` deletes the table if that was the last player, otherwise
   hands `moderated_by` on (to the creator if still seated, else the
-  earliest-joined player), and detaches an unfinished playing.
+  earliest-joined **human**), and detaches an unfinished playing. With only
+  robots left it keeps the table *unattended* (`unattended_since`,
+  `moderated_by` null); the first human to `seat()` there takes it over.
+  Both reread the table under its row lock (`refresh()`), since who runs it
+  may have changed since the caller loaded it.
 - **Boards** are chosen when the fourth player sits down, not when the table
   is created, because the selection rule
   ([`GAME-RULES.md` §8](GAME-RULES.md#8-game-flow-checklist-for-implementers))
@@ -111,6 +117,48 @@ Things worth knowing before you change them:
   while `ScoringService::score()` returns declarer's side.
 - **Matchpoints are never stored**: every new playing of a board changes
   everyone's, so they are computed on each read.
+
+## Robots
+
+Robot players are `users` rows with `is_robot` (see
+[`DATA-MODEL.md`](DATA-MODEL.md#user-users)); what they bid and play is in
+[`ROBOTS.md`](ROBOTS.md). The code splits in two:
+
+- **The brains**, `app/Robots/`: pure classes with no database, like the
+  services' static rules, unit-tested in `tests/Unit/Robots/`.
+  `RobotHand` (points, lengths, shape of a hand), `RobotBidder` (a call),
+  `RobotCardPlayer` with its `PlayView` (a card), `RobotClaims` (accept or
+  reject a claim). Each reads only the arrays
+  `PlayingStateService::stateFor()` serves the robot's seat — its own hand,
+  dummy once face up, a claimer's hand, the cards played — never another
+  hand, so a robot knows no more than a human in its seat. Each returns a
+  legal choice; the unit tests replay hundreds of random deals through
+  `AuctionService`'s and `CardPlayService`'s rules to check it.
+- **The driver**, `RobotService::act()`: works out whether a robot is due —
+  the acting user in the auction or play (declarer's robot plays dummy),
+  the first robot yet to answer a pending claim, or the first robot not yet
+  ready for the next board — asks the brain, and makes the move through
+  `AuctionService`, `CardPlayService`, `ClaimService` or
+  `BoardSelectionService::moveOn()`, so it is checked like a human's. A
+  choice the rules would refuse falls back to Pass or the first legal card;
+  a move refused because the table changed meanwhile is dropped (that change
+  sent its own event). It does nothing unless a human sits at the table and
+  it isn't unattended.
+
+`App\Listeners\DriveRobots` (auto-discovered, queued, `withDelay` =
+`bridge.robot_delay_seconds`) calls `act()` after every `PlayingUpdated`.
+Each robot move sends `PlayingUpdated` itself, so a run of robot turns is a
+chain of one-move jobs, spaced out for the human watching. On the `sync`
+queue (tests) that chain would nest a job inside a job 52 deep for a board
+the robots play out — past xdebug's nesting limit — so the listener
+trampolines: a job started while another is running only queues its table,
+and the outer one works through them in turn.
+
+The pool: `seatRobot()` seats the first robot that sits nowhere, or makes a
+new `robot-<n>`, through `TableSeatService::seat()` with the asking human
+as `$by` — so a robot seated elsewhere at the same moment is a 409 (then
+another robot is tried), never a move. Board selection ignores robots'
+history, and `HandDealt` isn't sent to them.
 
 ## Authorization
 
@@ -133,8 +181,8 @@ to run it: [`RUNNING.md`](RUNNING.md#realtime-reverb)).
 | Event | Channel | Carries | Sent when |
 |---|---|---|---|
 | `TableUpdated` | `table.{id}` | the `TableResource` JSON, without `can_manage` | any seat change that didn't delete the table |
-| `PlayingUpdated` | `table.{id}` | the public game state (no hand, no `my_seat`) | a board is dealt, and after every accepted call, card or claim action |
-| `HandDealt` | `App.Models.User.{id}` | that player's 13 cards | a board is dealt |
+| `PlayingUpdated` | `table.{id}` | the public game state (no hand, no `my_seat`) | a board is dealt, and after every accepted call, card or claim action (a robot's too); `DriveRobots` listens to it |
+| `HandDealt` | `App.Models.User.{id}` | that player's 13 cards | a board is dealt (humans only) |
 
 - Events implement `ShouldBroadcast` (queued, so a Reverb outage fails a
   queued job, not the player's request) and `ShouldDispatchAfterCommit`
@@ -151,11 +199,14 @@ to run it: [`RUNNING.md`](RUNNING.md#realtime-reverb)).
 
 Three long-running processes sit next to `php artisan serve`:
 
-- `php artisan queue:work --sleep=0.1` sends the queued broadcasts to Reverb.
+- `php artisan queue:work --sleep=0.1` sends the queued broadcasts to Reverb
+  and runs the robots' moves (`DriveRobots`).
 - `php artisan reverb:start` holds the players' websocket connections.
-- `php artisan schedule:work` runs what `routes/console.php` schedules: the
-  `tables:release-idle-seats` command (`App\Console\Commands\ReleaseIdleSeats`)
-  every minute.
+- `php artisan schedule:work` runs what `routes/console.php` schedules, every
+  minute: `tables:release-idle-seats`
+  (`App\Console\Commands\ReleaseIdleSeats`) and `tables:delete-unattended`
+  (`App\Console\Commands\DeleteUnattendedTables`, which deletes tables only
+  robots have kept for `bridge.unattended_table_minutes` (10)).
 
 Reverb can't tell Laravel that a client disconnected, so the backend tracks
 presence with a heartbeat instead: `table_seats.last_seen_at` is set by
@@ -164,7 +215,8 @@ presence with a heartbeat instead: `table_seats.last_seen_at` is set by
 to any new one. The command frees seats idle for
 `config('bridge.idle_seat_minutes')` (5), or
 `bridge.idle_playing_seat_minutes` (15) at a table mid-board, through the
-normal `remove()`, so it behaves exactly like the player leaving.
+normal `remove()`, so it behaves exactly like the player leaving. Robots
+send no heartbeat, so the sweep skips them.
 
 All three keep the old code loaded: restart them after changing PHP.
 
@@ -180,7 +232,8 @@ The seeders play those tables through the real services —
 `AuctionService` (via `AuctionSeeder`), `CardPlayService` (via
 `CardplaySeeder`) and `ClaimService` — so a seeded database only ever
 contains legal play. `TableSeeder` wraps it all in `Event::fakeFor()`, so
-seeding queues no broadcasts, and
+seeding queues no broadcasts (and no robot moves — no seeded table has
+robots), and
 `tests/Feature/Database/DatabaseSeederTest` replays every seeded call and
 card through the rules. Seeders live in `database/seeders/` and
 `database/seeders/game/` (namespace `Database\Seeders\game`).
@@ -197,7 +250,9 @@ MySQL database and needs neither MySQL nor a `.env`
 `APP_ENV=testing` on in-memory sqlite. Broadcasting is off in tests
 (`BROADCAST_CONNECTION=null`): assert events with `Event::fake()`, and to
 test a channel callback switch to the `reverb` driver inside the test (see
-`TableBroadcastTest::useReverbBroadcaster`).
+`TableBroadcastTest::useReverbBroadcaster`). The queue is `sync`, so robots
+move inside the request that made them due; faking `PlayingUpdated` holds
+them back while a test sets a table up (`RobotPlayTest::claimTable`).
 
 ## Gotchas
 
@@ -212,7 +267,11 @@ test a channel callback switch to the `reverb` driver inside the test (see
   `GET /playings/{playing}`.
 - **Tables have no closed state.** A table is active while somebody sits at
   it, and the last player to leave deletes it. `board_table.table_id` is
-  therefore nullable (`nullOnDelete`), so board history survives.
+  therefore nullable (`nullOnDelete`), so board history survives. Robots
+  alone keep a table alive, as *unattended*, until the scheduler deletes it.
+- **Robots need the queue worker.** Without `queue:work` their jobs wait in
+  `jobs` and the table stalls on a robot's turn. A robot job that throws
+  fails like any job (`queue:retry`).
 - **2-space indentation**, including PHP (`.editorconfig`). Pint can't indent
   with 2 spaces, so `pint.json` turns its indentation fixers off: Pint
   neither catches nor fixes bad indentation. Don't remove those rules, or a
