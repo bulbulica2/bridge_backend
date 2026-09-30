@@ -529,13 +529,16 @@ Rules the robots keep, and that keep them honest:
   without one it is deleted.
 - **Humans are never replaced.** A human who leaves frees the seat; no robot
   takes it unless a manager puts one there.
-- A robot never manages a table, never doubles or redoubles, and never
-  claims; it answers claims, and asks for the next board as soon as one ends.
+- A robot never manages a table, never redoubles, and never claims; it
+  answers claims, and asks for the next board as soon as one ends.
 
-How robots bid (a core of SAYC: Standard American Yellow Card) and play (rules of thumb for
-leads, following and declarer play), and how they answer claims, is in
+How robots bid (a SAYC-style system — Standard American Yellow Card — with
+Stayman, transfers, a strong 2♣, weak twos, takeout, negative and penalty
+doubles, Blackwood and Gerber) and play (rules of thumb for leads,
+following and declarer play), and how they answer claims, is in
 [`ROBOTS.md`](ROBOTS.md). **In code:** `app/Robots/` (the pure decision
-classes) and `App\Services\RobotService` (the pool, and one move at a
-time), driven by the queued listener `App\Listeners\DriveRobots` after
-every `PlayingUpdated`. Status: implemented as "v1"; better bidding and
-better card play are separate follow-up issues.
+classes; the bidding system is `BiddingSystem`) and
+`App\Services\RobotService` (the pool, and one move at a time), driven by
+the queued listener `App\Listeners\DriveRobots` after every
+`PlayingUpdated`. Status: bidding implemented; card play implemented as
+"v1", and better card play is a separate follow-up issue.

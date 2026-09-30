@@ -75,6 +75,46 @@ class RobotHand
     return count($this->bySuit[$suit]);
   }
 
+  public function aces(): int
+  {
+    return count(array_filter(self::SUITS, fn ($suit) => $this->holds($suit, self::ACE)));
+  }
+
+  /**
+   * How many of a suit's top `$top` honours (A, K, Q, J, 10) this hand holds.
+   */
+  public function honours(string $suit, int $top = 3): int
+  {
+    $honours = array_slice([self::ACE, self::KING, self::QUEEN, self::JACK, 10], 0, $top);
+
+    return count(array_filter($this->bySuit[$suit], fn ($card) => in_array($card['rank'], $honours, true)));
+  }
+
+  /**
+   * A suit good enough to preempt in: two of the top three honours, or
+   * three of the top five.
+   */
+  public function isGoodSuit(string $suit): bool
+  {
+    return $this->honours($suit, 3) >= 2 || $this->honours($suit, 5) >= 3;
+  }
+
+  /**
+   * Whether every one of `$suits` is stopped for no trump.
+   *
+   * @param  list<string>  $suits
+   */
+  public function stops(array $suits): bool
+  {
+    foreach ($suits as $suit) {
+      if (! $this->hasStopper($suit)) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
   /**
    * One suit's cards, high to low.
    *

@@ -1129,9 +1129,11 @@ hand, which that player's client can drop itself (or re-read from
   assigning a board to a table by hand (one is dealt automatically when the
   table fills, and after each finished board once the players move on).
 - No ban list: kicking a player doesn't stop them rejoining.
-- Robots bid a small SAYC core and play by rules of thumb
-  ([`ROBOTS.md`](ROBOTS.md)); better bidding and card play are planned as
-  separate issues. Robots never double, redouble or claim.
+- Robots bid a SAYC-style system and play by rules of thumb
+  ([`ROBOTS.md`](ROBOTS.md)); better card play is planned as a separate
+  issue. Robots never redouble or claim. The robots work out a short
+  explanation of every call (ready for bid alerts), but no endpoint or
+  event sends it yet.
 - No presence channel ("who is online"): idle players are detected by the
   heartbeat only.
 
