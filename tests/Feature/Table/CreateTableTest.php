@@ -58,6 +58,7 @@ class CreateTableTest extends TestCase
         'name' => $player->name,
         'username' => $player->username,
         'description' => 'Weak twos.',
+        'is_robot' => false,
       ])
       ->assertJsonMissingPath('data.seats.0.user.email');
 

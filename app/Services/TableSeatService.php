@@ -33,7 +33,8 @@ class TableSeatService
    * a 409. A manager pointing at themselves counts as asking for themselves.
    *
    * Filling the last seat deals the table a board and opens its playing, so
-   * this mutates `$table` (`board_id`).
+   * this mutates `$table` (`board_id`). A human sitting down at an
+   * unattended table (only robots left there) becomes its moderator.
    *
    * Broadcasts `TableUpdated` for the table sat at (and, through remove(), for
    * the table a move left), once the transaction commits.
@@ -59,6 +60,10 @@ class TableSeatService
         // both tables are locked up front, lowest id first, so two players
         // swapping tables at the same moment can't deadlock each other
         $this->lockTables($table, $held?->table_id);
+
+        // reread under the lock: the last human may have left since $table
+        // was loaded, leaving it unattended
+        $table->refresh();
 
         if ($table->seats()->where('seat', $seat)->exists()) {
           throw new SeatUnavailableException("Seat $seat is already taken.");
@@ -89,6 +94,11 @@ class TableSeatService
           'user_id' => $user->id,
           'seat' => $seat,
         ]);
+
+        // the first human back at a table only robots were keeping runs it
+        if ($table->unattended_since !== null && ! $user->is_robot) {
+          $table->update(['unattended_since' => null, 'moderated_by' => $user->id]);
+        }
 
         // the fourth player to sit down starts the board
         $this->boardSelection->startPlayingIfFull($table);
@@ -130,9 +140,12 @@ class TableSeatService
    * removing another player); it only changes the wording of the error.
    *
    * A table lives only while somebody sits at it, so removing the last player
-   * deletes it. If anyone is left and the leaver was the moderator, the role
-   * passes to the creator when they are still seated, otherwise to the player
-   * who joined earliest — a table is only ever managed by one person, and
+   * deletes it. If a human is left and the leaver was the moderator, the role
+   * passes to the creator when they are still seated, otherwise to the human
+   * who joined earliest; robots never get it. If only robots are left, the
+   * table is kept as unattended (`unattended_since`, no moderator): its
+   * robots wait, anyone may kick them, and the first human to sit down runs
+   * it (see seat()). A table is only ever managed by one person, and
    * `TablePolicy::manage` already treats a seated creator as that person.
    * `created_by` never moves: it is what the per-creator active-table limit
    * counts.
@@ -148,8 +161,10 @@ class TableSeatService
   public function remove(Table $table, User $user, ?User $by = null): bool
   {
     return DB::transaction(function () use ($table, $user, $by) {
-      // serialize seat changes on this table
+      // serialize seat changes on this table, then reread it: who runs it
+      // may have changed since it was loaded
       Table::whereKey($table->getKey())->lockForUpdate()->firstOrFail();
+      $table->refresh();
 
       $seat = $table->seats()->where('user_id', $user->id)->first();
 
@@ -166,15 +181,26 @@ class TableSeatService
       // whoever is left is not the four who started the board
       $this->boardSelection->abandonPlaying($table);
 
-      // the creator if they are still here, else the earliest joiner still at
-      // the table, if any
-      $next = $table->seats()->where('user_id', $table->created_by)->first()
-        ?? $table->seats()->orderBy('created_at')->orderBy('id')->first();
+      // the creator if they are still here, else the earliest human joiner
+      // still at the table, if any: a robot never runs a table
+      $humans = $table->seats()->whereHas('user', fn ($user) => $user->humans());
+      $next = (clone $humans)->where('user_id', $table->created_by)->first()
+        ?? $humans->orderBy('created_at')->orderBy('id')->first();
 
-      if ($next === null) {
+      if ($next === null && ! $table->seats()->exists()) {
         $table->delete();
 
         return true;
+      }
+
+      if ($next === null) {
+        // only robots are left: they keep the table, idle, until a human
+        // sits down or tables:delete-unattended deletes it
+        $table->update(['moderated_by' => null, 'unattended_since' => $table->unattended_since ?? now()]);
+
+        TableUpdated::dispatch($table);
+
+        return false;
       }
 
       if ((int) $table->moderated_by === $user->id) {
@@ -216,9 +242,11 @@ class TableSeatService
     $lobbyCutoff = now()->subMinutes(config('bridge.idle_seat_minutes'));
     $playingCutoff = now()->subMinutes(config('bridge.idle_playing_seat_minutes'));
 
-    // every seat idle past the shorter timeout; each is then held to the
-    // timeout its own table calls for
+    // every human's seat idle past the shorter timeout; each is then held to
+    // the timeout its own table calls for. Robots send no heartbeat and are
+    // never idle
     $candidates = TableSeat::query()
+      ->whereHas('user', fn ($user) => $user->humans())
       ->where('last_seen_at', '<', $lobbyCutoff->max($playingCutoff))
       ->orderBy('id')
       ->pluck('id');
@@ -232,6 +260,45 @@ class TableSeatService
     }
 
     return $freed;
+  }
+
+  /**
+   * Delete every table only robots have kept for longer than
+   * `bridge.unattended_table_minutes`, each rechecked under its lock in case
+   * a human sat down meanwhile. An unfinished playing is detached first, as
+   * when a player leaves. Nobody is told: no human sits there.
+   *
+   * Returns how many tables were deleted.
+   */
+  public function deleteUnattendedTables(): int
+  {
+    $cutoff = now()->subMinutes(config('bridge.unattended_table_minutes'));
+
+    $candidates = Table::query()
+      ->where('unattended_since', '<', $cutoff)
+      ->orderBy('id')
+      ->pluck('id');
+
+    $deleted = 0;
+
+    foreach ($candidates as $tableId) {
+      $deleted += (int) DB::transaction(function () use ($tableId, $cutoff) {
+        $table = Table::whereKey($tableId)->lockForUpdate()->first();
+
+        if ($table?->unattended_since === null || $table->unattended_since->gte($cutoff)
+          || $table->seats()->whereHas('user', fn ($user) => $user->humans())->exists()) {
+          return false;
+        }
+
+        $this->boardSelection->abandonPlaying($table);
+        $table->seats()->delete();
+        $table->delete();
+
+        return true;
+      });
+    }
+
+    return $deleted;
   }
 
   /**

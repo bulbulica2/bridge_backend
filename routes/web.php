@@ -37,7 +37,11 @@ Route::middleware('auth')->group(function () {
   // a table manager (creator, moderator or admin) seats another user
   Route::post('tables/{table}/seats/users', [TableSeatController::class, 'storeUser'])->name('tables.seats.users.store');
 
+  // a table manager puts a robot in a free seat
+  Route::post('tables/{table}/seats/robots', [TableSeatController::class, 'storeRobot'])->name('tables.seats.robots.store');
+
   // quit if it is your own seat, otherwise a manager kicking that player out
+  // (or anyone kicking a robot from an unattended table)
   Route::delete('tables/{table}/seats/{user}', [TableSeatController::class, 'destroyUser'])->name('tables.seats.users.destroy');
 
   // a seated player is still there; the client sends it every ~30 s while the table is open

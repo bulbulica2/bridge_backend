@@ -31,15 +31,26 @@ duplicate scoring (`ScoringService`) are enforced in code.
 ### User (`users`)
 Fields: `name`, `username`, `email`, `password` (hashed), `description`,
 `is_admin` (hidden from JSON, cast to boolean, not fillable; grants
-`TablePolicy::manage` on every table), standard Breeze fields (`email_verified_at`,
-`remember_token`).
+`TablePolicy::manage` on every table), `is_robot` (boolean, default false,
+indexed, cast to boolean, not fillable), standard Breeze fields
+(`email_verified_at`, `remember_token`).
+`is_robot` marks a **robot player**. Robots are ordinary `users` rows made
+only by `App\Services\RobotService` (`forceFill`-style, since the column
+isn't fillable): `name` `Robot <n>`, `username` `robot-<n>`, `email`
+`robot-<n>@robots.invalid`, a random password nobody knows, and
+`email_verified_at` set. They form a pool: the first robot that sits nowhere
+is reused, and a new one is made when all are busy, so `unique(user_id)` on
+`table_seats` still means one table per robot. Login refuses them whatever
+the password, and registration refuses any username starting `robot-`, so
+the numbering can't collide with a human. Scopes `User::robots()` and
+`User::humans()`; `UserFactory::robot()` makes one in tests.
 `description` (nullable text, fillable) is free-form profile text: readable by
 any logged-in user through `GET /users/{user}` and in every table payload, and
 writable by its owner through `PATCH /api/user` (max 1000 chars), along with
 `name`. `email` is **not** in `$hidden` — the owner's own `GET /api/user`
 needs it — so any payload showing a user to *other* players must go through
-`App\Http\Resources\UserResource` (`id`, `name`, `username`, `description`)
-rather than the raw model.
+`App\Http\Resources\UserResource` (`id`, `name`, `username`, `description`,
+`is_robot`) rather than the raw model.
 Relations: `createdTables` (hasMany Table via `created_by`), `moderatedTables`
 (hasMany Table via `moderated_by` — a user can moderate several tables: the
 ones they made, plus any they inherit when a moderator leaves), `seats`
@@ -96,19 +107,31 @@ aren't contiguous. `rank_name` is `"2"`…`"10"`, `"Jack"`, `"Queen"`,
 
 ### Table (`tables`)
 Fields: `name` (string, nullable), `created_by` (FK users, nullable),
-`moderated_by` (FK users, nullable), `board_id` (FK boards, nullable). All are
+`moderated_by` (FK users, nullable), `board_id` (FK boards, nullable),
+`unattended_since` (timestamp, nullable, indexed, cast to datetime). All are
 fillable. There is **no** `closed_at` and no closed/archived state.
 **Active table** = at least one `table_seats` row points at it; query with the
 `Table::active()` scope. A table lives only while somebody sits at it: the last
 player to leave deletes the row (`TableSeatService::remove()`).
-`Table::MAX_ACTIVE_PER_CREATOR` (3) caps how many active tables one user may
-have as `created_by`; `POST /tables` returns 409 past that.
+**Attended table** = at least one **human** (`is_robot` false) sits at it;
+`Table::attended()`. `Table::MAX_ACTIVE_PER_CREATOR` (3) caps how many
+attended tables one user may have as `created_by`; `POST /tables` returns
+409 past that.
 `created_by` is fixed for the life of the table, which is what that limit
 counts. `moderated_by` starts equal to `created_by` and moves whenever the
 current moderator leaves: to the creator if they still hold a seat, otherwise
-to the earliest-joined remaining player. A table therefore has exactly one
-manager at a time, and a creator who has left stops being one — see
-`TablePolicy::manage` in [`AUTH.md`](AUTH.md#authorization).
+to the earliest-joined remaining **human** — never a robot. A table therefore
+has at most one manager at a time, and a creator who has left stops being
+one — see `TablePolicy::manage` in [`AUTH.md`](AUTH.md#authorization).
+**Unattended table**: when the last human leaves and robots remain, the row
+is kept with `unattended_since` set to that moment and `moderated_by` null.
+Its robots stop acting and anyone may kick them (`TablePolicy::kick`). The
+first human to sit down clears `unattended_since` and becomes `moderated_by`
+(`TableSeatService::seat()`); otherwise `tables:delete-unattended` deletes
+it once `unattended_since` is older than `bridge.unattended_table_minutes`
+(10), through `TableSeatService::deleteUnattendedTables()`, which detaches
+any unfinished playing first like a leave. `unattended_since` is null on
+every table a human sits at.
 `POST /tables` creates tables with `created_by` = `moderated_by` = the creator
 and `board_id` null. `board_id` is filled in later, by whoever takes the
 **fourth** seat: `TableSeatService::seat()` then calls
@@ -366,9 +389,9 @@ Relations: `boardTable`, `user` (both belongsTo).
 ## Relationship summary
 
 ```
-User ──< TableSeat >── Table
+User ──< TableSeat >── Table           (a User may be a robot: is_robot)
   │                       └── board_id ──> Board (current board)
-  └── (created_by / moderated_by on Table)
+  └── (created_by / moderated_by on Table; never a robot)
 
 Board ──< board_card (pivot, +seat) >── Card
 

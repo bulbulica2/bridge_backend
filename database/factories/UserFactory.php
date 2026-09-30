@@ -45,6 +45,16 @@ class UserFactory extends Factory
     ]);
   }
 
+  /**
+   * A robot player, as `RobotService` makes them.
+   */
+  public function robot(): static
+  {
+    return $this->state(fn (array $attributes) => [
+      'is_robot' => true,
+    ]);
+  }
+
   public function isAdmin(): static
   {
     return $this->state(fn (array $attributes) => [

@@ -18,8 +18,10 @@ Files here:
 - [`DATA-MODEL.md`](DATA-MODEL.md) — entities, fields, relationships, and the
   bridge domain enums
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — for backend developers: the layers,
-  the game services, policies, events, the scheduler and queue, seeding, and
-  the gotchas
+  the game services, robots, policies, events, the scheduler and queue,
+  seeding, and the gotchas
+- [`ROBOTS.md`](ROBOTS.md) — the robot players: when they act, and exactly
+  what they bid, lead, play and accept
 
 The frontend (the `bridge` repo, an Ionic Vue 3 SPA) documents itself in
 https://github.com/bulbulica2/bridge/tree/main/docs and links here for

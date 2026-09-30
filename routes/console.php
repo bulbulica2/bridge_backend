@@ -11,3 +11,6 @@ Artisan::command('inspire', function () {
 // free the seats of players who closed the tab or lost the connection
 // (run locally with `php artisan schedule:work`)
 Schedule::command('tables:release-idle-seats')->everyMinute()->withoutOverlapping();
+
+// delete tables only robots have kept since their last human left
+Schedule::command('tables:delete-unattended')->everyMinute()->withoutOverlapping();

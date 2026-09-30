@@ -401,7 +401,8 @@ cards if they meet a deal again. When a table needs its next board:
 
 1. Prefer a board that **none of the four players has played** (no
    `board_table_seats` row for that user on that board) and that this table
-   hasn't played.
+   hasn't played. Only the **human** players count: robots don't remember
+   deals, and a shared robot pool would soon have played every board.
 2. If every board has been played, pick one where **no player has held the
    seat they are sitting in now**. Example: North played board 10 as N. If they
    are N again, board 10 is skipped; if they are now E, board 10 is allowed.
@@ -414,7 +415,8 @@ they played at is gone.
 
 **In code:** `App\Services\BoardSelectionService::startPlayingIfFull()`, called
 from `TableSeatService::seat()` when the fourth seat is taken. It applies rule
-1, then rule 2, and if neither leaves a candidate it **deals a brand-new
+1, then rule 2 — both over the human players' history only, robots being
+left out (§9) — and if neither leaves a candidate it **deals a brand-new
 board** rather than repeating one — boards are only shuffled deals, so the app
 never has to hand a table a deal somebody at it already knows. A player
 leaving before the board is finished detaches the playing
@@ -441,8 +443,9 @@ Over HTTP:
   leaves with `DELETE /tables/{table}/seats` — all through `TableSeatService`,
   which enforces a valid free seat and one table per user. Leaving hands
   `moderated_by` to the creator if still seated, else the earliest-joined
-  remaining player, and the last player out deletes the table. A table manager
-  can seat another user (`POST /tables/{table}/seats/users`) or kick a player
+  remaining human, and the last player out deletes the table. A table manager
+  can seat another user (`POST /tables/{table}/seats/users`) or a robot
+  (`POST /tables/{table}/seats/robots`, §9), or kick a player
   (`DELETE /tables/{table}/seats/{user}`); a kick is not recorded, so the
   player may rejoin at once.
 - Once dealt, the board can be **seen**: `GET /tables/{table}/playing`
@@ -501,3 +504,38 @@ Over HTTP:
   outlive its table. IMPs aren't built.
 
 See [`API.md`](API.md).
+
+## 9. Robots
+
+Real bridge needs four players. So that one person can play (or test) alone,
+a seat may hold a **robot**: `POST /tables` with `robots: true` fills the
+other three seats at once, or a table manager fills any free seat with
+`POST /tables/{table}/seats/robots`. A robot is a `users` row with
+`is_robot`, from a pool of `robot-<n>` users.
+
+Rules the robots keep, and that keep them honest:
+
+- **The same rules as a human.** Every robot call, card, claim answer and
+  "ready for the next board" goes through `AuctionService`,
+  `CardPlayService`, `ClaimService` and `BoardSelectionService::moveOn()`,
+  so §4 and §5 are enforced on robots exactly as on people. Declarer's robot
+  plays dummy's cards; a robot dummy does nothing, like a human dummy.
+- **No peeking.** A robot decides from what its own seat is served
+  (`PlayingStateService::stateFor()`): its hand, dummy once face up, a
+  claimer's face-up hand and the cards played — never the other hands.
+- **Only with a human there.** Robots act only while at least one human is
+  seated. When the last human leaves, the table is kept *unattended* and the
+  robots wait; the first human to sit down runs it, and after 10 minutes
+  without one it is deleted.
+- **Humans are never replaced.** A human who leaves frees the seat; no robot
+  takes it unless a manager puts one there.
+- A robot never manages a table, never doubles or redoubles, and never
+  claims; it answers claims, and asks for the next board as soon as one ends.
+
+How robots bid (a core of SAYC: Standard American Yellow Card) and play (rules of thumb for
+leads, following and declarer play), and how they answer claims, is in
+[`ROBOTS.md`](ROBOTS.md). **In code:** `app/Robots/` (the pure decision
+classes) and `App\Services\RobotService` (the pool, and one move at a
+time), driven by the queued listener `App\Listeners\DriveRobots` after
+every `PlayingUpdated`. Status: implemented as "v1"; better bidding and
+better card play are separate follow-up issues.

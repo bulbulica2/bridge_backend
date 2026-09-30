@@ -16,7 +16,7 @@ class UserController extends BaseController
   public const SEARCH_LIMIT = 10;
 
   /**
-   * Users whose username or name contains `?search=` (case-insensitive), as
+   * Humans whose username or name contains `?search=` (case-insensitive), as
    * public profiles plus `seated` (holds a seat anywhere, so a manager can't
    * seat them). Email is neither matched nor returned, so this can't tell
    * anyone whether an address has an account.
@@ -27,7 +27,8 @@ class UserController extends BaseController
     // "%%" matches a literal "%%", not everyone
     $like = '%'.str_replace(['!', '%', '_'], ['!!', '!%', '!_'], mb_strtolower($request->validated('search'))).'%';
 
-    $users = User::query()
+    // robots are seated through POST /tables/{table}/seats/robots, not picked by name
+    $users = User::humans()
       ->where(fn ($query) => $query
         ->whereRaw("lower(username) like ? escape '!'", [$like])
         ->orWhereRaw("lower(name) like ? escape '!'", [$like]))

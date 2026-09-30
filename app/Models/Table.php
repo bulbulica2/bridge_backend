@@ -39,7 +39,15 @@ class Table extends Model
     'created_by',
     'moderated_by',
     'board_id',
+    'unattended_since',
   ];
+
+  protected function casts(): array
+  {
+    return [
+      'unattended_since' => 'datetime',
+    ];
+  }
 
   /**
    * A table is active while somebody still sits at it. The last player to
@@ -48,6 +56,15 @@ class Table extends Model
   public function scopeActive(Builder $query): void
   {
     $query->whereHas('seats');
+  }
+
+  /**
+   * A table with a human at it. Robots alone keep a table alive (it is
+   * unattended) but don't count towards its creator's limit.
+   */
+  public function scopeAttended(Builder $query): void
+  {
+    $query->whereHas('seats.user', fn (Builder $user) => $user->where('is_robot', false));
   }
 
   /**

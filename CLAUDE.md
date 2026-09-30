@@ -27,9 +27,10 @@ Local stack is XAMPP (MySQL on 3306, DB `bridge`, user `root`, no password).
 ```bash
 php artisan serve                 # API on http://127.0.0.1:8000
 php artisan reverb:start          # websocket server on :8080 (live table updates)
-php artisan queue:work --sleep=0.1  # sends queued broadcasts to Reverb
-php artisan schedule:work         # runs tables:release-idle-seats every minute
+php artisan queue:work --sleep=0.1  # sends queued broadcasts to Reverb, and moves the robots
+php artisan schedule:work         # runs tables:release-idle-seats and tables:delete-unattended every minute
 php artisan tables:release-idle-seats  # free idle players' seats once, by hand
+php artisan tables:delete-unattended   # delete tables only robots have kept, once, by hand
 php artisan migrate:fresh --seed  # rebuild DB with sample data
 php artisan route:list            # actual registered routes
 php artisan test                  # all tests (PHPUnit 11)
@@ -86,10 +87,11 @@ vendor/bin/pint --test            # check formatting without changing files
   `App\Http\Resources\UserResource` (`id`, `name`, `username`, `description`)
   — never the raw model. `TableResource` does this for seats via
   `TableSeatResource`; `GET /users/{user}` (`UserController@show`) serves the
-  same public profile. `GET /users?search=` (`UserController@index`,
-  `throttle:30,1`) finds up to 10 users by `username`/`name` — never by
-  email — and loads `withExists('seats as seated')`, which `UserResource`
-  adds as `seated` only when the query loaded it (`whenHas`).
+  same public profile (plus `is_robot`). `GET /users?search=`
+  (`UserController@index`, `throttle:30,1`) finds up to 10 **human** users by
+  `username`/`name` — never by email, never robots — and loads
+  `withExists('seats as seated')`, which `UserResource` adds as `seated`
+  only when the query loaded it (`whenHas`).
 - **Controllers**: game controllers are in `app/Http/Controllers/Game/` and
   extend `BaseController`, whose `sendResponse($data, $message, $code)` and
   `sendError($message, $code, $errors = [])` both return
@@ -99,7 +101,10 @@ vendor/bin/pint --test            # check formatting without changing files
   (join/leave a seat) plus `storeUser` (`POST /tables/{table}/seats/users`,
   a manager seats someone else) and `destroyUser`
   (`DELETE /tables/{table}/seats/{user}`, quit if it's your own seat,
-  otherwise a manager kicking that player), all behind the `auth` middleware. Both serialise a
+  otherwise a kick, `TablePolicy::kick`) and `storeRobot`
+  (`POST /tables/{table}/seats/robots`, a manager seats a robot), all behind
+  the `auth` middleware. `POST /tables` takes `robots: true` to fill the
+  other three seats with robots. Both serialise a
   table through `App\Http\Resources\TableResource` (model fields plus
   `free_seats`), so every table payload has the same shape.
   `Game\CallController@store` (`POST /tables/{table}/calls`) is the auction
@@ -128,7 +133,14 @@ vendor/bin/pint --test            # check formatting without changing files
   `remove()` frees a seat whether the player quit or was kicked: it deletes
   the table if that was the last player, and otherwise passes `moderated_by`
   to the creator if they are still seated, else the earliest-joined remaining
-  player. Controllers map the exception to `sendError(..., 409)` on
+  **human** (never a robot). With only robots left it keeps the table
+  **unattended** (`tables.unattended_since` set, `moderated_by` null): its
+  robots stop, anyone may kick them, the first human to `seat()` there
+  becomes moderator, and `tables:delete-unattended` (scheduled,
+  `TableSeatService::deleteUnattendedTables()`) deletes it after
+  `bridge.unattended_table_minutes` (10). `seat()` and `remove()` `refresh()`
+  the table under its row lock, since who runs it may have changed.
+  Controllers map the exception to `sendError(..., 409)` on
   `DELETE /tables/{table}/seats` and to 404 on
   `DELETE /tables/{table}/seats/{user}`, where the seat is named in the URL.
   Reuse the service for join/move instead of re-checking; both `seat()` and
@@ -144,7 +156,8 @@ vendor/bin/pint --test            # check formatting without changing files
   playing endpoints; add `seen` to any new playing route. The scheduled
   `tables:release-idle-seats` command (`routes/console.php`,
   `App\Console\Commands\ReleaseIdleSeats`) calls `releaseIdleSeats()`,
-  which frees stale seats through `remove()` — so it is exactly a leave —
+  which frees stale **human** seats (robots are never idle) through
+  `remove()` — so it is exactly a leave —
   after `config('bridge.idle_seat_minutes')` (5), or
   `bridge.idle_playing_seat_minutes` (15) while the table has an unfinished
   playing, re-checking each seat under its table lock. Reverb can't report
@@ -156,7 +169,8 @@ vendor/bin/pint --test            # check formatting without changing files
   players' history and `board_table_seats` snapshots four seats. It applies
   the §8 rule (a board none of the four has played, else one where nobody
   holds a seat they've held on it, else `dealBoard()` shuffles a brand-new
-  one), sets `tables.board_id` and opens the `board_table` playing.
+  one — over the humans' history only, robots are ignored), sets
+  `tables.board_id` and opens the `board_table` playing.
   After a board finishes it stays on the table (the state then shows the
   whole `deal` and `ready`) until `moveOn()`
   (`POST /tables/{table}/playing/next`, `Game\PlayingController@next`)
@@ -186,7 +200,7 @@ vendor/bin/pint --test            # check formatting without changing files
   `App.Models.User.{id}`, never on the table channel.
   `startPlayingIfFull()` dispatches `PlayingUpdated` (table channel, the
   public game state only — no hand, no `my_seat`) and one `HandDealt` per
-  player (their own channel, their 13 cards) when it deals a board.
+  human player (their own channel, their 13 cards) when it deals a board.
   `AuctionService` re-dispatches `PlayingUpdated` after every accepted call,
   `CardPlayService` after every accepted card and `ClaimService` after every
   accepted claim action.
@@ -247,12 +261,31 @@ vendor/bin/pint --test            # check formatting without changing files
   `finish()` with tricks so far plus the claimed share; the columns are then
   kept, which is what `result.claimed` reads. A claim doesn't change
   `turn()`/`actingUserId()`.
+- **Robots**: `users.is_robot` players from a `robot-<n>` pool
+  (`App\Services\RobotService::seatRobot()`, always with the asking human
+  as `$by`, so a busy robot is never moved). They can't log in
+  (`LoginRequest` adds `is_robot = false`), and registration refuses
+  `robot-*` usernames. The queued listener `App\Listeners\DriveRobots`
+  (auto-discovered, delay `bridge.robot_delay_seconds`) runs
+  `RobotService::act()` after every `PlayingUpdated`: **one** robot move —
+  call, card (declarer's robot plays dummy), claim answer, or ready for the
+  next board — through the normal services, only while a human is seated
+  and the table isn't unattended. The decisions are pure classes in
+  `app/Robots/` (`RobotHand`, `RobotBidder`, `RobotCardPlayer` + `PlayView`,
+  `RobotClaims`) over the robot's own `stateFor()` arrays — never another
+  hand — unit-tested in `tests/Unit/Robots/`. Tests run the queue on
+  `sync`, so the listener trampolines (a nested run only queues its table)
+  instead of nesting 52 deep past xdebug's limit; fake `PlayingUpdated` to
+  hold robots back while setting a table up. What they bid and play is in
+  `docs/ROBOTS.md` — update it with any change to `app/Robots/`.
 - **Authorization**: `App\Policies\TablePolicy::manage` (auto-discovered) is
   true for a table's `moderated_by`, any `is_admin` user, or its `created_by`
-  **while that creator still holds a seat there** — a table has exactly one
+  **while that creator still holds a seat there** — a table has at most one
   manager, and a creator who left has already handed the role on. Check it in
   the form request's `authorize()` so non-managers get 403 before validation
-  (`AddUserToSeatRequest`, `RemoveUserFromSeatRequest`). Every HTTP table
+  (`AddUserToSeatRequest`, `AddRobotToSeatRequest`). `TablePolicy::kick`
+  (`RemoveUserFromSeatRequest`) allows yourself, a manager, or anyone
+  kicking a robot from an unattended table. Every HTTP table
   payload carries `can_manage` (the policy for the caller), so clients never
   mirror it; `TableUpdated` builds its `TableResource` `withoutViewer()`, since
   the request user there is whoever made the change. `is_admin` is shown only
@@ -279,12 +312,14 @@ vendor/bin/pint --test            # check formatting without changing files
     `board_card` pivot (`seat` column, primary key `board_id+card_id`).
   - A `Table` has an optional `name` and points at one `board_id`. It is
     **active** while at least one `table_seats` row points at it
-    (`Table::active()` scope). There is no closed/archived state: the last
+    (`Table::active()` scope) — robots alone keep it alive, as unattended
+    (`unattended_since`). There is no closed/archived state: the last
     player to leave deletes the row. A user may hold at most
     `Table::MAX_ACTIVE_PER_CREATOR` (3) active tables as `created_by`.
-    `created_by` never moves, which is why it is what that limit counts;
-    `moderated_by` does move, to the earliest-joined player left when the
-    current moderator leaves.
+    `created_by` never moves, which is why it is what that limit counts —
+    only tables a human sits at (`Table::attended()`); `moderated_by` does
+    move, to the earliest-joined human left when the current moderator
+    leaves.
   - `table_seats` puts users in seats: `unique(table_id, seat)` and
     `unique(user_id)` — one user per seat, one table per user. Violations
     surface as `QueryException` SQLSTATE 23000. Leaving means deleting the
@@ -390,6 +425,7 @@ GitHub URLs (`https://github.com/bulbulica2/bridge/blob/main/docs/…`).
 | `RUNNING.md` | local setup/run steps, `.env` keys required to run the app, or seeders/commands needed to get a working local DB |
 | `ARCHITECTURE.md` | a service, policy, event or channel, job, middleware, console command or schedule, seeder, or one of the gotchas it lists |
 | `GAME-RULES.md` | you implement or change enforcement of a bridge rule (auction, play, scoring), or its "In code" / status notes become wrong |
+| `ROBOTS.md` | anything a robot decides (`app/Robots/`), or when and how robots act (`RobotService`, `DriveRobots`) |
 | `README.md` | a file is added to or removed from `docs/`, or its one-line summaries go stale |
 
 Rules:

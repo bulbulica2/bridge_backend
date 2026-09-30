@@ -22,7 +22,8 @@ class RegisteredUserController extends Controller
   {
     $request->validate([
       'name' => ['required', 'string', 'max:255'],
-      'username' => ['required', 'string', 'max:255', 'unique:'.User::class],
+      // robot-<n> is the robots' (RobotService)
+      'username' => ['required', 'string', 'max:255', 'not_regex:/^robot-/i', 'unique:'.User::class],
       'email' => ['required', 'string', 'lowercase', 'email', 'max:255', 'unique:'.User::class],
       'password' => ['required', 'confirmed', Rules\Password::defaults()],
     ]);
