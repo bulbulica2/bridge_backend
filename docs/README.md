@@ -21,8 +21,8 @@ Files here:
   the game services, robots, policies, events, the scheduler and queue,
   seeding, and the gotchas
 - [`ROBOTS.md`](ROBOTS.md) — the robot players: when they act, their
-  SAYC-style bidding system rule by rule, and exactly what they lead, play
-  and accept
+  SAYC-style bidding system rule by rule, how they plan, play, signal,
+  claim and answer claims, and how they compare with the first robots
 
 The frontend (the `bridge` repo, an Ionic Vue 3 SPA) documents itself in
 https://github.com/bulbulica2/bridge/tree/main/docs and links here for

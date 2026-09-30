@@ -86,7 +86,7 @@ the same pattern:
 | `ClaimService` | claims and concessions (`claim`, `respond`, `withdraw`) | `tests/Unit/ClaimServiceTest` |
 | `ScoringService` | duplicate scoring (`score()`, from declarer's side) and matchpoints (`matchpoints()`), pure static functions | `tests/Unit/ScoringTest` |
 | `BoardResultsService` | reads finished playings back for results across tables and a player's history | feature tests |
-| `RobotService` | robot players: the pool they are seated from (`seatRobot()`), and one robot move at a time (`act()`) through the services above | `tests/Feature/Game/RobotPlayTest`, `tests/Feature/Table/RobotSeatingTest` |
+| `RobotService` | robot players: the pool they are seated from (`seatRobot()`), and one robot move at a time (`act()`: a call, a card or a claim, a claim answer, ready) through the services above | `tests/Feature/Game/RobotPlayTest`, `tests/Feature/Table/RobotSeatingTest` |
 
 Things worth knowing before you change them:
 
@@ -127,8 +127,15 @@ Robot players are `users` rows with `is_robot` (see
 - **The brains**, `app/Robots/`: pure classes with no database, like the
   services' static rules, unit-tested in `tests/Unit/Robots/`.
   `RobotHand` (points, lengths, shape of a hand), `RobotBidder` (a call),
-  `RobotCardPlayer` with its `PlayView` (a card), `RobotClaims` (accept or
-  reject a claim). The bidding system itself is one ordered list of rules
+  `RobotCardPlayer` (a card), `RobotClaims` (when to claim, and accept or
+  reject a claim). The card play is split by role over one `PlayView` of
+  what the seat knows (hands it sees, cards out, voids shown, tricks
+  needed): `DeclarerPlan` (the count of winners and losers, and the line),
+  `DeclarerPlay`, `DefenderPlay`, `Signals`, `Discards`, and `Endgame`,
+  which checks the last four tricks by solving every layout of the unseen
+  cards with `DoubleDummy` — a plain exhaustive search, also what
+  `RobotClaims` uses to answer a claim in a small ending, where three
+  hands are face up and the fourth follows. The bidding system itself is one ordered list of rules
   per auction position, `BiddingSystem` (each a `BidRule`: a call, its
   `BidMeaning`, the hands that make it), over an `AuctionView` of the calls
   so far. A robot makes the first legal rule its hand fits, and every call
@@ -145,7 +152,11 @@ Robot players are `users` rows with `is_robot` (see
   the first robot yet to answer a pending claim, or the first robot not yet
   ready for the next board — asks the brain, and makes the move through
   `AuctionService`, `CardPlayService`, `ClaimService` or
-  `BoardSelectionService::moveOn()`, so it is checked like a human's. A
+  `BoardSelectionService::moveOn()`, so it is checked like a human's. In the
+  play, a robot on lead with nothing but top winners claims the rest
+  instead of playing a card — once per position: `Cache::add()` on
+  `robot-claim.{playing}.{cards played}` (kept a day) is what stops it
+  claiming again after a rejection, which leaves the position unchanged. A
   choice the rules would refuse falls back to Pass or the first legal card;
   a move refused because the table changed meanwhile is dropped (that change
   sent its own event). It does nothing unless a human sits at the table and

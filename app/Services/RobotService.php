@@ -19,6 +19,7 @@ use App\Robots\RobotCardPlayer;
 use App\Robots\RobotClaims;
 use App\Robots\RobotHand;
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
@@ -142,9 +143,10 @@ class RobotService
 
   /**
    * Make the one robot move the table is waiting for, if a robot is the
-   * one to move: its call, its card (declarer's robot plays dummy's too),
-   * its answer to a pending claim, or its ready for the next board. Returns
-   * whether a robot moved.
+   * one to move: its call, its card (declarer's robot plays dummy's too) or
+   * a claim of the rest when every trick left is a top winner, its answer
+   * to a pending claim, or its ready for the next board. Returns whether a
+   * robot moved.
    *
    * A move the rules refuse means the table changed after the event that
    * asked for it; that change sent its own `PlayingUpdated`, which brings
@@ -207,11 +209,22 @@ class RobotService
     }
 
     $state = $this->state->stateFor($table, $robot);
+    $plays = $this->state->plays($playing);
+
+    // a claim only once at any point of the play: if it was rejected, the
+    // same position comes back and the robot plays on instead
+    $tricks = RobotClaims::claim($state);
+
+    if ($tricks !== null && Cache::add("robot-claim.{$playing->id}.".count($plays), true, now()->addDay())) {
+      $this->claims->claim($table, $robot, $tricks);
+
+      return true;
+    }
+
     $card = Card::find(RobotCardPlayer::choose($state));
 
     $turn = $this->state->turn($playing);
     $hand = $this->state->hand($playing, $turn);
-    $plays = $this->state->plays($playing);
 
     // the player only picks legal cards; should one ever slip through, play
     // the first legal one instead

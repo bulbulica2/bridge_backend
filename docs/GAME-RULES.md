@@ -515,8 +515,8 @@ other three seats at once, or a table manager fills any free seat with
 
 Rules the robots keep, and that keep them honest:
 
-- **The same rules as a human.** Every robot call, card, claim answer and
-  "ready for the next board" goes through `AuctionService`,
+- **The same rules as a human.** Every robot call, card, claim, claim
+  answer and "ready for the next board" goes through `AuctionService`,
   `CardPlayService`, `ClaimService` and `BoardSelectionService::moveOn()`,
   so §4 and §5 are enforced on robots exactly as on people. Declarer's robot
   plays dummy's cards; a robot dummy does nothing, like a human dummy.
@@ -529,16 +529,24 @@ Rules the robots keep, and that keep them honest:
   without one it is deleted.
 - **Humans are never replaced.** A human who leaves frees the seat; no robot
   takes it unless a manager puts one there.
-- A robot never manages a table, never redoubles, and never claims; it
-  answers claims, and asks for the next board as soon as one ends.
+- A robot never manages a table and never redoubles. It claims the rest
+  only when every trick left is a top winner in the hand on lead (and
+  never twice from the same point of the play), answers claims — double
+  dummy in endings of six tricks or fewer — and asks for the next board as
+  soon as one ends.
 
 How robots bid (a SAYC-style system — Standard American Yellow Card — with
 Stayman, transfers, a strong 2♣, weak twos, takeout, negative and penalty
-doubles, Blackwood and Gerber) and play (rules of thumb for leads,
-following and declarer play), and how they answer claims, is in
+doubles, Blackwood and Gerber) and play (declarer counts winners and
+losers and plans a line — drawing trumps, ruffing in dummy, cross-ruffing,
+finesses, holding up, setting up long suits; defenders signal attitude,
+count and suit preference and read partner's; the last four tricks are
+searched double dummy over every layout of the unseen cards), and how they
+claim and answer claims, is in
 [`ROBOTS.md`](ROBOTS.md). **In code:** `app/Robots/` (the pure decision
 classes; the bidding system is `BiddingSystem`) and
 `App\Services\RobotService` (the pool, and one move at a time), driven by
 the queued listener `App\Listeners\DriveRobots` after every
-`PlayingUpdated`. Status: bidding implemented; card play implemented as
-"v1", and better card play is a separate follow-up issue.
+`PlayingUpdated`. Status: bidding, card play and claims implemented; what
+they don't do yet is listed in
+[`ROBOTS.md`](ROBOTS.md#what-robots-dont-do).

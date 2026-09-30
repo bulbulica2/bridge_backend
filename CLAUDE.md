@@ -268,12 +268,19 @@ vendor/bin/pint --test            # check formatting without changing files
   `robot-*` usernames. The queued listener `App\Listeners\DriveRobots`
   (auto-discovered, delay `bridge.robot_delay_seconds`) runs
   `RobotService::act()` after every `PlayingUpdated`: **one** robot move —
-  call, card (declarer's robot plays dummy), claim answer, or ready for the
+  call, card (declarer's robot plays dummy) or a claim of the rest when
+  every trick left is a top winner (once per position: a `Cache::add()`
+  key stops a re-claim after a rejection), claim answer, or ready for the
   next board — through the normal services, only while a human is seated
   and the table isn't unattended. The decisions are pure classes in
-  `app/Robots/` (`RobotHand`, `RobotBidder`, `RobotCardPlayer` + `PlayView`,
-  `RobotClaims`) over the robot's own `stateFor()` arrays — never another
-  hand — unit-tested in `tests/Unit/Robots/`. The bidding system is the
+  `app/Robots/` (`RobotHand`, `RobotBidder`; `RobotCardPlayer` over a
+  `PlayView`, with `DeclarerPlan`, `DeclarerPlay`, `DefenderPlay`,
+  `Signals`, `Discards` and `Endgame`; `RobotClaims`; `DoubleDummy`, the
+  exhaustive solver the last two use on small endings) over the robot's own
+  `stateFor()` arrays — never another hand — unit-tested in
+  `tests/Unit/Robots/`. `RobotSimulationTest` has four robots bid and play
+  seeded deals against the first robots' card play, kept in
+  `tests/Unit/Robots/Support/V1CardPlayer` as the baseline. The bidding system is the
   ordered rule list in `BiddingSystem` (`BidRule` → `BidMeaning`, over an
   `AuctionView`): a robot makes the first legal rule its hand fits, and
   every call is read back through the same rules — change a rule there,
