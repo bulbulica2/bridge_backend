@@ -32,9 +32,9 @@ class TableBroadcastTest extends TestCase
     Event::assertDispatchedTimes(TableUpdated::class, 1);
     Event::assertDispatched(TableUpdated::class, function (TableUpdated $event) use ($table, $response) {
       // one table shape, whether it came over HTTP or the socket, less
-      // can_manage, which depends on who asks
+      // can_manage, which depends on who asks, and the caller's playing
       return $event->broadcastOn() == [new PrivateChannel("table.$table->id")]
-        && $event->broadcastWith() === ['table' => Arr::except($response->json('data'), 'can_manage')];
+        && $event->broadcastWith() === ['table' => Arr::except($response->json('data'), ['can_manage', 'playing'])];
     });
   }
 
@@ -70,9 +70,12 @@ class TableBroadcastTest extends TestCase
       ->assertCreated();
 
     Event::assertDispatched(TableUpdated::class, function (TableUpdated $event) use ($table) {
+      // the joiner's response carries their hand as `playing`; the channel
+      // must never see it
       return $event->table['board_id'] !== null
         && $event->table['board_id'] === $table->fresh()->board_id
-        && $event->table['free_seats'] === [];
+        && $event->table['free_seats'] === []
+        && ! array_key_exists('playing', $event->table);
     });
   }
 

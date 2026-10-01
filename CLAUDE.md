@@ -25,7 +25,7 @@ enforced yet.
 Local stack is XAMPP (MySQL on 3306, DB `bridge`, user `root`, no password).
 
 ```bash
-php artisan serve                 # API on http://127.0.0.1:8000
+php artisan serve --host=localhost  # API on http://localhost:8000 (see RUNNING.md "Local speed")
 php artisan reverb:start          # websocket server on :8080 (live table updates)
 php artisan queue:work --sleep=0.1  # sends queued broadcasts to Reverb, and moves the robots
 php artisan schedule:work         # runs tables:release-idle-seats and tables:delete-unattended every minute
@@ -49,8 +49,10 @@ vendor/bin/pint --test            # check formatting without changing files
   on in-memory sqlite. Feature tests must extend `Tests\TestCase` to get that
   guard. `phpunit.xml` also sets a test-only `APP_KEY`, so no `.env` is needed.
 - `AppServiceProvider::register` force-enables laravel-debugbar only when
-  `APP_ENV=local`. Don't make it unconditional: `enable()` skips debugbar's
-  own testing check, and the HTML it injects breaks `assertNoContent()`.
+  `APP_ENV=local` and `.env` doesn't say `DEBUGBAR_ENABLED=false`. Don't make
+  it unconditional: `enable()` skips debugbar's own testing check, and the
+  HTML it injects breaks `assertNoContent()`. It also overrides the config,
+  which is why the provider has to check `DEBUGBAR_ENABLED` itself.
 - Breeze auth is lightly customized: `/register` also requires `username`
   (NOT NULL, unique on `users`).
 - Migrations are edited in place (nothing has shipped), so after pulling
@@ -107,6 +109,12 @@ vendor/bin/pint --test            # check formatting without changing files
   other three seats with robots. Both serialise a
   table through `App\Http\Resources\TableResource` (model fields plus
   `free_seats`), so every table payload has the same shape.
+  `POST /tables` and `POST /tables/{table}/seats` also add the caller's game
+  state as `playing`
+  (`TableResource::withPlaying()` with
+  `PlayingStateService::dealtStateFor()`, null with no board yet), so the
+  request that deals a board needs no `GET .../playing` after it; no other
+  table payload has the key, and `TableUpdated` must never get it (a hand).
   `Game\CallController@store` (`POST /tables/{table}/calls`) is the auction
   endpoint, `Game\CardPlayController@store` (`POST /tables/{table}/cards`)
   the card-play one (`Game\CardController` is the unrelated read-only

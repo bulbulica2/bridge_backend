@@ -190,9 +190,18 @@ Rules:
   (see `POST /tables/{table}/seats`) — unless `robots` is true: then, in the
   same transaction, a robot takes each of the other three seats and the
   fourth one deals the first board, so the response already has a
-  `board_id` and empty `free_seats`. The robots start calling at once if
-  one of them deals; the human sees the auction reach their turn through
+  `board_id`, empty `free_seats` and the caller's game state as `playing`
+  (below). The robots start calling at once if one of them deals; the
+  human sees the auction reach their turn through
   `PlayingUpdated` (or `GET /tables/{table}/playing`).
+- `playing` is the caller's game state, exactly what
+  [`GET /tables/{table}/playing`](#get-tablestableplaying) would answer
+  next (phase, auction, `my_seat`, their 13-card `hand`...), when the table
+  has a playing after the request, so a client can draw the table without
+  that extra request. Without robots it is `null`. Only this response and
+  `POST /tables/{table}/seats` carry it: `GET /tables`, `GET /tables/{table}`,
+  the other seat endpoints and `TableUpdated` don't have the key at all,
+  since it holds a hand.
 - **422** (default Laravel shape) for an invalid `name`/`seat`/`robots`.
 
 201 response (`data` has the same shape as `GET /tables/{table}`):
@@ -207,7 +216,8 @@ Rules:
     "seats": [{"id": 12, "table_id": 7, "user_id": 3, "seat": "E", "created_at": "...", "updated_at": "...",
                "user": {"id": 3, "name": "Ann", "username": "ann", "description": "Plays a strong club.", "is_robot": false}}],
     "free_seats": ["N", "S", "W"],
-    "can_manage": true
+    "can_manage": true,
+    "playing": null
   }
 }
 ```
@@ -220,7 +230,8 @@ Rules:
 
 ### `GET /tables/{table}`
 One table (404 if the id doesn't exist), with `seats.user`, `free_seats` and
-`can_manage`.
+`can_manage` (no `playing`: that is only on `POST /tables` and
+`POST /tables/{table}/seats`).
 
 ### `POST /tables/{table}/seats`
 Take a free seat at an existing table.
@@ -229,7 +240,13 @@ Take a free seat at an existing table.
 |---|---|---|
 | `seat` | **required**, one of `N`, `E`, `S`, `W` | — |
 
-- **201** with the updated table (same shape as `GET /tables/{table}`).
+- **201** with the updated table (same shape as `GET /tables/{table}`), plus
+  `playing`: the caller's game state, exactly what
+  [`GET /tables/{table}/playing`](#get-tablestableplaying) would answer, when
+  the table has a playing after the request (you took the fourth seat and
+  dealt the board, or sat down at a table whose finished board is still on
+  it, waiting for its seats to be refilled); otherwise `null`. It is how a client draws the table without that
+  extra request.
 - **Moving is allowed.** If you already hold a seat — at this table or another
   one — this request moves you rather than refusing. It is one transaction, so
   you never end up seated nowhere, and if the target seat turns out to be taken

@@ -21,9 +21,14 @@ php artisan key:generate
 # (boards, users, tables, seats, auctions, plays — see "Seeded data" below)
 php artisan migrate --seed
 
-# start the API
-php artisan serve
+# start the API on localhost:8000, where the SPA expects it
+php artisan serve --host=localhost
 ```
+
+`--host=localhost` matters on Windows: without it each request waits ~0.2 s
+before it even connects (see [Local speed](#local-speed), which also covers
+switching on PHP's opcache and debugbar off, and serving through Apache
+for requests in parallel).
 
 For live table updates, two more processes run next to it, each in its own
 terminal (see [Realtime](#realtime-reverb) below):
@@ -89,7 +94,7 @@ Check migration status without applying anything:
 php artisan migrate:status
 ```
 
-Server listens on `http://127.0.0.1:8000` (matches `APP_URL` in `.env`).
+Server listens on `http://localhost:8000` (matches `APP_URL` in `.env`).
 
 Config of note (`.env`):
 - `DB_DATABASE=bridge`, `DB_HOST=127.0.0.1`, `DB_PORT=3306`, `DB_USERNAME=root`, no password
@@ -97,6 +102,10 @@ Config of note (`.env`):
   Sanctum's stateful domains; not in `.env.example`, so it defaults to
   `http://localhost:3000`
 - `SESSION_DRIVER=database`, `QUEUE_CONNECTION=database`, `CACHE_STORE=database`
+- `DEBUGBAR_ENABLED` — unset, debugbar is on with `APP_ENV=local`; `false`
+  turns it off and makes each request cheaper (see [Local speed](#local-speed))
+- `PHP_CLI_SERVER_WORKERS` — `artisan serve` workers, Linux/macOS only; 1
+  on Windows, where the built-in server can't fork
 - `BROADCAST_CONNECTION=reverb` and the `REVERB_*` keys — see below
 
 ## Realtime (Reverb)
@@ -116,7 +125,7 @@ What runs where:
 
 | Process | Command | Why |
 |---|---|---|
-| API | `php artisan serve` | HTTP, including `POST /broadcasting/auth` |
+| API | `php artisan serve --host=localhost` (or Apache, see [Local speed](#local-speed)) | HTTP, including `POST /broadcasting/auth` |
 | Websocket server | `php artisan reverb:start` (add `--debug` to log every frame) | holds the players' connections on port 8080 |
 | Queue worker | `php artisan queue:work --sleep=0.1` | broadcasts are queued jobs; the worker sends them to Reverb. It also runs the robots' moves (`DriveRobots`) |
 
@@ -196,6 +205,112 @@ needed; `migrate:fresh` wipes them with everything else.
 
 Like `queue:work`, restart `schedule:work` after changing PHP code.
 
+## Local speed
+
+Measured for `39-fast-table-entry` on the XAMPP stack: Windows 11, PHP
+8.2.12 (ZTS, xdebug loaded in `debug` mode), MariaDB 10.4, a seeded DB, curl
+on the same machine. Medians of 30 requests (5 for `POST /tables`), in
+seconds. `GET /api/user` stands for a light logged-in request.
+`POST /tables` with `robots: true` is the whole way into a table: it deals
+the board and returns the caller's game state as `playing`, so no
+`GET /tables/{table}/playing` follows it any more. "4 at once" is the wall
+time of four `GET /api/user` sent together, as the SPA does when it opens a
+table.
+
+| Server | opcache | debugbar | host the client uses | `GET /api/user` | `GET /bids` | `POST /tables` robots | 4 at once |
+|---|---|---|---|---|---|---|---|
+| `artisan serve` | off | on | `localhost` | 0.34 | 0.35 | 1.08 | 0.74 |
+| `artisan serve` | off | on | `127.0.0.1` | 0.13 | 0.14 | 0.86 | 0.54 |
+| `artisan serve` | off | off | `127.0.0.1` | 0.11 | 0.12 | 0.71 | 0.48 |
+| `artisan serve` | on | on | `localhost` | 0.26 | 0.27 | 0.94 | 0.43 |
+| `artisan serve` | on | off | `localhost` | 0.25 | 0.26 | 0.82 | 0.38 |
+| `artisan serve` | on | on | `127.0.0.1` | 0.045 | 0.059 | 0.74 | 0.23 |
+| `artisan serve` | on | off | `127.0.0.1` | **0.035** | **0.044** | **0.60** | 0.19 |
+| Apache vhost | on | on | `localhost` | 0.092 | 0.106 | 1.02 | 0.17 |
+| Apache vhost | on | off | `localhost` | 0.070 | 0.094 | 0.77 | **0.13** |
+
+The first row is how XAMPP comes out of the box, and what the frontend
+measured in [bridge#55](https://github.com/bulbulica2/bridge/issues/55):
+~0.35 s a request. Entering a robot table there cost `POST /tables` plus
+`GET .../playing`, 1.08 + 0.36 = 1.44 s. With the fixes below it is one
+0.60 s request. What matters, biggest first:
+
+1. **Opcache.** XAMPP's `php.ini` ships with it off, so every request
+   compiles the whole framework again: ~0.08 s each. Switch it on in
+   `C:\xampp\php\php.ini` and restart Apache / `artisan serve`:
+   ```ini
+   zend_extension=opcache        ; uncomment (line ~964)
+   [opcache]
+   opcache.enable=1              ; uncomment
+   opcache.revalidate_freq=0     ; check files on every request, so edits show at once
+   ```
+   `opcache.enable_cli` stays off, so artisan commands and the tests don't
+   use it.
+2. **The host `artisan serve` listens on.** By default it listens on
+   `127.0.0.1` only. On Windows `localhost` resolves to `::1` first, and a
+   refused IPv6 connection takes ~0.2 s before the client falls back to
+   IPv4. The built-in server closes the connection after every response,
+   so every request pays it again. The SPA calls `http://localhost:8000`,
+   and has to: the session cookie only goes along if the API's host is the
+   SPA's (`localhost`). So run `php artisan serve --host=localhost`, which
+   listens on `::1`. That measured 0.05 s for `GET /bids`, the same as the
+   `127.0.0.1` rows. `http://127.0.0.1:8000` then stops answering. Apache
+   listens on both, so it doesn't have this problem.
+3. **Debugbar.** It's on by default with `APP_ENV=local`. Set
+   `DEBUGBAR_ENABLED=false` in `.env` to turn it off. It costs
+   ~0.01–0.02 s on a light request and ~0.14 s on `POST /tables` with
+   robots, which runs many queries. Before `39-fast-table-entry` the key was
+   ignored (`AppServiceProvider` force-enabled it).
+4. **One request at a time.** `PHP_CLI_SERVER_WORKERS` gives
+   `artisan serve` worker processes, but only on Linux and macOS: PHP's
+   built-in server needs `fork()` for them, which Windows doesn't have, so
+   there the key does nothing. On Windows,
+   `artisan serve` answers requests strictly one after another, so 4 at
+   once take 4× as long. For requests in parallel, serve `public/` through
+   XAMPP's Apache instead (below). Each Apache request is slower than
+   `artisan serve`'s (0.07 vs 0.035 s), but four at once take 0.13 s
+   rather than 0.19 s. With opcache off, Apache was noisy: 0.13–0.24 s a
+   request.
+
+`POST /tables` with robots stays the slowest request (~0.6 s at best): it
+seats three robots and deals a board, all in the DB.
+
+### Serving through Apache (Windows, requests in parallel)
+
+Add a vhost on its own port to `C:\xampp\apache\conf\extra\httpd-vhosts.conf`
+and restart Apache from the XAMPP Control Panel:
+```apache
+Listen 8001
+<VirtualHost *:8001>
+    DocumentRoot "C:/xampp/htdocs/bridge_backend/public"
+    <Directory "C:/xampp/htdocs/bridge_backend/public">
+        AllowOverride All
+        Require all granted
+    </Directory>
+</VirtualHost>
+```
+`AllowOverride All` lets `public/.htaccess` route every path to
+`index.php` (XAMPP loads `mod_rewrite`). Apache reads `.env` and the PHP
+files on every request, so code changes need no restart; a `php.ini`
+change does. `reverb:start`, `queue:work` and `schedule:work` still run as
+before. Apache uses the same `php.ini` as the CLI, so opcache (above)
+applies to it too.
+
+Then make these agree with the new port (`8001` here, or `8000` with
+`artisan serve` stopped, which spares the frontend any change):
+- **`APP_URL=http://localhost:8001`**: links the app builds use it, and
+  Sanctum adds its host to the stateful domains.
+- **The frontend's `VITE_API_BASE_URL`**: `http://localhost:8001`.
+  Keep `localhost`, not `127.0.0.1`. The SPA runs on `localhost:3000`, and
+  the session and `XSRF-TOKEN` cookies only travel with its requests when
+  the API is on the same host (cookies ignore the port).
+- **`FRONTEND_URL` / `SANCTUM_STATEFUL_DOMAINS`** name the SPA's origin
+  (`http://localhost:3000` / `localhost:3000`), not the API's, so they
+  don't change with the API's port. They do if the SPA moves.
+- **`SESSION_DOMAIN`** stays `null`: the cookie belongs to the API's host,
+  `localhost`, which the SPA shares. Setting it to `127.0.0.1` or another
+  host breaks login.
+
 ## Tests
 
 ```bash
@@ -242,7 +357,7 @@ replies locally without contacting a server.
 
 Smoke test:
 ```bash
-curl http://127.0.0.1:8000/
+curl http://localhost:8000/
 # {"Laravel":"11.37.0"}
 ```
 

@@ -11,6 +11,7 @@ use App\Http\Requests\Table\RemoveUserFromSeatRequest;
 use App\Http\Resources\TableResource;
 use App\Models\Table;
 use App\Models\User;
+use App\Services\PlayingStateService;
 use App\Services\RobotService;
 use App\Services\TableSeatService;
 use Illuminate\Http\JsonResponse;
@@ -21,8 +22,12 @@ class TableSeatController extends BaseController
   /**
    * Take a free seat at an existing table.
    */
-  public function store(JoinTableRequest $request, Table $table, TableSeatService $seatService): JsonResponse
-  {
+  public function store(
+    JoinTableRequest $request,
+    Table $table,
+    TableSeatService $seatService,
+    PlayingStateService $state
+  ): JsonResponse {
     try {
       $seatService->seat($table, $request->user(), $request->validated('seat'));
     } catch (SeatUnavailableException $e) {
@@ -31,7 +36,13 @@ class TableSeatController extends BaseController
 
     $table->load('seats.user');
 
-    return $this->sendResponse(new TableResource($table), 'Seat taken successfully.', 201);
+    // the fourth seat deals the board: hand back the caller's state so they
+    // can draw it without a GET /tables/{table}/playing
+    return $this->sendResponse(
+      (new TableResource($table))->withPlaying($state->dealtStateFor($table, $request->user())),
+      'Seat taken successfully.',
+      201
+    );
   }
 
   /**

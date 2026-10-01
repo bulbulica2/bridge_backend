@@ -42,7 +42,12 @@ routes/*.php
 - **Resources** fix the JSON shape so each thing looks the same wherever it
   appears: `TableResource` (every table payload, including the broadcast
   one), `TableSeatResource`, `PlayingResource` (the game state) and
-  `UserResource`. Anything that shows a user to *other* players goes
+  `UserResource`. `TableResource::withPlaying()` adds the caller's game
+  state (`PlayingStateService::dealtStateFor()`, hand included) as
+  `playing`; only `POST /tables` and `POST /tables/{table}/seats` call it,
+  so a request that deals the board needs no `GET /tables/{table}/playing`
+  after it. Anything else leaves the key out — above all `TableUpdated`,
+  since the table channel must never carry a hand. Anything that shows a user to *other* players goes
   through `UserResource` (`id`, `name`, `username`, `description`,
   `is_robot`), never
   the raw `User` model: `email` isn't in `$hidden`, because the owner needs
@@ -294,7 +299,13 @@ them back while a test sets a table up (`RobotPlayTest::claimTable`).
   neither catches nor fixes bad indentation. Don't remove those rules, or a
   plain `vendor/bin/pint` reindents the whole codebase to 4 spaces. Check
   formatting with `vendor/bin/pint --test`.
-- **Debugbar** is force-enabled only when `APP_ENV=local`: its injected HTML
-  would break `assertNoContent()` in tests.
+- **Debugbar** is force-enabled (`AppServiceProvider::register`) only when
+  `APP_ENV=local`, since `enable()` skips debugbar's own testing check and its
+  injected HTML would break `assertNoContent()` in tests. `enable()` also
+  overrides `config('debugbar.enabled')`, so the provider skips it when
+  `.env` says `DEBUGBAR_ENABLED=false`; without that check the key did
+  nothing. Turning it off saves ~0.01–0.02 s on a light request and ~0.14 s
+  on `POST /tables` with robots (see
+  [`RUNNING.md`](RUNNING.md#local-speed)).
 - **`composer dev` doesn't work** (it runs `npm run dev` and there is no
   `package.json`); use `php artisan serve`.

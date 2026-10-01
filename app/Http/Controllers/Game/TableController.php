@@ -7,6 +7,7 @@ use App\Http\Controllers\BaseController;
 use App\Http\Requests\Table\StoreTableRequest;
 use App\Http\Resources\TableResource;
 use App\Models\Table;
+use App\Services\PlayingStateService;
 use App\Services\RobotService;
 use App\Services\TableSeatService;
 use Illuminate\Http\JsonResponse;
@@ -28,8 +29,12 @@ class TableController extends BaseController
    * Create a table with the caller in `seat` (N by default). With `robots`,
    * robots take the other three seats, which deals the first board at once.
    */
-  public function store(StoreTableRequest $request, TableSeatService $seatService, RobotService $robots): JsonResponse
-  {
+  public function store(
+    StoreTableRequest $request,
+    TableSeatService $seatService,
+    RobotService $robots,
+    PlayingStateService $state
+  ): JsonResponse {
     $user = $request->user();
 
     if ($user->seats()->exists()) {
@@ -69,7 +74,13 @@ class TableController extends BaseController
 
     $table->load('seats.user');
 
-    return $this->sendResponse(new TableResource($table), 'Table created successfully.', 201);
+    // with robots the board is already dealt: hand back the caller's state
+    // so they can draw it without a GET /tables/{table}/playing
+    return $this->sendResponse(
+      (new TableResource($table))->withPlaying($state->dealtStateFor($table, $user)),
+      'Table created successfully.',
+      201
+    );
   }
 
   public function show(Table $table): JsonResponse
