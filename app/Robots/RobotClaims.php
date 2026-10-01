@@ -6,16 +6,54 @@ use App\auxiliary\Seats;
 use App\Services\CardPlayService;
 
 /**
- * A robot's answer to a pending claim. Robots never claim themselves.
+ * A robot's claims: when it claims, and its answer to someone else's.
  *
  * Pure, over the state the robot's seat is served: its own hand, dummy's
- * and the claimer's (both face up) and the cards played.
+ * and a claimer's (both face up) and the cards played. While a claim is
+ * pending that is three of the four hands, so the fourth is known too: the
+ * cards nobody has played and none of the three holds.
  */
 class RobotClaims
 {
   /**
+   * Endings of at most this many tricks are checked double dummy.
+   */
+  public const DOUBLE_DUMMY_TRICKS = 6;
+
+  /**
+   * The tricks the robot acting for `turn` claims, on lead: all that are
+   * left when the hand on lead holds nothing but top winners (every higher
+   * card played or in a hand of our side it sees) and, in a suit contract,
+   * the opponents may hold no trump its trumps don't draw first. Null
+   * otherwise.
+   *
+   * @param  array<string, mixed>  $state  `stateFor()` of the seat acting for `turn`
+   */
+  public static function claim(array $state): ?int
+  {
+    $view = PlayView::fromState($state);
+
+    if ($view->trick !== [] || $view->hand->all() === []) {
+      return null;
+    }
+
+    foreach ($view->hand->all() as $card) {
+      if (! $view->isMaster($card)) {
+        return null;
+      }
+    }
+
+    if ($view->trump !== null && $view->outstandingTrumps() > $view->hand->length($view->trump)) {
+      return null;
+    }
+
+    return $view->remaining();
+  }
+
+  /**
    * Accept a concession (a claim of 0 tricks), or a claim that leaves our
-   * side at least the sure winners we can see; reject anything else.
+   * side at least what it would take: double dummy in a small ending, else
+   * the sure winners we can see. Reject anything else.
    *
    * @param  array<string, mixed>  $state  `stateFor()` of the answering seat
    */
@@ -31,7 +69,73 @@ class RobotClaims
     $remaining = CardPlayService::TRICKS - count($state['tricks'] ?? []);
     $ours = self::sameSide($claim['seat'], $me) ? (int) $claim['tricks'] : $remaining - (int) $claim['tricks'];
 
-    return $ours >= self::sureWinners($state);
+    return $ours >= (self::doubleDummy($state) ?? self::sureWinners($state));
+  }
+
+  /**
+   * The tricks our side takes from here with best play all round, the
+   * four hands being known while a claim is pending; null when more than
+   * `DOUBLE_DUMMY_TRICKS` are left, or the hands don't add up.
+   *
+   * @param  array<string, mixed>  $state
+   */
+  public static function doubleDummy(array $state): ?int
+  {
+    $tricks = $state['tricks'] ?? [];
+    $trick = $state['current_trick'] ?? [];
+
+    if (CardPlayService::TRICKS - count($tricks) > self::DOUBLE_DUMMY_TRICKS || ($state['turn'] ?? null) === null) {
+      return null;
+    }
+
+    $me = $state['my_seat'];
+    $dummy = Seats::partner($state['contract']['declarer']);
+    $hands = [
+      $me => $state['hand'],
+      $dummy => $state['dummy_hand'] ?? [],
+      $state['claim']['seat'] => $state['claim']['hand'],
+    ];
+
+    if (count($hands) !== 3) {
+      return null;
+    }
+
+    $fourth = array_values(array_diff(Seats::SEATS, array_keys($hands)))[0];
+    $gone = [];
+    $playedBy = array_fill_keys(Seats::SEATS, 0);
+
+    foreach ([...array_merge([], ...array_column($tricks, 'cards')), ...$trick] as $play) {
+      $gone["{$play['card']['suit']}.{$play['card']['rank']}"] = true;
+      $playedBy[$play['seat']]++;
+    }
+
+    foreach ($hands as $seat => $cards) {
+      if (count($cards) !== CardPlayService::TRICKS - $playedBy[$seat]) {
+        return null;
+      }
+
+      foreach ($cards as $card) {
+        $gone["{$card['suit']}.{$card['rank']}"] = true;
+      }
+    }
+
+    $hands[$fourth] = [];
+
+    foreach (RobotHand::SUITS as $suit) {
+      foreach (RobotHand::RANKS as $rank) {
+        if (! isset($gone["$suit.$rank"])) {
+          $hands[$fourth][] = ['suit' => $suit, 'rank' => $rank];
+        }
+      }
+    }
+
+    if (count($hands[$fourth]) !== CardPlayService::TRICKS - $playedBy[$fourth]) {
+      return null;
+    }
+
+    $strain = $state['contract']['bid']['strain'];
+
+    return DoubleDummy::tricks($hands, $strain === 'NT' ? null : $strain, $trick, $state['turn'], $me);
   }
 
   /**
@@ -62,7 +166,7 @@ class RobotClaims
 
     $played = [];
 
-    foreach ([...array_merge(...array_column($state['tricks'] ?? [], 'cards')), ...($state['current_trick'] ?? [])] as $play) {
+    foreach ([...array_merge([], ...array_column($state['tricks'] ?? [], 'cards')), ...($state['current_trick'] ?? [])] as $play) {
       $played["{$play['card']['suit']}.{$play['card']['rank']}"] = true;
     }
 

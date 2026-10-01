@@ -2,13 +2,19 @@
 
 namespace Tests\Unit\Robots;
 
+use App\auxiliary\Seats;
 use App\Robots\RobotClaims;
+use App\Robots\RobotHand;
+use App\Services\CardPlayService;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The robots' answers to claims (`docs/ROBOTS.md`), over in-memory state
- * shaped like `PlayingStateService::stateFor()`: no database. Every board
- * here is 4S by N (dummy S) with ten tricks played and three to go.
+ * The robots' claims and answers to claims (`docs/ROBOTS.md`), over
+ * in-memory state shaped like `PlayingStateService::stateFor()`: no
+ * database. The boards of `state()` are 4S by N (dummy S) with ten tricks
+ * gone by (their cards unknown, so the double dummy check can't run and
+ * the sure winners decide); those of `ending()` are whole deals.
  */
 class RobotClaimsTest extends TestCase
 {
@@ -69,6 +75,117 @@ class RobotClaimsTest extends TestCase
 
     $this->assertSame(2, RobotClaims::sureWinners($state));
     $this->assertFalse(RobotClaims::accepts($state));
+  }
+
+  public function test_double_dummy_rejects_a_finesse_that_loses(): void
+  {
+    // 3NT by N, two tricks left, dummy S on lead: N claims both with the
+    // ♥A-Q, but E holds the king behind them. The sure winners E sees are
+    // none, yet it takes a trick whatever N does.
+    $state = $this->ending('NT', ['N' => '-.AQ.-.-', 'E' => '-.K4.-.-', 'S' => '-.32.-.-', 'W' => '-.-.-.32'], 'S', me: 'E', claimer: 'N', tricks: 2);
+
+    $this->assertSame(0, RobotClaims::sureWinners($state));
+    $this->assertSame(1, RobotClaims::doubleDummy($state));
+    $this->assertFalse(RobotClaims::accepts($state));
+
+    // with the king in front of them, the finesse works: accepted
+    $state = $this->ending('NT', ['N' => '-.AQ.-.-', 'E' => '-.-.-.32', 'S' => '-.32.-.-', 'W' => '-.K4.-.-'], 'S', me: 'W', claimer: 'N', tricks: 2);
+    $this->assertSame(0, RobotClaims::doubleDummy($state));
+    $this->assertTrue(RobotClaims::accepts($state));
+  }
+
+  public function test_double_dummy_accepts_when_a_winner_never_gets_its_turn(): void
+  {
+    // 3NT by N, N on lead with the ♥A-K: E's last two spades would win two
+    // spade tricks, but no spade is ever led
+    $state = $this->ending('NT', ['N' => '-.AK.-.-', 'E' => 'A2.-.-.-', 'S' => '-.-.-.32', 'W' => '-.-.32.-'], 'N', me: 'E', claimer: 'N', tricks: 2);
+
+    $this->assertSame(2, RobotClaims::sureWinners($state));
+    $this->assertSame(0, RobotClaims::doubleDummy($state));
+    $this->assertTrue(RobotClaims::accepts($state));
+  }
+
+  /**
+   * contract, the hands, who is on lead, the claim the robot acting for
+   * that seat makes (null for none)
+   */
+  public static function claims(): array
+  {
+    return [
+      'all top winners' => ['NT', ['N' => '-.AK.-.-', 'E' => 'A2.-.-.-', 'S' => '-.-.-.32', 'W' => '-.-.32.-'], 'N', 2],
+      'dummy\'s top winners, declarer playing them' => ['NT', ['N' => '-.-.-.32', 'E' => 'A2.-.-.-', 'S' => '-.AK.-.-', 'W' => '-.-.32.-'], 'S', 2],
+      'a card that isn\'t a winner' => ['NT', ['N' => '-.AQ.-.-', 'E' => '-.K4.-.-', 'S' => '-.32.-.-', 'W' => '-.-.-.32'], 'N', null],
+      'the last trump drawn first' => ['S', ['N' => 'A.A.-.-', 'E' => 'K.2.-.-', 'S' => '-.-.-.32', 'W' => '-.-.32.-'], 'N', 2],
+      'two trumps out, one to draw them' => ['S', ['N' => 'A.AK.-.-', 'E' => 'KQ.2.-.-', 'S' => '-.-.-.432', 'W' => '-.-.432.-'], 'N', null],
+      'a defender with the rest' => ['NT', ['N' => '-.-.-.32', 'E' => '-.AK.-.-', 'S' => '-.-.32.-', 'W' => '32.-.-.-'], 'E', 2],
+    ];
+  }
+
+  /**
+   * @param  array<string, string>  $hands
+   */
+  #[DataProvider('claims')]
+  public function test_when_a_robot_claims(string $strain, array $hands, string $leader, ?int $claim): void
+  {
+    $state = $this->ending($strain, $hands, $leader, me: CardPlayService::actingSeat($leader, 'N'));
+
+    $this->assertSame($claim, RobotClaims::claim($state));
+  }
+
+  public function test_no_claim_in_the_middle_of_a_trick(): void
+  {
+    $state = $this->ending('NT', ['N' => '-.AK.-.-', 'E' => 'A2.-.-.-', 'S' => '-.-.-.32', 'W' => '-.-.32.-'], 'W', me: 'N');
+    $state['turn'] = 'N';
+    $state['current_trick'] = [['seat' => 'W', 'card' => $this->card('D3')]];
+
+    $this->assertNull(RobotClaims::claim($state));
+  }
+
+  /**
+   * An ending of 3NT or 4♠ declared by N (dummy S): the hands left, the
+   * rest of the pack played in the tricks before, `$leader` to lead, and
+   * `$claimer`'s claim pending when there is one.
+   *
+   * @param  array<string, string>  $hands
+   * @return array<string, mixed>
+   */
+  private function ending(string $strain, array $hands, string $leader, string $me, ?string $claimer = null, int $tricks = 0): array
+  {
+    $hands = array_map(fn ($hand) => $this->cards($hand), $hands);
+    $held = array_column(array_merge(...array_values($hands)), 'id');
+    $rest = array_values(array_filter($this->pack(), fn ($card) => ! in_array($card['id'], $held, true)));
+    $played = [];
+
+    foreach (array_chunk($rest, 4) as $cards) {
+      $played[] = ['cards' => array_map(fn ($seat, $card) => ['seat' => $seat, 'card' => $card], Seats::SEATS, $cards)];
+    }
+
+    return [
+      'my_seat' => $me,
+      'turn' => $leader,
+      'contract' => ['declarer' => 'N', 'bid' => ['level' => $strain === 'NT' ? 3 : 4, 'strain' => $strain]],
+      'hand' => $hands[$me],
+      'dummy_hand' => $hands['S'],
+      'tricks' => $played,
+      'current_trick' => [],
+      'claim' => $claimer === null ? null : ['seat' => $claimer, 'tricks' => $tricks, 'hand' => $hands[$claimer], 'accepted' => []],
+    ];
+  }
+
+  /**
+   * @return list<array{id: int, suit: string, rank: int}>
+   */
+  private function pack(): array
+  {
+    $pack = [];
+
+    foreach (['S', 'H', 'D', 'C'] as $suit) {
+      foreach (RobotHand::RANKS as $rank) {
+        $pack[] = ['id' => array_search($suit, ['C', 'D', 'H', 'S'], true) * 100 + $rank, 'suit' => $suit, 'rank' => $rank];
+      }
+    }
+
+    return $pack;
   }
 
   /**

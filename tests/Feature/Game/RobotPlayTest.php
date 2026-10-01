@@ -10,6 +10,7 @@ use App\Models\Table;
 use App\Models\User;
 use App\Robots\RobotBidder;
 use App\Robots\RobotCardPlayer;
+use App\Robots\RobotClaims;
 use App\Robots\RobotHand;
 use App\Services\AuctionService;
 use App\Services\CardPlayService;
@@ -65,8 +66,9 @@ class RobotPlayTest extends TestCase
       $this->actingAs($this->human)->postJson("/tables/$table->id/playing/next")->assertOk();
     }
 
+    // played out, or claimed once a robot held nothing but top winners
     $this->assertNotNull($playing->finished_at);
-    $this->assertCount(52, $playing->cardPlays);
+    $this->assertTrue($playing->cardPlays->count() === 52 || $playing->claim_seat !== null);
     $this->assertReplaysThroughTheRules($playing);
 
     // the robots asked for the next board as soon as this one ended
@@ -119,6 +121,54 @@ class RobotPlayTest extends TestCase
     // is dummy's turn, which the human plays
     $this->assertCount(1, $playing->cardPlays);
     $this->assertSame('E', $playing->cardPlays->first()->seat);
+    $this->assertSame($this->human->id, $this->state->actingUserId($playing));
+  }
+
+  public function test_a_robot_declarer_claims_when_every_trick_left_is_a_top_winner(): void
+  {
+    // the robot declarer S holds all thirteen diamonds (trumps); the human
+    // is dummy N
+    $table = $this->claimTable(['N' => 'S', 'E' => 'H', 'S' => 'D', 'W' => 'C'], declarer: 'S');
+
+    PlayingUpdated::dispatch($table);
+
+    // W led a club, S ruffed it and claimed the other twelve; the robot
+    // defenders accepted
+    $playing = BoardTable::where('table_id', $table->id)->sole();
+
+    $this->assertCount(4, $playing->cardPlays);
+    $this->assertNotNull($playing->finished_at);
+    $this->assertSame('S', $playing->claim_seat);
+    $this->assertSame(12, $playing->claim_tricks);
+    $this->assertSame(13, $playing->tricks_won);
+  }
+
+  public function test_a_robot_plays_on_after_its_claim_is_rejected(): void
+  {
+    // the robot declarer S holds all the diamonds; the human defends as E
+    $table = $this->claimTable(['N' => 'S', 'E' => 'H', 'S' => 'D', 'W' => 'C'], human: 'E', declarer: 'S');
+
+    // W leads a club and dummy follows: it is the human's turn
+    PlayingUpdated::dispatch($table);
+
+    $playing = $this->state->currentPlaying($table);
+    $this->assertSame($this->human->id, $this->state->actingUserId($playing));
+
+    $heart = $this->actingAs($this->human)->getJson("/tables/$table->id/playing")->json('data.hand.0.id');
+    $this->actingAs($this->human)->postJson("/tables/$table->id/cards", ['card_id' => $heart])->assertCreated();
+
+    // S ruffs and claims the rest; the human rejects
+    $playing->refresh();
+    $this->assertSame('S', $playing->claim_seat);
+    $this->assertSame(['W'], $playing->claim_accepted);
+
+    $this->actingAs($this->human)->postJson("/tables/$table->id/claim/response", ['accept' => false])->assertOk();
+
+    // S doesn't claim again from the same place: it leads, W and dummy
+    // follow, and it is the human's turn again
+    $playing->refresh();
+    $this->assertNull($playing->claim_seat);
+    $this->assertCount(7, $playing->cardPlays);
     $this->assertSame($this->human->id, $this->state->actingUserId($playing));
   }
 
@@ -179,7 +229,8 @@ class RobotPlayTest extends TestCase
 
   /**
    * The human plays their turns, as a client would, until the board is
-   * finished: the robots' own logic stands in for the human's choices.
+   * finished: the robots' own logic stands in for the human's choices,
+   * answering a robot's claim too.
    */
   private function playOut(Table $table): void
   {
@@ -190,6 +241,12 @@ class RobotPlayTest extends TestCase
 
       if ($state['phase'] === 'finished') {
         return;
+      }
+
+      if ($state['claim'] !== null) {
+        $this->postJson("/tables/$table->id/claim/response", ['accept' => RobotClaims::accepts($state)])->assertOk();
+
+        continue;
       }
 
       $this->assertSame($this->human->id, $state['acting_user_id'], 'the robots stopped on their own turn');
@@ -238,21 +295,21 @@ class RobotPlayTest extends TestCase
   }
 
   /**
-   * The human (N) declares 1 of `$suits['N']` over three passes, with the
+   * `$declarer` declares 1 of the suit it holds over three passes, with the
    * deal rigged so each seat holds one whole suit (`$swap` exchanges two
-   * cards), and nobody has played a card yet. Robots are held back while
-   * it is set up.
+   * cards), and nobody has played a card yet. The human sits in `$human`,
+   * robots in the other seats, held back while it is set up.
    *
    * @param  array<string, string>  $suits  seat => the suit it holds
    * @param  array{0: array{0: string, 1: int}, 1: array{0: string, 1: int}}|null  $swap  two [suit, rank] cards
    */
-  private function claimTable(array $suits, ?array $swap = null): Table
+  private function claimTable(array $suits, ?array $swap = null, string $human = 'N', string $declarer = 'N'): Table
   {
-    return Event::fakeFor(function () use ($suits, $swap) {
+    return Event::fakeFor(function () use ($suits, $swap, $human, $declarer) {
       $table = Table::create(['created_by' => $this->human->id, 'moderated_by' => $this->human->id]);
-      app(TableSeatService::class)->seat($table, $this->human, 'N');
+      app(TableSeatService::class)->seat($table, $this->human, $human);
 
-      foreach (['E', 'S', 'W'] as $seat) {
+      foreach (array_diff(Seats::SEATS, [$human]) as $seat) {
         app(RobotService::class)->seatRobot($table, $seat, $this->human);
       }
 
@@ -275,13 +332,13 @@ class RobotPlayTest extends TestCase
 
       $auction = app(AuctionService::class);
       $pass = Bid::where('suit', Bid::PASS)->firstOrFail();
-      $opening = Bid::where('suit', '1'.$suits['N'])->firstOrFail();
+      $opening = Bid::where('suit', '1'.$suits[$declarer])->firstOrFail();
       $opened = false;
 
       while (! AuctionService::isOver($this->state->calls($playing->refresh()))) {
         $seat = AuctionService::nextToCall($this->state->calls($playing), $playing->board->dealer);
-        $bid = $seat === 'N' && ! $opened ? $opening : $pass;
-        $opened = $opened || $seat === 'N';
+        $bid = $seat === $declarer && ! $opened ? $opening : $pass;
+        $opened = $opened || $seat === $declarer;
 
         $auction->call($table, $playing->seats->firstWhere('seat', $seat)->user, $bid);
       }

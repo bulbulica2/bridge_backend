@@ -3,12 +3,13 @@
 A **robot** is a computer player that takes a seat nobody else is in, so one
 person can play (or test) the game alone. This page is the complete list of
 what a robot does and how it decides: when it acts, what it can see, every
-call it can make, how it leads and follows, and when it accepts a claim.
+call it can make, how it plans, leads, follows and signals, and when it
+claims or accepts a claim.
 
 It describes the code as it is: `app/Robots/` and
 `App\Services\RobotService`. The bidding is a SAYC-style system; the card
-play is still rules of thumb ("v1"), and better card play is a separate
-follow-up issue. For the endpoints see [`API.md`](API.md#tables);
+play is declarer planning and technique, defence with standard signals, and
+a search of the last few tricks. For the endpoints see [`API.md`](API.md#tables);
 for the bridge terms see [`GAME-RULES.md`](GAME-RULES.md) (§9 is the short
 version of this page).
 
@@ -39,7 +40,7 @@ robot makes **one** move if it is a robot's turn:
 | Phase | The robot that moves | Its move |
 |---|---|---|
 | auction | the robot whose turn it is | one call ([Bidding](#bidding)) |
-| play, no claim pending | the robot acting for `turn` — declarer's robot also plays dummy's cards | one card ([Card play](#card-play)) |
+| play, no claim pending | the robot acting for `turn` — declarer's robot also plays dummy's cards | one card ([Card play](#card-play)), or a claim of the rest ([Claims](#claims)) |
 | play, claim pending | the first robot (N, E, S, W order) that still has to answer | accept or reject ([Claims](#claims)) |
 | finished | the first robot not yet ready for the next board | ready ([The next board](#the-next-board)) |
 
@@ -429,23 +430,150 @@ passes with five.
 
 ## Card play
 
+A robot picks its card by rules — declarer's, a defender's, following,
+discarding — and in the **last four tricks** checks it with a search of
+every way the unseen cards can lie ([The ending](#the-ending)). It always
+follows suit when it can, which `CardPlayService` checks again like any
+card.
+
 ### Words used here
 
 - **Master card**: no card that could still be out beats it — every higher
   card of its suit has been played or is in a hand the robot's side can see.
-  Declarer and dummy see both their hands; a defender sees only its own.
+  Declarer and dummy see both their hands; a defender sees only its own
+  (dummy's cards are the opponents').
 - **Equivalent cards**: two of our cards with nothing between them but
   cards played or held by our side (K-Q, or K-J once the Q is gone) win
   exactly the same tricks, so the robot plays the **cheaper** one.
-- **Discard**: when it can neither follow suit nor usefully ruff, a robot
-  throws the **lowest card outside trumps**, keeping its master cards if it
-  can; between equally low cards, from its **longest** suit. It throws a
-  trump only when it holds nothing else.
+- **Out** (or unseen): cards the robot can't see — not played, not in its
+  own hand, not in dummy or (for declarer) the other hand.
+- **Shown out**: a player who didn't follow suit has no more of that suit.
+  Robots remember it for every seat.
+- **Spot card**: a 10 or lower.
 
-A robot always follows suit when it can: that is checked again by
-`CardPlayService` like any card.
+### Declarer's plan
 
-### Opening lead (a defender, first trick)
+Before each card declarer plays (the first time before dummy's first card)
+the robot counts, from declarer's and dummy's hands:
+
+- **Sure winners**, suit by suit: our cards from the top down while no card
+  out beats them, no more than the longer hand holds — or every card of the
+  longer hand when those top cards draw all the cards out (A-K-Q-J opposite
+  x-x with four out: four).
+- **Losers** (suit contracts), in the hand with more trumps (declarer's on a
+  tie): of the first three rounds of each suit, those the opponents win, our
+  best cards matched against theirs (K-Q-J-10-x of trumps: one; A-x-x
+  opposite K: one; K-x-x opposite x-x: two); in a side suit, every card after
+  the third too, unless the suit surely runs. A void loses nothing.
+- **Ruffs**: losers of the long trump hand the other hand can ruff — in each
+  side suit, the cards after the short hand runs out — no more than the short
+  hand's trumps.
+- **Needed**: the tricks still to win for the contract (level + 6 less those
+  won), and **spare**: the tricks left less those needed.
+
+The **line** follows:
+
+| Contract | Situation | Line |
+|---|---|---|
+| no trump | sure winners ≥ needed | **cash** |
+| no trump | otherwise | **develop** a suit |
+| trumps | sure winners ≥ needed, or losers ≤ spare | **draw** trumps, then take the tricks |
+| trumps | both hands have a void in a different side suit, the other hand holding cards there, and two or more trumps each | **cross-ruff** |
+| trumps | ruffs to take | **ruff** losers in the short trump hand before drawing trumps |
+| trumps | none of these | **draw** trumps, then develop |
+
+The suit to **develop** is the side suit with the most tricks to gain: its
+long cards once the cards out split evenly, plus our aces, kings and
+queens in it, less its sure winners (longer on a tie, then higher).
+
+### Declarer on lead (from its own hand or dummy's)
+
+Tried in this order, the first that gives a card:
+
+1. **Ruffing** (ruff and cross-ruff lines). On a cross-ruff, first cash a
+   side-suit master that the other hand can follow to (so the defenders
+   can't throw those suits away and ruff them later). Then, from the long
+   trump hand (or either hand on a cross-ruff), lead the lowest card of a
+   side suit the other hand is **void** in and has trumps for — when that
+   card isn't a master. Else, from the long trump hand, **shorten** the
+   ruffing hand: in a side suit where it has one or two cards and there are
+   losers, cash our master there, or lead low to give the round up. On lead
+   in the ruffing hand, cross to the other hand: low to its side-suit
+   master.
+2. **Draw trumps**, while the defenders may hold any and the hand on lead
+   has one: the top trump if it is a master, else the lowest. On the ruff
+   line only while the short trump hand keeps a trump for each ruff; never
+   on a cross-ruff.
+3. **Cash**, when the sure winners are enough, the **short hand's winners
+   first** (so the suit isn't blocked): low to the other hand's master when
+   that hand is shorter in the suit (A-K-4-3-2 opposite Q-5: the 2 to the
+   queen); else the master of the suit the hand on lead is shortest in
+   (relative to the other hand). Trumps last.
+4. **Develop** the chosen suit, from the hand on lead:
+   - **low towards an honour** in the other hand that a card out still
+     beats: a **finesse** (x-x-x towards A-Q) or leading towards a king or
+     queen (x-x towards K-x);
+   - the **top of a sequence** (Q-J-10) towards the other hand's master, to
+     run it as a finesse;
+   - a **master**, the short hand's first (or low to the other hand's
+     master when it is the shorter);
+   - but when the honours to lead towards are in **this** hand (A-Q-x, or
+     K-x-x, opposite small cards), **cross to the other hand** first: a low
+     card to its sure winner in another suit;
+   - the **top of a sequence** to knock out a higher card (K-Q-J: the K);
+   - **low**, giving up a round to set up length.
+5. Otherwise: a master; low towards the other hand's master; the lowest
+   card of the side suit we hold most of together.
+
+### Declarer following
+
+**Second hand** (a defender led): low while the fourth hand (ours) can beat
+the card led; otherwise win an honour lead (10 or higher) cheaply, unless
+[holding up](#holding-up-in-no-trump); else low.
+
+**Third hand** (the other hand led):
+
+- low when our card is winning and can't lose: a master, or an honour from
+  a **sequence** the other hand still holds the next card of (Q from
+  Q-J-10) that second hand didn't cover — it is **left to run**;
+- low when **ducking keeps an entry**: in no trump, this hand is long in the
+  suit (three or more cards longer than the other hand), holds masters but
+  too few to draw the cards out, has no sure winner in another suit to get
+  back to it by, it is the suit's first round, and the other hand keeps a
+  card to lead it again (A-K-x-x-x-x opposite x-x: duck, then the A-K draw
+  the rest and the suit runs);
+- otherwise **finesse or drop**: with a master, and a card out between it
+  and our cheapest winning card, play the **finesse** — our best card below
+  the highest card out (A-Q over a low card: the Q; A-K-J-9 missing the Q:
+  the J) — unless the **drop** is the better chance: the opponents held no
+  more than twice as many cards of the suit this round as we hold above the
+  missing card ("eight ever, nine never": nine cards missing the queen, play
+  the ace-king; eight, finesse). If second hand has **shown out**, the
+  finesse can't work: play the master. If fourth hand has shown out, the
+  cheapest winning card is enough. Without a master (K-x): our best card.
+
+**Fourth hand**: low when our card is winning; otherwise the cheapest card
+that wins, unless holding up.
+
+**Void in the suit led**: throw a card ([Discards](#discards)) when our
+other hand's card wins for sure (a master; or, second hand, a master still
+to come from the fourth hand; or ours is winning in fourth place) or when
+there are no trumps; else ruff with the lowest trump, or over-ruff an
+opponent's ruff with the lowest trump that beats it (throwing a card when
+none does).
+
+Declarer's robot plays dummy's cards by these rules too, as dummy's seat.
+
+#### Holding up in no trump
+
+When the defenders lead a suit in which our side has exactly **one sure
+winner** (A-x-x), and the sure winners don't already make the contract,
+declarer ducks by the **rule of 7**: 7 less our cards in the suit (both
+hands, as dealt) is how many rounds to let go, so the defender with the
+long suit is cut off once the stopper goes. It needs two or more cards in
+the hand playing, to have one to duck with.
+
+### A defender's opening lead
 
 1. **Top of a sequence.** From a suit whose top two cards touch and the top
    one is a 10 or higher (A-K, K-Q, Q-J, J-10, 10-9), lead the top card. With
@@ -463,67 +591,168 @@ A robot always follows suit when it can: that is checked again by
 
 ### A defender on lead later
 
-Cash a **master card** outside trumps if it has one: the top card of the
-first suit, in ♠ ♥ ♦ ♣ order, whose top card is a master. Otherwise lead as
-for the opening lead.
-
-### Declarer on lead (from its own hand or dummy's)
-
 Tried in this order:
 
-1. **Draw trumps.** In a suit contract, if the defenders may still hold
-   trumps (13 less those played and those in declarer's and dummy's hands)
-   and the hand on lead has one: lead the top trump if it is a master,
-   otherwise the lowest trump.
-2. **Cash a sure winner.** Lead a master card from the hand on lead (side
-   suits first, then trumps).
-3. **Lead towards a winner.** If the other hand holds the master card of a
-   side suit and the hand on lead has a card in it, lead the lowest one.
-4. **Ruff in the short hand.** In a suit contract, if the other hand has
-   trumps and no cards in a side suit the hand on lead holds, lead the lowest
-   card of that suit so the other hand ruffs.
-5. **Set up the long suit.** Lead the lowest card of the side suit where
-   declarer and dummy hold the most cards together (among suits the hand on
-   lead holds).
-6. Otherwise, the lowest card of the hand's longest suit.
+1. **Give partner a ruff**: in a suit contract, when partner has shown out
+   of a side suit this hand holds, and may still have trumps (hasn't shown
+   out of them, and some are out), lead that suit — with a
+   [suit-preference](#signals) card.
+2. **Return the suit asked for**: having just ruffed partner's lead, lead
+   the side suit partner's card asked for (its master, else the lowest).
+3. **Cash a master** outside trumps: the top card of the first suit, in
+   ♠ ♥ ♦ ♣ order, whose top card is a master.
+4. **Partner's suit**: back to the first side suit partner led — the higher
+   of two cards left, else the lowest.
+5. **Continue or switch**: on with the suit this hand first led if partner
+   **encouraged** it (the top card when it is a master or tops a sequence,
+   else the lowest); otherwise a new suit, chosen as an opening lead would
+   be but away from suits partner **discouraged** (on our lead, or with a
+   low discard) — and to a suit partner asked for with a high discard first.
 
-### Following
+### A defender following
 
-**When it can follow suit:**
+**Second hand**: low, except:
 
-| Position | Play |
-|---|---|
-| second hand | **low** — the lowest card of the suit |
-| third hand, partner's card is a master | **low** |
-| third hand otherwise, and its highest card beats the card winning the trick | **high, cheaply**: the cheapest card equivalent to its highest one (holding K-Q-5 over a 3: the Q) |
-| fourth hand, partner winning | **low** |
-| fourth hand otherwise | the **cheapest card that wins** |
-| any position, cannot beat the winning card (or the trick is already ruffed) | **low** |
+- to take the trick that **beats the contract** with a master (the
+  defenders need one more);
+- to **cover an honour** (10 or higher) led from dummy with the cheapest
+  card that beats it — unless dummy still holds the next card below it
+  (a sequence: covering gains nothing);
+- the ace [held up against dummy's long suit](#holding-up-an-ace-against-dummy),
+  taken on the right round.
 
-**When it cannot follow suit:**
+**Third hand**:
 
-| Situation | Play |
-|---|---|
-| partner is winning the trick | **discard** |
-| no trump contract, or no trumps left | **discard** |
-| nobody has ruffed yet | **ruff** with the **lowest** trump |
-| an opponent has ruffed | **over-ruff** with the lowest trump that beats it; if none does, **discard** |
+- nothing to win when partner's card wins for sure: it is a master, or
+  dummy plays last and has nothing to beat it;
+- with **dummy playing last**, only as high as needed: the cheapest card
+  that beats both the trick so far and dummy's best (K-J-x under dummy's
+  10-x: the J); when nothing beats dummy's best, the cheapest winning card
+  anyway unless partner is winning;
+- otherwise **high**: the cheapest of equals of our best card.
 
-Declarer's robot plays dummy's cards by the same rules, as dummy's seat.
+**Fourth hand**: low when partner is winning; otherwise the cheapest card
+that wins.
+
+When not playing to win, a defender **signals**: attitude on partner's
+lead, count on declarer's ([Signals](#signals)).
+
+**Void in the suit led**: throw a card when partner is winning (unless
+dummy, still to play, can beat partner's card and we can ruff it) or with
+no trumps; else ruff low, or over-ruff with the lowest trump that beats an
+opponent's ruff (never over partner's), else throw a card.
+
+#### Holding up an ace against dummy
+
+In no trump, when declarer leads a suit from hand towards dummy's **long
+suit** (three or more cards) and dummy has **no sure winner in another
+suit** to get back by, a defender who can win with a master **ducks** until
+the round on which declarer plays its **last** card of the suit, then takes
+it — dummy's long cards are cut off. Declarer's length comes from
+**partner's count signal**: the cards neither this hand nor dummy holds are
+partner's and declarer's; partner's first card in the suit says whether
+partner has an even (high) or odd (low) number, and the most even split
+that fits is taken (five cards between them, partner low: partner three,
+declarer two — take the second round). With no signal yet, declarer is
+given the bigger half.
+
+### Signals
+
+Defenders give and read standard signals:
+
+| Signal | When | Given |
+|---|---|---|
+| **attitude** | following partner's lead, not winning | the **highest spot card** (not a master) to say *go on* — holding the A, K or Q of the suit, or the J when partner led an honour; the **lowest** card to say *switch* |
+| **count** | following declarer's lead the first time the suit is played, not winning | high (the highest spot card) with an **even** number of cards, the **lowest** with an odd number |
+| **suit preference** | leading a card for partner to ruff | the **highest spot card** asks for the higher-ranking of the other two side suits back, the **lowest** for the lower one — asking for the suit where this hand holds an ace or a master (neither or both: the lowest) |
+| **discards** | throwing a card | the robot throws the lowest card of a suit it can spare, which reads as *don't lead this* |
+
+**Reading partner's card.** A spot card is **high** when more of the spot
+cards of its suit the robot couldn't see *when it was played* are lower
+than it than are higher (those still unseen, and those played afterwards
+from a hand it doesn't see). An honour, or a trick partner won, counts as
+encouraging. After ruffing partner's lead, a high lead asks for the
+higher-ranking of the two other side suits, a low one for the lower. A
+**first discard** in a suit asks for it when high and not when low.
+
+### Discards
+
+When a robot can neither follow suit nor usefully ruff, it throws the
+**lowest card** of the suit it can best spare, never a master while another
+card will do, and a trump only when it has nothing else. The suit it keeps
+first:
+
+1. a suit with nothing but masters;
+2. a suit where every card **guards an honour**: a J or higher that isn't a
+   master, with no more cards than the cards above it still out plus one
+   (K-x, Q-x-x, J-x-x-x);
+3. for a defender, a suit **no longer than dummy's**, holding a card that
+   beats dummy's lowest: throwing one would let dummy's last card win;
+4. then the shorter suits.
+
+So it throws from the longest suit it can spare.
+
+### The ending
+
+With **four tricks or fewer** left, the card the rules picked is checked:
+every way the cards this robot can't see may be split between the two
+hands it can't see is tried — as many cards as each still holds, none in a
+suit a player has shown out of — and each **layout** is solved **double
+dummy** (every hand known, everyone playing perfectly;
+`App\Robots\DoubleDummy`). The card that takes the most tricks over all the
+layouts is played: the rules' card if it is one of the best, else the
+lowest of the best. There is no search when the cards can lie in more than
+80 ways, when every card the robot may play is equivalent, or before dummy
+is face up. The robot still sees only its own seat's cards: the hidden
+hands are guessed, all of them.
+
+### Robots against v1
+
+The first robots ("v1") played by rules of thumb only: top of a sequence
+or fourth best, second hand low, third hand high, declarer drawing trumps
+and cashing winners, no plan, finesse, hold-up, signal or search. To
+measure the change, four robots bid 1000 seeded random deals (972 reached
+a contract) and each deal was played out four times, v1 and today's play
+on each side:
+
+| Declarer's side | Defenders | Contracts made | Declarer's tricks, average |
+|---|---|---|---|
+| v1 | v1 | 540 (55.6%) | 8.26 |
+| today's | v1 | 686 (70.6%) | 8.85 |
+| v1 | today's | 476 (49.0%) | 8.08 |
+| today's | today's | 631 (64.9%) | 8.64 |
+
+Today's declarer makes about 15 contracts in 100 more than v1 against the
+same defence, and today's defence beats about 7 in 100 more of v1's
+declarers. `tests/Unit/Robots/RobotSimulationTest` runs the same comparison
+on 60 deals and requires both.
 
 ## Claims
 
-Robots **never claim** (nor withdraw). When a human claims, each robot that
-must answer (the other non-dummy players) decides on its own:
+**A robot claims** when it is on lead (for its own seat, or declarer's
+robot for dummy) and the hand on lead holds nothing but **top winners**:
+every card a master, and in a suit contract no more trumps out than the
+hand's own (all masters, so leading them first draws the rest). It claims
+**all** the tricks left. The two other non-dummy players answer as for any
+claim — robots by the rules below, humans themselves. A robot claims only
+once from a given point of the play (`RobotService` remembers it in the
+cache for a day): if the claim is rejected, it plays on, and may claim
+again after more cards.
+
+**Answering a claim.** When someone claims, each robot that must answer
+(the other non-dummy players) decides on its own:
 
 1. A **concession** — a claim of 0 tricks — is always **accepted**.
 2. Otherwise the robot works out its side's share of the remaining tricks if
    the claim stands (the claim itself if its partner claimed, the rest if an
-   opponent did), and counts its side's **sure winners** from the hands it
-   can see: its own, plus its partner's if that is face up (dummy, for a
-   declarer robot; the claimer's hand, when its partner claimed).
-3. It **accepts** if the share is at least the sure winners, and **rejects**
-   otherwise. A rejection clears the claim and play goes on.
+   opponent did), and compares it with what its side would take:
+   - with **six tricks or fewer** left, **double dummy**: while a claim is
+     pending the robot sees three hands (its own, dummy's and the
+     claimer's), so it knows the fourth too — the cards nobody has played
+     and none of the three holds — and solves the ending exactly;
+   - with more, its side's **sure winners** from the hands it can see.
+3. It **accepts** if the share is at least that, and **rejects** otherwise.
+   A rejection clears the claim and play goes on.
 
 **Sure winners**, suit by suit: our cards from the top down, as long as no
 card still out beats them (A-K-Q with the A, K and Q all ours count three),
@@ -532,9 +761,12 @@ contract, a side suit counts nothing if a face-up **opponent** (dummy, or the
 claimer) has no cards in it and still holds a trump — it would be ruffed. A
 side suit is otherwise counted as if nobody could ruff it.
 
-Example: declarer claims all 3 remaining tricks in a spade contract; the
-robot on defence holds the ♠A → one sure winner, a share of 0 → **rejects**.
-A claim of 2 leaves it 1 → **accepts**.
+Examples: declarer claims both of the last 2 tricks in no trump with the
+♥A-Q, dummy on lead, and the robot on defence holds the ♥K behind the
+A-Q. It sees no sure winner, but double dummy it takes one trick → a share
+of 0 is too little → **rejects**. With the ♥K in front of the A-Q (the
+finesse works) it **accepts**. With 8 tricks left, declarer claims them all
+and the robot holds the ♠A: one sure winner → **rejects**.
 
 ## The next board
 
@@ -557,11 +789,23 @@ players in the same seats.
   the same call, partner sees the widest of their ranges, not the hands the
   earlier rules have already taken.
 - Bid explanations are worked out but not sent to clients (no alerts yet).
-- No signals or discarding methods, no finesses, no counting the
-  opponents' cards, no inferences from the auction in the play.
-- No claims.
+- No inferences from the auction in the play: nobody places an honour or
+  a long suit from the bidding, and the ending search takes every layout
+  as equally likely.
+- Declarer's plan is remade before every card from the cards left, with no
+  memory of what it meant to do: no squeezes, endplays, safety plays,
+  combining chances (try one suit before taking a finesse in another) or
+  guessing two-way finesses — except what the search of the last four
+  tricks finds.
+- Defenders read attitude only on their own first lead, count only to
+  hold up an ace against dummy's long suit, and suit preference only after
+  a ruff; no trump echo or Smith echo, no forcing defence, no uppercuts, no
+  ducking other than against dummy's long suit.
+- Robots claim only all the tricks left, from top winners in the hand on
+  lead: no partial claims, no concessions, and they never withdraw a claim.
 - Points are HCP only; nothing for shape or trump support.
-- A robot's "sure winners" for a claim ignore ruffs by a hand it can't see.
+- With more than six tricks left, a robot's "sure winners" for a claim
+  ignore ruffs by a hand it can't see.
 
 ## Code map
 
@@ -570,8 +814,10 @@ players in the same seats.
 | hand evaluation | `App\Robots\RobotHand` | `tests/Unit/Robots/RobotHandTest` |
 | bidding: the system | `App\Robots\BiddingSystem` (the rules for each position), `App\Robots\BidRule`, `App\Robots\BidMeaning` (a call's meaning and explanation), `App\Robots\AuctionView` (the auction as one seat sees it, legal calls, `shown()`) | `tests/Unit/Robots/RobotBidderTest` |
 | bidding: the robot | `App\Robots\RobotBidder` (`choose()`, `bid()` with the explanation, `read()`, `shown()`) | `tests/Unit/Robots/RobotBidderTest` (a case for each convention above, and 500 random deals bid by four robots: each call checked by `AuctionService`, and each robot's HCP inside the range its own call shows) |
-| card play | `App\Robots\RobotCardPlayer`, `App\Robots\PlayView` | `tests/Unit/Robots/RobotCardPlayerTest` (every rule above, and 200 random deals played out, each card checked by `CardPlayService`) |
-| claims | `App\Robots\RobotClaims` | `tests/Unit/Robots/RobotClaimsTest` |
+| card play | `App\Robots\RobotCardPlayer` (`choose()`), `App\Robots\PlayView` (what the seat knows: hands it sees, cards out, voids, tricks needed), `App\Robots\DeclarerPlan` (the count and the line), `App\Robots\DeclarerPlay`, `App\Robots\DefenderPlay`, `App\Robots\Signals`, `App\Robots\Discards`, `App\Robots\Endgame` (the last four tricks) | `tests/Unit/Robots/RobotCardPlayerTest` (a case for each technique above, and 80 random deals played out, each card checked by `CardPlayService`), `tests/Unit/Robots/DeclarerPlanTest` |
+| double dummy | `App\Robots\DoubleDummy` (`tricks()`, `cardValues()`: an exhaustive search with alpha-beta, fine for endings of a few tricks) | `tests/Unit/Robots/DoubleDummyTest` (against a plain minimax on random endings) |
+| claims | `App\Robots\RobotClaims` (`claim()`, `accepts()`, `doubleDummy()`, `sureWinners()`) | `tests/Unit/Robots/RobotClaimsTest`, `tests/Feature/Game/RobotPlayTest` |
+| robots against v1 | `tests/Unit/Robots/Support/` (`RobotTable`: four robots bid and play a deal in memory; `V1CardPlayer`: the first robots' card play, kept as the baseline) | `tests/Unit/Robots/RobotSimulationTest` ([Robots against v1](#robots-against-v1)) |
 | the pool and each move | `App\Services\RobotService` (`seatRobot()`, `act()`) | `tests/Feature/Game/RobotPlayTest`, `tests/Feature/Table/RobotSeatingTest` |
 | the trigger | `App\Listeners\DriveRobots` (queued, after `PlayingUpdated`) | `tests/Feature/Game/RobotPlayTest` |
 | settings | `config/bridge.php`: `robot_delay_seconds`, `unattended_table_minutes` | |
