@@ -35,6 +35,7 @@ class CreateTableTest extends TestCase
       ->assertJsonPath('data.seats.0.seat', 'E')
       ->assertJsonPath('data.seats.0.user.id', $user->id)
       ->assertJsonPath('data.free_seats', ['N', 'S', 'W'])
+      ->assertJsonPath('data.playing', null)
       ->assertJsonMissingPath('data.closed_at');
 
     $this->assertDatabaseHas('table_seats', [
@@ -171,7 +172,8 @@ class CreateTableTest extends TestCase
       ->assertJsonPath('data.0.free_seats', ['N', 'E', 'S'])
       ->assertJsonStructure(['data' => [['seats' => [['user' => ['id']]]]]])
       ->assertJsonPath('data.1.id', $older->id)
-      ->assertJsonMissingPath('data.0.closed_at');
+      ->assertJsonMissingPath('data.0.closed_at')
+      ->assertJsonMissingPath('data.0.playing');
   }
 
   public function test_show_returns_seats_and_free_seats(): void
@@ -186,6 +188,7 @@ class CreateTableTest extends TestCase
       ->assertJsonPath('data.id', $table->id)
       ->assertJsonCount(2, 'data.seats')
       ->assertJsonStructure(['data' => ['seats' => [['user' => ['id']]]]])
-      ->assertJsonPath('data.free_seats', ['E', 'W']);
+      ->assertJsonPath('data.free_seats', ['E', 'W'])
+      ->assertJsonMissingPath('data.playing');
   }
 }

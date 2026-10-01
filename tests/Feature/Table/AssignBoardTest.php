@@ -193,6 +193,41 @@ class AssignBoardTest extends TestCase
     $this->assertSame($table->fresh()->board_id, $response->json('data.board_id'));
   }
 
+  public function test_the_join_that_deals_the_board_carries_the_joiners_game_state(): void
+  {
+    $table = Table::factory()->create(['board_id' => null]);
+
+    foreach (['N', 'E', 'S'] as $seat) {
+      $this->seats->seat($table, User::factory()->create(), $seat);
+    }
+
+    $fourth = User::factory()->create();
+
+    $response = $this->actingAs($fourth)
+      ->postJson("/tables/$table->id/seats", ['seat' => 'W'])
+      ->assertCreated()
+      ->assertJsonPath('data.playing.phase', 'auction')
+      ->assertJsonPath('data.playing.my_seat', 'W')
+      ->assertJsonCount(13, 'data.playing.hand');
+
+    // exactly what the client would otherwise fetch next
+    $this->assertSame(
+      $this->actingAs($fourth)->getJson("/tables/$table->id/playing")->json('data'),
+      $response->json('data.playing')
+    );
+  }
+
+  public function test_a_join_that_does_not_fill_the_table_has_no_game_state(): void
+  {
+    $table = Table::factory()->create(['board_id' => null]);
+    $this->seats->seat($table, User::factory()->create(), 'N');
+
+    $this->actingAs(User::factory()->create())
+      ->postJson("/tables/$table->id/seats", ['seat' => 'E'])
+      ->assertCreated()
+      ->assertJsonPath('data.playing', null);
+  }
+
   public function test_a_player_leaving_an_unfinished_playing_abandons_it(): void
   {
     $table = Table::factory()->create(['board_id' => null]);

@@ -61,12 +61,29 @@ class RobotSeatingTest extends TestCase
       ->assertJsonPath('data.phase', 'auction');
   }
 
+  public function test_a_table_created_with_robots_carries_the_creators_game_state(): void
+  {
+    $response = $this->actingAs($this->owner)
+      ->postJson('/tables', ['seat' => 'S', 'robots' => true])
+      ->assertCreated()
+      ->assertJsonPath('data.playing.my_seat', 'S')
+      ->assertJsonCount(13, 'data.playing.hand');
+
+    // exactly what the client would otherwise fetch next, robots' calls
+    // included (the queue runs on sync here)
+    $this->assertSame(
+      $this->actingAs($this->owner)->getJson('/tables/'.$response->json('data.id').'/playing')->json('data'),
+      $response->json('data.playing')
+    );
+  }
+
   public function test_without_robots_the_creator_sits_alone(): void
   {
     $this->actingAs($this->owner)->postJson('/tables', ['robots' => false])
       ->assertCreated()
       ->assertJsonCount(1, 'data.seats')
-      ->assertJsonPath('data.board_id', null);
+      ->assertJsonPath('data.board_id', null)
+      ->assertJsonPath('data.playing', null);
 
     $this->assertSame(0, User::robots()->count());
   }

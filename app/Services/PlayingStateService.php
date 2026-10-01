@@ -282,7 +282,28 @@ class PlayingStateService
    */
   public function stateFor(Table $table, User $user): array
   {
+    return $this->stateOf($this->currentPlaying($table), $user);
+  }
+
+  /**
+   * `stateFor()`, or null while the table has no playing: what a request that
+   * may have dealt the board (taking the fourth seat) hands back with the
+   * table, so the client can draw it without a `GET /tables/{table}/playing`.
+   *
+   * @return array<string, mixed>|null
+   */
+  public function dealtStateFor(Table $table, User $user): ?array
+  {
     $playing = $this->currentPlaying($table);
+
+    return $playing === null ? null : $this->stateOf($playing, $user);
+  }
+
+  /**
+   * @return array<string, mixed>
+   */
+  private function stateOf(?BoardTable $playing, User $user): array
+  {
     $seat = $playing === null ? null : $this->seatOf($playing, $user);
 
     return [
