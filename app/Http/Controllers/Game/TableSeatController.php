@@ -36,8 +36,8 @@ class TableSeatController extends BaseController
 
     $table->load('seats.user');
 
-    // the fourth seat deals the board: hand back the caller's state so they
-    // can draw it without a GET /tables/{table}/playing
+    // sitting down never deals (the newcomer has still to press Start), but
+    // the table may hold a finished board: hand back the caller's state
     return $this->sendResponse(
       (new TableResource($table))->withPlaying($state->dealtStateFor($table, $request->user())),
       'Seat taken successfully.',
@@ -66,11 +66,16 @@ class TableSeatController extends BaseController
 
   /**
    * Seat a robot at a free seat. Only a table manager gets this far: the
-   * form request checks `TablePolicy::manage`. The fourth seat deals the
-   * board, as for a human.
+   * form request checks `TablePolicy::manage`. A robot is ready to start at
+   * once, so filling the last seat with one deals the board if every human
+   * has pressed Start already.
    */
-  public function storeRobot(AddRobotToSeatRequest $request, Table $table, RobotService $robots): JsonResponse
-  {
+  public function storeRobot(
+    AddRobotToSeatRequest $request,
+    Table $table,
+    RobotService $robots,
+    PlayingStateService $state
+  ): JsonResponse {
     try {
       $robots->seatRobot($table, $request->validated('seat'), $request->user());
     } catch (SeatUnavailableException $e) {
@@ -79,7 +84,12 @@ class TableSeatController extends BaseController
 
     $table->load('seats.user');
 
-    return $this->sendResponse(new TableResource($table), 'Robot seated successfully.', 201);
+    // the one seat request that can deal: hand back the caller's state
+    return $this->sendResponse(
+      (new TableResource($table))->withPlaying($state->dealtStateFor($table, $request->user())),
+      'Robot seated successfully.',
+      201
+    );
   }
 
   /**

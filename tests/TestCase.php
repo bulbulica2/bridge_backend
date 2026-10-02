@@ -2,6 +2,9 @@
 
 namespace Tests;
 
+use App\Models\BoardTable;
+use App\Models\Table;
+use App\Services\BoardSelectionService;
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
 
 abstract class TestCase extends BaseTestCase
@@ -15,6 +18,23 @@ abstract class TestCase extends BaseTestCase
     $this->assertIsolatedEnvironment($app['config']->all());
 
     return $app;
+  }
+
+  /**
+   * Every human seated at the table presses Start, through the service, as
+   * `POST /tables/{table}/start` does; robots are ready already. With four
+   * seated that deals the board, which this returns. Mutates `$table`
+   * (`board_id`).
+   */
+  protected function startBoard(Table $table): ?BoardTable
+  {
+    $playing = null;
+
+    foreach ($table->seats()->with('user')->get()->reject(fn ($seat) => $seat->user->is_robot) as $seat) {
+      $playing = app(BoardSelectionService::class)->start($table, $seat->user) ?? $playing;
+    }
+
+    return $playing;
   }
 
   /**

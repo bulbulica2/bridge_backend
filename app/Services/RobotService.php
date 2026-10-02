@@ -57,8 +57,9 @@ class RobotService
   ) {}
 
   /**
-   * Seat a free robot in `$seat`, on the say-so of `$by`. Filling the
-   * fourth seat deals the board, as for a human.
+   * Seat a free robot in `$seat`, on the say-so of `$by`. A robot is ready
+   * to start from the moment it sits down, so filling the fourth seat deals
+   * the board if every human there has pressed Start.
    *
    * @throws SeatUnavailableException
    */

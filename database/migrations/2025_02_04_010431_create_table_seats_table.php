@@ -20,6 +20,10 @@ return new class extends Migration
       // last sign of life from the player (a heartbeat or a playing request),
       // read by tables:release-idle-seats to free the seats of players who left
       $table->timestamp('last_seen_at')->useCurrent()->index();
+      // when the seat holder pressed Start (POST /tables/{table}/start); a
+      // robot is ready from the moment it sits down. The board is dealt once
+      // the table is full and every seat is ready, which clears the humans'
+      $table->timestamp('ready_at')->nullable();
       $table->timestamps();
 
       // one user per seat at a table

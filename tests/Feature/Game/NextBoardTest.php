@@ -48,6 +48,8 @@ class NextBoardTest extends TestCase
       $this->seats->seat($this->table, $this->players[$seat], $seat);
     }
 
+    $this->startBoard($this->table);
+
     $this->table->refresh();
     $this->playing = BoardTable::where('table_id', $this->table->id)->firstOrFail();
   }
@@ -207,7 +209,7 @@ class NextBoardTest extends TestCase
     $this->actingAs($player)
       ->postJson("/tables/$table->id/playing/next")
       ->assertStatus(409)
-      ->assertJsonPath('message', 'The table has no board yet: the first one is dealt once four players are seated.');
+      ->assertJsonPath('message', 'The table has no board yet: the first one is dealt once four players are seated and have pressed Start.');
   }
 
   public function test_the_finished_state_shows_the_whole_deal_and_an_unfinished_one_never_does(): void
@@ -251,15 +253,53 @@ class NextBoardTest extends TestCase
     $this->assertSame($this->playing->board_id, $this->table->fresh()->board_id);
     $this->state('N')->assertJsonPath('data.phase', 'finished');
 
-    // three players can't move on; a fourth sitting down deals at once
+    // three players can't move on, and a fourth sitting down deals nothing
     $this->next('N')
       ->assertStatus(409)
-      ->assertJsonPath('message', 'The table is short of a player: the next board is dealt as soon as a fourth one sits down.');
+      ->assertJsonPath('message', 'The table is short of a player: the next board is dealt once a fourth one sits down and every player has pressed Start.');
 
-    $this->seats->seat($this->table, User::factory()->create(), 'E');
+    $this->players['E'] = User::factory()->create();
+    $this->seats->seat($this->table, $this->players['E'], 'E');
+
+    $this->assertSame($this->playing->board_id, $this->table->fresh()->board_id);
+    $this->state('N')->assertJsonPath('data.phase', 'finished');
+
+    // the four aren't the board's four any more: Next is over, Start deals
+    $this->next('N')
+      ->assertStatus(409)
+      ->assertJsonPath('message', 'The players have changed since this board: the next one is dealt once every player has pressed Start.');
+
+    foreach (['N', 'E', 'S'] as $seat) {
+      $this->actingAs($this->players[$seat])
+        ->postJson("/tables/{$this->table->id}/start")
+        ->assertOk()
+        ->assertJsonPath('message', 'Ready: waiting for the other players.');
+    }
+
+    $this->assertSame($this->playing->board_id, $this->table->fresh()->board_id);
+
+    $this->actingAs($this->players['W'])
+      ->postJson("/tables/{$this->table->id}/start")
+      ->assertOk()
+      ->assertJsonPath('message', 'Board dealt.')
+      ->assertJsonPath('data.playing.phase', 'auction');
 
     $this->assertNotSame($this->playing->board_id, $this->table->fresh()->board_id);
-    $this->state('N')->assertJsonPath('data.phase', 'auction');
+  }
+
+  public function test_start_is_refused_while_the_same_four_go_on_with_next(): void
+  {
+    $this->actingAs($this->players['N'])
+      ->postJson("/tables/{$this->table->id}/start")
+      ->assertStatus(409)
+      ->assertJsonPath('message', 'A board is already in progress at this table.');
+
+    $this->finish();
+
+    $this->actingAs($this->players['N'])
+      ->postJson("/tables/{$this->table->id}/start")
+      ->assertStatus(409)
+      ->assertJsonPath('message', 'The board is finished: the same four players go on with the next board (POST /tables/{table}/playing/next).');
   }
 
   /**

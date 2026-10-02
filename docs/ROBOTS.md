@@ -26,9 +26,18 @@ version of this page).
 ## At the table
 
 **Getting robots.** `POST /tables` with `{"robots": true}` puts a robot in
-each of the three seats the creator didn't take, which deals the first board
-at once. A table manager can also fill any free seat:
-`POST /tables/{table}/seats/robots {"seat": "E"}`. Robots are `users` rows
+each of the three seats the creator didn't take. A table manager can also
+fill any free seat: `POST /tables/{table}/seats/robots {"seat": "E"}`.
+
+**Ready to start.** A robot is ready from the moment it sits down: its
+seat's `ready_at` is set then (`TableSeatService::seat()`), so it shows as
+`ready` and never has to press Start, and dealing doesn't clear it. A board
+is dealt once the table is full and every **human** there has pressed Start
+(`POST /tables/{table}/start`), so the creator of a robot table deals with
+their one Start, and a robot taking the fourth seat after every human has
+pressed it deals at once. A table only robots are keeping is never dealt to.
+Filling the table deals nothing by itself, so the robots don't call before
+the human has reached the table. Robots are `users` rows
 with `is_robot: true`, named `Robot <n>` / `robot-<n>`, from a pool that
 reuses idle robots and makes a new one when all are busy. They can't log in.
 
@@ -774,7 +783,9 @@ When a board is finished (played out, claimed or passed out), each robot asks
 for the next board — the same as a human's `POST /tables/{table}/playing/next`
 — one per event, straight away. The result stays on screen until the last
 human at the table presses Next too, which deals the next board with the same
-players in the same seats.
+players in the same seats. If a human left and somebody else took the seat,
+Next is refused (the robot's attempt is dropped and logged) and the humans'
+Start deals the next board instead; the robots are ready already.
 
 ## What robots don't do
 

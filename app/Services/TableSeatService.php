@@ -32,9 +32,13 @@ class TableSeatService
    * pulling a player off a table they chose is not theirs to do, so that stays
    * a 409. A manager pointing at themselves counts as asking for themselves.
    *
-   * Filling the last seat deals the table a board and opens its playing, so
-   * this mutates `$table` (`board_id`). A human sitting down at an
-   * unattended table (only robots left there) becomes its moderator.
+   * A human sits down not ready (`ready_at` null): the board waits for their
+   * Start (`BoardSelectionService::start()`). A robot is ready at once, so a
+   * robot taking the last seat after every human has pressed Start deals the
+   * table a board and opens its playing; this mutates `$table` (`board_id`).
+   * Changing seat at the same table clears a human's Start too. A human
+   * sitting down at an unattended table (only robots left there) becomes its
+   * moderator.
    *
    * Broadcasts `TableUpdated` for the table sat at (and, through remove(), for
    * the table a move left), once the transaction commits.
@@ -74,7 +78,13 @@ class TableSeatService
         // they were its only player, and would lose their place in the
         // join order the moderator handover reads
         if ($held !== null && (int) $held->table_id === (int) $table->getKey()) {
-          $held->update(['seat' => $seat, 'last_seen_at' => now()]);
+          // Start belongs to the seat: sitting somewhere else, even at the
+          // same table, means pressing it again
+          $held->update([
+            'seat' => $seat,
+            'last_seen_at' => now(),
+            'ready_at' => $user->is_robot ? $held->ready_at : null,
+          ]);
 
           TableUpdated::dispatch($table);
 
@@ -90,9 +100,11 @@ class TableSeatService
           $this->remove($held->table, $user);
         }
 
+        // a human presses Start; a robot is ready from the start
         $seatRow = $table->seats()->create([
           'user_id' => $user->id,
           'seat' => $seat,
+          'ready_at' => $user->is_robot ? now() : null,
         ]);
 
         // the first human back at a table only robots were keeping runs it
@@ -100,8 +112,9 @@ class TableSeatService
           $table->update(['unattended_since' => null, 'moderated_by' => $user->id]);
         }
 
-        // the fourth player to sit down starts the board
-        $this->boardSelection->startPlayingIfFull($table);
+        // a robot filling the table after every human pressed Start deals;
+        // a human sitting down never does, they have still to press it
+        $this->boardSelection->startIfReady($table);
 
         TableUpdated::dispatch($table);
 
@@ -152,6 +165,8 @@ class TableSeatService
    *
    * A playing that was under way is dropped: the four who started it are no
    * longer the four sitting there. See `BoardSelectionService::abandonPlaying`.
+   * The leaver's Start goes with their seat row; whoever takes the seat next
+   * has to press it.
    *
    * Mutates `$table` (moderator handover, `board_id`) and returns true if the
    * table was deleted. Broadcasts `TableUpdated` unless it was.

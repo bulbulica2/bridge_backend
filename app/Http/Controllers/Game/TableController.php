@@ -27,7 +27,8 @@ class TableController extends BaseController
 
   /**
    * Create a table with the caller in `seat` (N by default). With `robots`,
-   * robots take the other three seats, which deals the first board at once.
+   * robots take the other three seats. Nothing is dealt either way: the
+   * first board waits for the creator's Start (`POST /tables/{table}/start`).
    */
   public function store(
     StoreTableRequest $request,
@@ -74,8 +75,8 @@ class TableController extends BaseController
 
     $table->load('seats.user');
 
-    // with robots the board is already dealt: hand back the caller's state
-    // so they can draw it without a GET /tables/{table}/playing
+    // `playing` is null: a new table has no board until its players press
+    // Start, robots or not. Kept so a client reads one shape
     return $this->sendResponse(
       (new TableResource($table))->withPlaying($state->dealtStateFor($table, $user)),
       'Table created successfully.',

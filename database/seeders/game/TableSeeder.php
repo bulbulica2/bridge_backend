@@ -8,6 +8,7 @@ use App\Events\PlayingUpdated;
 use App\Events\TableUpdated;
 use App\Models\Table;
 use App\Models\User;
+use App\Services\BoardSelectionService;
 use App\Services\CardPlayService;
 use App\Services\ClaimService;
 use App\Services\PlayingStateService;
@@ -22,6 +23,7 @@ class TableSeeder extends Seeder
 {
   public function __construct(
     private TableSeatService $seats,
+    private BoardSelectionService $boards,
     private ClaimService $claims,
     private PlayingStateService $state,
   ) {}
@@ -68,14 +70,15 @@ class TableSeeder extends Seeder
     $table = $this->table('Passed out', User::factory(4)->create());
     $this->callWith(AuctionSeeder::class, ['table' => $table, 'end' => AuctionSeeder::PASSED_OUT]);
 
-    // short of players, so no board yet
+    // short of players, so no board yet, and nobody has pressed Start
     $this->table('Waiting for players', User::factory(2)->create());
   }
 
   /**
    * A table created by its first player, as `POST /tables` does, with the
-   * players seated clockwise from N through `TableSeatService`: a fourth one
-   * deals it a board and opens its playing.
+   * players seated clockwise from N through `TableSeatService`. A full table
+   * then has every player press Start, as `POST /tables/{table}/start` does,
+   * and the last one deals it a board and opens its playing.
    *
    * @param  iterable<User>  $players
    */
@@ -91,6 +94,12 @@ class TableSeeder extends Seeder
 
     foreach ($players as $index => $player) {
       $this->seats->seat($table, $player, Seats::SEATS[$index]);
+    }
+
+    if ($players->count() === count(Seats::SEATS)) {
+      foreach ($players as $player) {
+        $this->boards->start($table, $player);
+      }
     }
 
     return $table;

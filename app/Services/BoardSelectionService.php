@@ -8,10 +8,12 @@ use App\Events\HandDealt;
 use App\Events\PlayingUpdated;
 use App\Events\TableUpdated;
 use App\Exceptions\NextBoardException;
+use App\Exceptions\StartBoardException;
 use App\Models\Board;
 use App\Models\BoardTable;
 use App\Models\Card;
 use App\Models\Table;
+use App\Models\TableSeat;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
@@ -24,32 +26,108 @@ use RuntimeException;
  *
  * A playing can only start once all four seats are taken: the selection rule
  * needs every player's history, and `board_table_seats` snapshots four seats.
- * That is why `POST /tables` still leaves `tables.board_id` null — the board
- * is dealt by whoever fills the last seat. After that, a finished board is
- * followed by the next one once all four players ask for it (`moveOn()`).
+ * Filling the table isn't enough, though: every human seated there has to
+ * press Start too (`start()`, `table_seats.ready_at`), so nobody is thrown
+ * into an auction before they have reached the table. Robots are ready from
+ * the moment they sit down. After that, a finished board is followed by the
+ * next one once the same four players ask for it (`moveOn()`).
  */
 class BoardSelectionService
 {
   public function __construct(private PlayingStateService $state) {}
 
   /**
-   * Deal a board to a table that has just filled up, and open the playing.
+   * `$user` presses Start: they are ready to play. The board is dealt once
+   * the table is full and every seat is ready (`startIfReady()`), so a human
+   * alone with three robots deals it with their one Start, and one pressed
+   * before the table is full is kept until the fourth seat is taken.
    *
-   * Returns null while the table is not yet full, or when a playing is
-   * already open. Mutates `$table` (`board_id`).
+   * Pressing twice changes nothing. Returns the new playing once it is
+   * dealt, or null while the table is short or somebody has still to press.
+   *
+   * Broadcasts `TableUpdated` when the caller is newly ready, along with
+   * `deal()`'s own events when that deals.
+   *
+   * Mutates `$table` (`board_id`).
+   *
+   * @throws StartBoardException
    */
-  public function startPlayingIfFull(Table $table): ?BoardTable
+  public function start(Table $table, User $user): ?BoardTable
+  {
+    return DB::transaction(function () use ($table, $user) {
+      $seat = $this->startableSeat($table, $user);
+
+      if ($seat->ready_at !== null) {
+        return null;
+      }
+
+      $seat->update(['ready_at' => now()]);
+
+      $playing = $this->startIfReady($table);
+
+      TableUpdated::dispatch($table);
+
+      return $playing;
+    });
+  }
+
+  /**
+   * `$user` takes their Start back, while the board isn't dealt yet. Does
+   * nothing if they hadn't pressed it; otherwise broadcasts `TableUpdated`.
+   *
+   * @throws StartBoardException
+   */
+  public function withdrawStart(Table $table, User $user): void
+  {
+    DB::transaction(function () use ($table, $user) {
+      $seat = $this->startableSeat($table, $user);
+
+      if ($seat->ready_at === null) {
+        return;
+      }
+
+      $seat->update(['ready_at' => null]);
+
+      TableUpdated::dispatch($table);
+    });
+  }
+
+  /**
+   * Deal the table a board if it is full and every seat is ready, and open
+   * the playing. Called by `start()` and whenever somebody sits down
+   * (`TableSeatService::seat()`): a robot taking the fourth seat after every
+   * human has pressed Start deals at once. A table only robots are keeping
+   * is never dealt to.
+   *
+   * Returns null when nothing was dealt. Mutates `$table` (`board_id`).
+   */
+  public function startIfReady(Table $table): ?BoardTable
   {
     $seats = $table->seats()->with('user')->get();
 
-    if ($seats->count() < count(Seats::SEATS)) {
+    if ($seats->count() < count(Seats::SEATS)
+      || $seats->every(fn ($seat) => $seat->user->is_robot)
+      || $seats->contains(fn ($seat) => $seat->ready_at === null)) {
       return null;
     }
 
-    $open = $this->openPlaying($table);
+    return $this->deal($table, $seats);
+  }
 
-    if ($open !== null) {
-      return $open;
+  /**
+   * Deal a board to a full table, and open the playing. Clears the humans'
+   * Start: the next time the table needs one (a player left and was
+   * replaced, or a board was abandoned) everyone presses it again.
+   *
+   * Returns null when a playing is already open. Mutates `$table`
+   * (`board_id`).
+   *
+   * @param  Collection<int, TableSeat>  $seats  all four, with their users
+   */
+  private function deal(Table $table, Collection $seats): ?BoardTable
+  {
+    if ($this->openPlaying($table) !== null) {
+      return null;
     }
 
     $board = $this->selectBoard($table, $seats);
@@ -69,6 +147,9 @@ class BoardSelectionService
       ]);
     }
 
+    // a Start deals one board; robots stay ready
+    $table->seats()->whereHas('user', fn ($user) => $user->humans())->update(['ready_at' => null]);
+
     // everyone sees the board; each player alone gets their cards
     PlayingUpdated::dispatch($table);
 
@@ -82,19 +163,71 @@ class BoardSelectionService
   }
 
   /**
+   * The caller's seat, once the table is locked, if Start means anything
+   * now: no board, or a finished one that the four seated now didn't all
+   * play (somebody left and was replaced). With a board in its auction or
+   * play, or finished with the same four still there (who go on with
+   * `moveOn()`), it is refused.
+   *
+   * @throws StartBoardException
+   */
+  private function startableSeat(Table $table, User $user): TableSeat
+  {
+    // the lock seat changes take, so a player leaving and another pressing
+    // Start queue rather than race; then reread the board
+    Table::whereKey($table->getKey())->lockForUpdate()->firstOrFail();
+    $table->refresh();
+
+    $seat = $table->seats()->where('user_id', $user->id)->first();
+
+    if ($seat === null) {
+      throw new StartBoardException('You are not seated at this table.');
+    }
+
+    $playing = $this->state->currentPlaying($table, lock: true);
+
+    $refusal = match ($this->state->phase($playing)) {
+      PlayingStateService::PHASE_WAITING => null,
+      PlayingStateService::PHASE_FINISHED => $this->seatedAsIn($table, $playing)
+        ? 'The board is finished: the same four players go on with the next board (POST /tables/{table}/playing/next).'
+        : null,
+      default => 'A board is already in progress at this table.',
+    };
+
+    if ($refusal !== null) {
+      throw new StartBoardException($refusal);
+    }
+
+    return $seat;
+  }
+
+  /**
+   * Whether the four seated at the table now are the four who played
+   * `$playing`, each in the same seat.
+   */
+  private function seatedAsIn(Table $table, BoardTable $playing): bool
+  {
+    $now = $table->seats()->pluck('user_id', 'seat')->sortKeys()->all();
+    $then = $playing->seats()->pluck('user_id', 'seat')->sortKeys()->all();
+
+    return count($now) === count(Seats::SEATS) && $now == $then;
+  }
+
+  /**
    * `$user` asks for the table's next board once the current one is
    * finished. The result stays up until every player has asked, so nobody
    * has it pulled away before they have read it; the last one to ask deals
-   * the next board, picked by the same rule as the first
-   * (`startPlayingIfFull()`). `$everyone` (a manager's call, checked by the
-   * caller) asks for all four at once.
+   * the next board, picked by the same rule as the first (`deal()`).
+   * `$everyone` (a manager's call, checked by the caller) asks for all four
+   * at once. Only the four who played the board go on this way: once one of
+   * them has been replaced, the table needs every human's Start again.
    *
    * Asking twice changes nothing. Returns the new playing once it is dealt,
    * or null while somebody has still to ask.
    *
    * Broadcasts `PlayingUpdated` when a player is newly ready and, once the
-   * board is dealt, `TableUpdated` along with `startPlayingIfFull()`'s own
-   * events — what the fourth seat being taken sends.
+   * board is dealt, `TableUpdated` along with `deal()`'s own events — what
+   * the last Start sends.
    *
    * Mutates `$table` (`board_id`).
    *
@@ -112,7 +245,7 @@ class BoardSelectionService
       $playing = $this->state->currentPlaying($table, lock: true);
 
       $phaseError = match ($this->state->phase($playing)) {
-        PlayingStateService::PHASE_WAITING => 'The table has no board yet: the first one is dealt once four players are seated.',
+        PlayingStateService::PHASE_WAITING => 'The table has no board yet: the first one is dealt once four players are seated and have pressed Start.',
         PlayingStateService::PHASE_FINISHED => null,
         default => 'The board is not finished yet.',
       };
@@ -122,11 +255,15 @@ class BoardSelectionService
       }
 
       if ($table->seats()->count() < count(Seats::SEATS)) {
-        throw new NextBoardException('The table is short of a player: the next board is dealt as soon as a fourth one sits down.');
+        throw new NextBoardException('The table is short of a player: the next board is dealt once a fourth one sits down and every player has pressed Start.');
       }
 
-      // whoever sits there now played this board: a player leaving and
-      // another filling the seat would already have dealt the next one
+      // a player who left was replaced: the newcomer never saw this board,
+      // so it is everyone's Start that deals the next one
+      if (! $this->seatedAsIn($table, $playing)) {
+        throw new NextBoardException('The players have changed since this board: the next one is dealt once every player has pressed Start.');
+      }
+
       $asking = $playing->seats()->whereNull('ready_at');
 
       if (! $everyone) {
@@ -143,7 +280,7 @@ class BoardSelectionService
         return null;
       }
 
-      $next = $this->startPlayingIfFull($table);
+      $next = $this->deal($table, $table->seats()->with('user')->get());
 
       TableUpdated::dispatch($table);
 

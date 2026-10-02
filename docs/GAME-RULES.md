@@ -377,7 +377,9 @@ and served by `GET /boards/{board}/results` (§8 step 7); IMPs aren't built.
    request — so one table per user holds without the client having to leave
    first. A table is active while somebody sits at it (`Table::active()`
    scope); `DELETE /tables/{table}/seats` frees a seat, and the last player out
-   deletes the table.
+   deletes the table. Once seated, each player says they are ready to play
+   (**Start**); the board of step 1 is dealt when the table is full and every
+   human there has pressed it — robots are always ready.
 3. The auction starts at the dealer and goes clockwise. Validate each call
    and store it in `auctions`. Stop after 3 passes following a bid, or after
    4 initial passes (passed out).
@@ -413,8 +415,10 @@ survives the table being deleted: `board_table.table_id` is nullable and
 `nullOnDelete`, so a player's board history stays queryable after the table
 they played at is gone.
 
-**In code:** `App\Services\BoardSelectionService::startPlayingIfFull()`, called
-from `TableSeatService::seat()` when the fourth seat is taken. It applies rule
+**In code:** `App\Services\BoardSelectionService::startIfReady()`, called by
+`start()` (`POST /tables/{table}/start`) and by `TableSeatService::seat()`,
+which deals once the table is full and every seat's Start is set
+(`table_seats.ready_at`; robots' from the moment they sit down). It applies rule
 1, then rule 2 — both over the human players' history only, robots being
 left out (§9) — and if neither leaves a candidate it **deals a brand-new
 board** rather than repeating one — boards are only shuffled deals, so the app
@@ -431,13 +435,19 @@ Status today: the data layer for steps 1–6 exists (migrations, models,
 seed data played through the game services, the seating unique indexes, board dealer and vulnerability
 helpers, `board_table` history, the saved-contract columns and `won_trick`).
 Over HTTP:
-- **Step 1 is built**, but it happens when the table *fills*, not when it is
-  created — the selection rule needs all four players' history, and
-  `board_table_seats` snapshots four seats, so neither is knowable at
-  `POST /tables`. That call still leaves `board_id` null; the player who takes
-  the fourth seat triggers `BoardSelectionService::startPlayingIfFull()`, which
-  picks or deals a board, sets `tables.board_id`, creates the `board_table` row
-  and copies the four seats into `board_table_seats`.
+- **Step 1 is built**, but it happens once the table is *full and everyone
+  has pressed Start*, not when it is created — the selection rule needs all
+  four players' history, and `board_table_seats` snapshots four seats, so
+  neither is knowable at `POST /tables` — and not the moment the fourth seat
+  is taken either, so nobody is thrown into an auction before reaching the
+  table. `POST /tables` (with robots or not) leaves `board_id` null; each
+  human presses `POST /tables/{table}/start`, and the last Start of a full
+  table (or a robot filling the last seat once every human has pressed it)
+  triggers `BoardSelectionService::startIfReady()`, which picks or deals a
+  board, sets `tables.board_id`, creates the `board_table` row and copies the
+  four seats into `board_table_seats`. Start belongs to the seat: leaving,
+  moving, a kick or an idle release drop it, and dealing clears it. Nobody
+  can press it for anyone else.
 - Step 2 is built as far as seating goes. The creator is seated by
   `POST /tables`, others join with `POST /tables/{table}/seats`, and anyone
   leaves with `DELETE /tables/{table}/seats` — all through `TableSeatService`,
@@ -485,7 +495,8 @@ Over HTTP:
   with `everyone`); the last one deals the next board with the same selection
   rule and the same four players in the same seats
   (`BoardSelectionService::moveOn()`). Leaving between boards detaches
-  nothing; whoever fills the empty seat deals the next board at once, as with
+  nothing; once the empty seat is filled, the four are no longer the board's
+  four, so Next is refused and everyone's Start deals the next board, as with
   the first one.
 - **Step 7 is built for matchpoints**: `GET /boards/{board}/results`
   (`BoardResultsService::results()`) lists every finished playing of a board
@@ -510,7 +521,9 @@ See [`API.md`](API.md).
 Real bridge needs four players. So that one person can play (or test) alone,
 a seat may hold a **robot**: `POST /tables` with `robots: true` fills the
 other three seats at once, or a table manager fills any free seat with
-`POST /tables/{table}/seats/robots`. A robot is a `users` row with
+`POST /tables/{table}/seats/robots`. A robot is ready to start from the
+moment it sits down, so a human with three robots deals with their one
+Start. A robot is a `users` row with
 `is_robot`, from a pool of `robot-<n>` users.
 
 Rules the robots keep, and that keep them honest:

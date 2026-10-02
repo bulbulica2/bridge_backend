@@ -190,7 +190,8 @@ class IdleSeatsTest extends TestCase
   }
 
   /**
-   * A full table, so a board has been dealt and its auction is open.
+   * A full table whose players have all pressed Start, so a board has been
+   * dealt and its auction is open.
    *
    * @return array{Table, array<string, User>}
    */
@@ -199,6 +200,7 @@ class IdleSeatsTest extends TestCase
     $this->seed([CardSeeder::class, BidSeeder::class]);
 
     [$table, $players] = $this->lobbyTable(Seats::SEATS);
+    $this->startBoard($table);
 
     return [$table->refresh(), $players];
   }

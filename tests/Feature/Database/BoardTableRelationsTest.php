@@ -118,6 +118,8 @@ class BoardTableRelationsTest extends TestCase
       $seats->seat($table, $players[$seat], $seat);
     }
 
+    $this->startBoard($table);
+
     $play = BoardTable::where('table_id', $table->id)->firstOrFail();
     Auction::factory(2)->create(['board_table_id' => $play->id]);
     $this->playCards($play, 1);

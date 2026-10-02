@@ -34,7 +34,7 @@ class RobotSeatingTest extends TestCase
     $this->owner = User::factory()->create();
   }
 
-  public function test_a_table_created_with_robots_is_full_and_dealt(): void
+  public function test_a_table_created_with_robots_is_full_but_not_dealt(): void
   {
     $response = $this->actingAs($this->owner)
       ->postJson('/tables', ['seat' => 'S', 'robots' => true])
@@ -54,25 +54,39 @@ class RobotSeatingTest extends TestCase
       $this->assertArrayNotHasKey('email', $seats[$seat]['user']);
     }
 
-    $this->assertNotNull($response->json('data.board_id'));
+    // robots are ready at once; the creator has still to press Start
+    foreach (['N', 'E', 'W'] as $seat) {
+      $this->assertTrue($seats[$seat]['ready']);
+    }
+
+    $this->assertFalse($seats['S']['ready']);
+    $this->assertNull($response->json('data.board_id'));
+    $this->assertNull($response->json('data.playing'));
 
     $this->actingAs($this->owner)->getJson('/tables/'.$response->json('data.id').'/playing')
       ->assertOk()
-      ->assertJsonPath('data.phase', 'auction');
+      ->assertJsonPath('data.phase', 'waiting');
   }
 
-  public function test_a_table_created_with_robots_carries_the_creators_game_state(): void
+  public function test_the_creators_one_start_deals_at_a_robot_table_and_carries_their_game_state(): void
   {
-    $response = $this->actingAs($this->owner)
+    $id = $this->actingAs($this->owner)
       ->postJson('/tables', ['seat' => 'S', 'robots' => true])
       ->assertCreated()
+      ->json('data.id');
+
+    $response = $this->actingAs($this->owner)
+      ->postJson("/tables/$id/start")
+      ->assertOk()
+      ->assertJsonPath('message', 'Board dealt.')
+      ->assertJsonPath('data.board_id', Table::findOrFail($id)->board_id)
       ->assertJsonPath('data.playing.my_seat', 'S')
       ->assertJsonCount(13, 'data.playing.hand');
 
     // exactly what the client would otherwise fetch next, robots' calls
     // included (the queue runs on sync here)
     $this->assertSame(
-      $this->actingAs($this->owner)->getJson('/tables/'.$response->json('data.id').'/playing')->json('data'),
+      $this->actingAs($this->owner)->getJson('/tables/'.$id.'/playing')->json('data'),
       $response->json('data.playing')
     );
   }
@@ -105,9 +119,10 @@ class RobotSeatingTest extends TestCase
       ->assertCreated();
   }
 
-  public function test_the_fourth_seat_taken_by_a_robot_deals_the_board(): void
+  public function test_the_fourth_seat_taken_by_a_robot_deals_once_every_human_pressed_start(): void
   {
     $table = $this->tableOf($this->owner);
+    $this->startBoard($table);
 
     foreach (['E', 'S'] as $seat) {
       $this->actingAs($this->owner)->postJson("/tables/$table->id/seats/robots", ['seat' => $seat])->assertCreated();
@@ -115,7 +130,10 @@ class RobotSeatingTest extends TestCase
 
     $this->assertNull($table->fresh()->board_id);
 
-    $this->actingAs($this->owner)->postJson("/tables/$table->id/seats/robots", ['seat' => 'W'])->assertCreated();
+    $this->actingAs($this->owner)->postJson("/tables/$table->id/seats/robots", ['seat' => 'W'])
+      ->assertCreated()
+      ->assertJsonPath('data.playing.phase', 'auction')
+      ->assertJsonPath('data.playing.my_seat', 'N');
 
     $this->assertNotNull($table->fresh()->board_id);
   }
@@ -401,11 +419,13 @@ class RobotSeatingTest extends TestCase
   }
 
   /**
-   * The owner at N and robots in the other three seats, board dealt.
+   * The owner at N and robots in the other three seats, board dealt by the
+   * owner's Start.
    */
   private function robotTable(): Table
   {
     $id = $this->actingAs($this->owner)->postJson('/tables', ['robots' => true])->assertCreated()->json('data.id');
+    $this->actingAs($this->owner)->postJson("/tables/$id/start")->assertOk();
 
     return Table::findOrFail($id);
   }

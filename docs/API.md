@@ -41,6 +41,8 @@ and policy failures get Laravel's default `403 {"message": "..."}`.
 | POST | `/tables/{table}/seats/users` | `Game\TableSeatController@storeUser` | `auth` + `TablePolicy::manage` | a table manager seats another user (201) |
 | POST | `/tables/{table}/seats/robots` | `Game\TableSeatController@storeRobot` | `auth` + `TablePolicy::manage` | a table manager puts a robot in a free seat (201) |
 | DELETE | `/tables/{table}/seats/{user}` | `Game\TableSeatController@destroyUser` | `auth` (+ `TablePolicy::kick`: a manager, to remove anyone but yourself; anyone, to remove a robot from an unattended table) | quit your seat, or kick that player out |
+| POST | `/tables/{table}/start` | `Game\TableStartController@store` | `auth` + seated at the table (`TablePolicy::play`) | press Start; the board is dealt once the table is full and every human there has pressed it (200, the table plus `playing`) |
+| DELETE | `/tables/{table}/start` | `Game\TableStartController@destroy` | `auth` + seated at the table (`TablePolicy::play`) | take your Start back while no board is dealt (200, the table) |
 | POST | `/tables/{table}/heartbeat` | `Game\TableSeatController@heartbeat` | `auth` + seated at the table (`TablePolicy::play`) | "still here": keeps the caller's seat from being freed as idle (200, `{last_seen_at}`) |
 | GET | `/tables/{table}/playing` | `Game\PlayingController@show` | `auth` + seated at the table (`TablePolicy::play`) | the game state of the table's current board, with the caller's own hand |
 | POST | `/tables/{table}/calls` | `Game\CallController@store` | `auth` + seated at the table (`TablePolicy::play`) | make your call in the auction (201, the updated game state) |
@@ -109,9 +111,13 @@ Every table payload — from index, store, show or leave — is built by
 `App\Http\Resources\TableResource` and has the same shape: the `Table` fields
 (`id`, `name`, `created_by`, `moderated_by`, `board_id`, `unattended_since`,
 timestamps), plus
-`seats` (`TableSeat` rows — `id`, `table_id`, `user_id`, `seat`, timestamps —
-each with its `user`), `free_seats` (the unoccupied seats in `N, E, S, W`
-order) and `can_manage`. The `TableUpdated` websocket event carries this same
+`seats` (`TableSeat` rows — `id`, `table_id`, `user_id`, `seat`,
+`last_seen_at`, `ready_at`, timestamps — each with its `user` and `ready`),
+`free_seats` (the unoccupied seats in `N, E, S, W` order) and `can_manage`.
+A seat's `ready` (boolean, from `ready_at`) is whether its player has pressed
+**Start** (see [`POST /tables/{table}/start`](#post-tablestablestart)); a
+robot's is always true. It is public: everyone at the table sees who is
+waiting for whom. The `TableUpdated` websocket event carries this same
 shape less `can_manage` (see [Realtime](#realtime-websocket)).
 
 `can_manage` (boolean) is whether **the caller** may manage the table —
@@ -149,10 +155,26 @@ clears `unattended_since` and becomes `moderated_by`. Otherwise the scheduled
 (default 10) after its last human left (no event is sent: no human is
 there). `unattended_since` is null at every other table.
 
-`board_id` is null until the table has all four players. Taking the **fourth**
-seat deals the table a board and opens its playing, so the response to that
-request is the first one to carry a non-null `board_id`. It goes back to null
-if a player leaves before the board is finished.
+**Dealing.** `board_id` is null until the table has a board. Filling the
+table does **not** deal one: a board is dealt once the table is **full** and
+**every human** seated there has pressed Start
+([`POST /tables/{table}/start`](#post-tablestablestart)). Robots are ready
+from the moment they sit down, so a human alone with three robots deals with
+their one Start. A Start pressed before the table is full is kept, and the
+board is dealt as soon as the fourth seat is taken if every human there has
+pressed it by then (only possible when a robot takes it: a human sitting down
+is never ready). The request that deals is the first to carry a non-null
+`board_id`. Dealing clears every human's Start. `board_id` goes back to null
+if a player leaves before the board is finished, and the refilled table needs
+everyone's Start again. Once a board is finished, the **same four** go on with
+[`POST /tables/{table}/playing/next`](#post-tablestableplayingnext); if one of
+them was replaced meanwhile, it is Start again.
+
+Start belongs to the seat: leaving, moving (to another table or another seat
+at this one), being kicked or being released as idle all drop it, and
+whoever sits down starts not ready. Nobody presses Start for anyone else, not
+a manager or an admin either: a player who never presses is handled like any
+idle player, or removed by a manager.
 
 ### `GET /tables`
 Every table. Ordered by `created_at` then `id`, newest first.
@@ -186,22 +208,22 @@ Rules:
   through `App\Services\TableSeatService::seat()`. If the seat fails, including
   a concurrent request hitting a unique index, nothing is created and the
   response is 409.
-- `board_id` stays null: a board is only dealt once all four seats are taken
-  (see `POST /tables/{table}/seats`) — unless `robots` is true: then, in the
-  same transaction, a robot takes each of the other three seats and the
-  fourth one deals the first board, so the response already has a
-  `board_id`, empty `free_seats` and the caller's game state as `playing`
-  (below). The robots start calling at once if one of them deals; the
-  human sees the auction reach their turn through
-  `PlayingUpdated` (or `GET /tables/{table}/playing`).
-- `playing` is the caller's game state, exactly what
-  [`GET /tables/{table}/playing`](#get-tablestableplaying) would answer
-  next (phase, auction, `my_seat`, their 13-card `hand`...), when the table
-  has a playing after the request, so a client can draw the table without
-  that extra request. Without robots it is `null`. Only this response and
-  `POST /tables/{table}/seats` carry it: `GET /tables`, `GET /tables/{table}`,
-  the other seat endpoints and `TableUpdated` don't have the key at all,
-  since it holds a hand.
+- With `robots` true, in the same transaction a robot takes each of the
+  other three seats, so the table is full (`free_seats` empty) and the robots
+  are `ready`. Either way `board_id` stays null: nothing is dealt until the
+  creator presses Start ([`POST /tables/{table}/start`](#post-tablestablestart)),
+  which then deals at once. The robots start calling as soon as it does; the
+  human sees the auction reach their turn through `PlayingUpdated` (or
+  `GET /tables/{table}/playing`).
+- `playing` is always `null` here, since a new table has no board. The key
+  is kept so this response has the shape of the others that carry it:
+  `POST /tables/{table}/start`, `POST /tables/{table}/seats` and
+  `POST /tables/{table}/seats/robots`, where it is the caller's game state,
+  exactly what [`GET /tables/{table}/playing`](#get-tablestableplaying)
+  would answer next (phase, auction, `my_seat`, their 13-card `hand`...),
+  when the table has a playing after the request. `GET /tables`,
+  `GET /tables/{table}`, the other seat endpoints and `TableUpdated` don't
+  have the key at all, since it holds a hand.
 - **422** (default Laravel shape) for an invalid `name`/`seat`/`robots`.
 
 201 response (`data` has the same shape as `GET /tables/{table}`):
@@ -213,7 +235,8 @@ Rules:
     "id": 7, "name": "Friday club", "created_by": 3, "moderated_by": 3,
     "board_id": null, "created_at": "...", "updated_at": "...",
     "unattended_since": null,
-    "seats": [{"id": 12, "table_id": 7, "user_id": 3, "seat": "E", "created_at": "...", "updated_at": "...",
+    "seats": [{"id": 12, "table_id": 7, "user_id": 3, "seat": "E", "last_seen_at": "...", "ready_at": null,
+               "created_at": "...", "updated_at": "...", "ready": false,
                "user": {"id": 3, "name": "Ann", "username": "ann", "description": "Plays a strong club.", "is_robot": false}}],
     "free_seats": ["N", "S", "W"],
     "can_manage": true,
@@ -230,8 +253,9 @@ Rules:
 
 ### `GET /tables/{table}`
 One table (404 if the id doesn't exist), with `seats.user`, `free_seats` and
-`can_manage` (no `playing`: that is only on `POST /tables` and
-`POST /tables/{table}/seats`).
+`can_manage` (no `playing`: that is only on `POST /tables`,
+`POST /tables/{table}/start`, `POST /tables/{table}/seats` and
+`POST /tables/{table}/seats/robots`).
 
 ### `POST /tables/{table}/seats`
 Take a free seat at an existing table.
@@ -243,10 +267,10 @@ Take a free seat at an existing table.
 - **201** with the updated table (same shape as `GET /tables/{table}`), plus
   `playing`: the caller's game state, exactly what
   [`GET /tables/{table}/playing`](#get-tablestableplaying) would answer, when
-  the table has a playing after the request (you took the fourth seat and
-  dealt the board, or sat down at a table whose finished board is still on
-  it, waiting for its seats to be refilled); otherwise `null`. It is how a client draws the table without that
-  extra request.
+  the table has a playing after the request (you sat down at a table whose
+  finished board is still on it, waiting for its seats to be refilled);
+  otherwise `null`. Sitting down never deals: you start not ready, and the
+  board waits for your Start.
 - **Moving is allowed.** If you already hold a seat — at this table or another
   one — this request moves you rather than refusing. It is one transaction, so
   you never end up seated nowhere, and if the target seat turns out to be taken
@@ -260,14 +284,9 @@ Take a free seat at an existing table.
   - Moving **within** the same table is a plain seat change (e.g. `N` -> `E`).
     The table is not deleted on the way out even if you are its only player.
     Note a full table can never allow this, since every target seat is taken.
-- If this was the **fourth** seat, the same transaction deals the table a board
-  and opens its playing (`board_table` + four `board_table_seats` rows), so the
-  returned table has a non-null `board_id` and an empty `free_seats`. The board
-  is chosen by the rule in
-  [`GAME-RULES.md` §8](GAME-RULES.md#board-selection-rule): one none of the
-  four has played, else one where nobody holds a seat they have held on it
-  before, else a freshly shuffled board. No request ever fails for want of a
-  board.
+- Taking the **fourth** seat deals nothing: `board_id` stays null until
+  every human at the table, you included, has pressed Start (see
+  [Dealing](#tables)). Moving drops a Start you had pressed in your old seat.
 - **409** if the seat is taken (`"Seat E is already taken."`) or the seat name
   is unknown. Already sitting somewhere is **no longer** a 409 — that is a
   move.
@@ -297,8 +316,7 @@ If the table had a board under way that nobody had finished, leaving
 is detached (`table_id` set to null) rather than deleted, keeping its
 `board_table_seats` snapshot so those four players are never dealt that deal
 again; the calls and cards made so far are deleted. A finished playing is
-untouched. Refilling the table deals a new
-board.
+untouched. Once the table is refilled, everyone's Start deals a new board.
 
 Leaving is what frees a user to create another table, since
 `table_seats.user_id` is unique (`POST /tables` still 409s a seated user).
@@ -328,8 +346,7 @@ flags users who are already `seated` somewhere (they would 409 here).
   checked before the body is validated.
 - **201** with the updated table (same shape as `GET /tables/{table}`,
   message `"User seated successfully."`). Seating the **fourth** player deals
-  the board and opens the playing, exactly as in
-  `POST /tables/{table}/seats`.
+  nothing: the newcomer has to press Start themselves.
 - **409** if the seat is taken (`"Seat E is already taken."`) or the user
   already sits at any table (`"That user is already seated at a table."`).
   A full table always hits the taken-seat case.
@@ -357,8 +374,11 @@ in a free seat. The robot is the pool's first one that sits nowhere; a new
   robot."` (Laravel's default `{message}` shape) for anyone else, checked
   before the body is validated.
 - **201** with the updated table (same shape as `GET /tables/{table}`,
-  message `"Robot seated successfully."`). Taking the **fourth** seat deals
-  the board and opens the playing, exactly as for a human.
+  message `"Robot seated successfully."`), plus `playing` as in
+  `POST /tables/{table}/seats`. A robot is `ready` at once, so a robot taking
+  the **fourth** seat deals the board if every human there has already
+  pressed Start; `playing` is then the caller's game state, the new board's.
+  Otherwise nothing is dealt.
 - **409** if the seat is taken (`"Seat E is already taken."`).
 - **422** if `seat` is missing or not one of the four.
 - **404** if the table id doesn't exist.
@@ -408,7 +428,8 @@ player who is still there from one who closed the tab.
   Laravel's default `{message}` shape); nothing is recorded.
 - **404** if the table doesn't exist.
 
-The playing endpoints — `GET /tables/{table}/playing`,
+The playing endpoints — `POST`/`DELETE /tables/{table}/start`,
+`GET /tables/{table}/playing`,
 `POST /tables/{table}/playing/next`, `POST /tables/{table}/calls`,
 `POST /tables/{table}/cards` and the three claim endpoints — count as a heartbeat too (the `seen` route
 middleware, `App\Http\Middleware\TouchTableSeat`), even when the call or
@@ -422,7 +443,8 @@ idle) whose `last_seen_at` is older than
 (default 15) while their table has a board in its auction or play. It goes
 through `TableSeatService::remove()`, so it is exactly a leave: `moderated_by`
 is handed on, an unfinished playing is abandoned (the other three get
-`board_id: null` and must refill the seat to get a new board), an emptied
+`board_id: null` and must refill the seat and press Start to get a new
+board), the player's Start goes with their seat, an emptied
 table is deleted, and `TableUpdated` is broadcast. A finished board waiting
 for `playing/next` uses the shorter timeout, since leaving then abandons
 nothing. A client whose own seat vanished this way sees it in the next
@@ -432,9 +454,59 @@ The server can't learn about a disconnect from the websocket: Reverb doesn't
 call back into Laravel when a connection drops, so the heartbeat — not a
 presence channel — is what decides.
 
+### `POST /tables/{table}/start`
+The caller is ready to play. No body. The board is dealt once the table is
+**full** and **every human** seated there has pressed Start; robots are
+ready from the moment they sit down (see [Dealing](#tables)). Built by
+`Game\TableStartController@store` over `BoardSelectionService::start()`,
+which takes the table row lock like seat changes do.
+
+- **200**, the table (same shape as `GET /tables/{table}`) plus `playing`:
+  - message `"Ready: waiting for the other players."` while the table is
+    short or somebody has still to press — the caller's seat now `ready`,
+    `board_id` unchanged, `playing` `null` (or the finished board still on
+    the table, as in `POST /tables/{table}/seats`);
+  - message `"Board dealt."` when this Start deals — `board_id` set and
+    `playing` the caller's game state of the new board, exactly what
+    [`GET /tables/{table}/playing`](#get-tablestableplaying) would answer,
+    so no request is needed after it.
+- Pressing again changes nothing (same 200, no event).
+- The board is chosen by the rule in
+  [`GAME-RULES.md` §8](GAME-RULES.md#board-selection-rule): one none of the
+  four has played, else one where nobody holds a seat they have held on it
+  before, else a freshly shuffled board. No request ever fails for want of a
+  board. Dealing opens the playing (`board_table` + four `board_table_seats`
+  rows) and clears every human's Start.
+- Broadcasts `TableUpdated` when the caller is newly ready (so everyone sees
+  who has pressed), and with it, when it deals, `PlayingUpdated` and one
+  `HandDealt` per human — what a dealt board always sends.
+- **409** with the reason in `message`:
+  - `"A board is already in progress at this table."` — in its auction or
+    play;
+  - `"The board is finished: the same four players go on with the next board
+    (POST /tables/{table}/playing/next)."` — a finished board is on the table
+    and the four who played it are all still in their seats. If one of them
+    has been replaced, Start is what deals the next board, and this 409 goes
+    away;
+  - `"You are not seated at this table."` — you left between the policy
+    check and the lock.
+- **403** for a caller who doesn't sit at this table (`TablePolicy::play`,
+  Laravel's default `{message}` shape) — an admin or a manager included:
+  nobody presses Start for somebody else.
+- **401** for a guest, **404** if the table doesn't exist.
+
+### `DELETE /tables/{table}/start`
+Take your Start back while no board is dealt. No body.
+
+- **200**, message `"Start withdrawn."`, the table (no `playing`). Taking
+  back a Start you hadn't pressed is a 200 too, with no event; otherwise
+  `TableUpdated` is broadcast.
+- **409**, **403**, **401** and **404** as for `POST`.
+
 ## Playing (game state)
 
-Once the fourth seat is taken and a board is dealt, the table has a
+Once the table is full and everyone has pressed Start, a board is dealt and
+the table has a
 **playing** (a `board_table` row). `GET /tables/{table}/playing` is its read
 side; `POST /tables/{table}/calls` runs the auction,
 `POST /tables/{table}/cards` the play and `/tables/{table}/claim` ends the
@@ -540,8 +612,11 @@ the next board. Built by `App\Services\BoardSelectionService::moveOn()`.
   - `"The board is not finished yet."` — the phase is `auction` or `play`;
   - `"The table has no board yet: ..."` — the phase is `waiting`;
   - `"The table is short of a player: ..."` — somebody left after the board
-    ended; there's nothing to confirm, the next board is dealt as soon as a
-    fourth player sits down (as for the first board).
+    ended; there's nothing to confirm: once a fourth player sits down, the
+    next board is dealt by everyone's Start (as for the first board);
+  - `"The players have changed since this board: ..."` — the table is full
+    again, but not with the four who played the board: everyone presses
+    Start ([`POST /tables/{table}/start`](#post-tablestablestart)) instead.
 - **403** for anyone not seated at this table, and for `everyone` from
   anyone but a manager; **401** for guests, **404** for an unknown table id.
 
@@ -550,13 +625,15 @@ none of the four has played it, else nobody has played it from the seat they
 hold, else a freshly shuffled one; never a board this table has played),
 for the same four players in the same seats. `tables.board_id` moves to it
 and a new `board_table` row and seat snapshot are opened; the finished one
-stays as it is. It sends what the fourth seat being taken sends:
+stays as it is. It sends what the last Start sends:
 `TableUpdated`, `PlayingUpdated` and one `HandDealt` per player. A player
 newly asking sends `PlayingUpdated` (for `ready`).
 
-Who has asked is `board_table_seats.ready_at` on the finished playing.
-Leaving between boards detaches nothing (the playing is finished): the table
-keeps showing the finished board until a fourth player sits down.
+Who has asked is `board_table_seats.ready_at` on the finished playing (not
+to be confused with `table_seats.ready_at`, Start). Leaving between boards
+detaches nothing (the playing is finished): the table keeps showing the
+finished board until a fourth player sits down and everyone has pressed
+Start.
 
 ### `POST /tables/{table}/calls`
 Make the caller's next call in the auction. Built by
@@ -992,7 +1069,7 @@ Event name on the wire: `App\Events\TableUpdated` (Echo:
 `private-table.{id}`.
 
 **Sent when** a seat at that table changes — every path goes through
-`TableSeatService`:
+`TableSeatService` or `BoardSelectionService`:
 - a player takes a seat (`POST /tables`, `POST /tables/{table}/seats`), or a
   manager seats someone (`POST /tables/{table}/seats/users`) or a robot
   (`POST /tables/{table}/seats/robots`, and each robot `POST /tables` seats
@@ -1003,8 +1080,12 @@ Event name on the wire: `App\Events\TableUpdated` (Echo:
   role on, or leave the table unattended (`unattended_since` set);
 - a player **moves** to another table: one event for the table they left and
   one for the table they joined;
-- the fourth seat is taken, dealing a board: that event is the first with a
-  non-null `board_id`; a player leaving mid-board sends it back to null.
+- a player presses Start or takes it back (`POST`/`DELETE
+  /tables/{table}/start`), changing their seat's `ready`;
+- a board is dealt — by the last Start, by a robot taking the fourth seat
+  after every human has pressed it, or by the last `playing/next`: that
+  event is the first with a non-null `board_id` (and the humans' `ready`
+  cleared); a player leaving mid-board sends it back to null.
 
 **Not sent** when the change deleted the table (the last player left, or
 `tables:delete-unattended` removed an unattended one) — nobody is left to
@@ -1035,12 +1116,14 @@ the request (the one who did gets it in their HTTP response).
     "seats": [
       {
         "id": 21, "table_id": 7, "user_id": 12, "seat": "N",
-        "created_at": "...", "updated_at": "...",
+        "last_seen_at": "...", "ready_at": "2026-09-22T10:16:40.000000Z",
+        "created_at": "...", "updated_at": "...", "ready": true,
         "user": {"id": 12, "name": "Alice", "username": "alice", "description": null, "is_robot": false}
       },
       {
         "id": 22, "table_id": 7, "user_id": 13, "seat": "E",
-        "created_at": "...", "updated_at": "...",
+        "last_seen_at": "...", "ready_at": null,
+        "created_at": "...", "updated_at": "...", "ready": false,
         "user": {"id": 13, "name": "Bob", "username": "bob", "description": null, "is_robot": false}
       }
     ],
@@ -1062,8 +1145,9 @@ Class `App\Events\PlayingUpdated`, on `private-table.{id}` (Echo:
 sent only once the transaction commits, payload snapshotted at dispatch.
 
 **Sent when**
-- the fourth seat is taken and a board is dealt — in the same request as the
-  `TableUpdated` that first carries a non-null `board_id`;
+- a board is dealt (the last Start, or a robot taking the fourth seat once
+  every human has pressed it) — in the same request as the `TableUpdated`
+  that first carries a non-null `board_id`;
 - a call is accepted (`POST /tables/{table}/calls`), including the one that
   ends the auction;
 - a card is played (`POST /tables/{table}/cards`), including the last one;
@@ -1117,7 +1201,7 @@ Class `App\Events\HandDealt`, on `private-App.Models.User.{id}` (Echo:
 `echo.private('App.Models.User.' + myId).listen('HandDealt', ...)`). Same
 delivery as `TableUpdated`.
 
-**Sent when** a board is dealt (the first, or the next one after
+**Sent when** a board is dealt (by the last Start, or the next one after
 `POST /tables/{table}/playing/next`): one event to **each** human of the four
 players, on their own channel, carrying only their own cards. Robots get none:
 nobody listens on their channel, and a robot reads its hand from the state
@@ -1143,8 +1227,9 @@ hand, which that player's client can drop itself (or re-read from
 ## Stubs and not built
 
 - No endpoint yet for: renaming or transferring a table by hand, or
-  assigning a board to a table by hand (one is dealt automatically when the
-  table fills, and after each finished board once the players move on).
+  assigning a board to a table by hand (one is dealt automatically once the
+  table is full and everyone has pressed Start, and after each finished
+  board once the players move on).
 - No ban list: kicking a player doesn't stop them rejoining.
 - Robots bid a SAYC-style system and play by rules of thumb
   ([`ROBOTS.md`](ROBOTS.md)); better card play is planned as a separate
@@ -1170,7 +1255,9 @@ You can currently only:
 6. Read any player's public profile, and edit your own name and description
 7. Subscribe to your table's websocket channel and get every seat change
    (and the board being dealt) pushed as `TableUpdated`, instead of polling
-8. Once four players sit down, read the dealt board with
+8. Press Start (`POST /tables/{table}/start`) and see who else has (each
+   seat's `ready`); once four players sit there and every human has
+   pressed it, read the dealt board with
    `GET /tables/{table}/playing` — board number, dealer, vulnerability, the
    four players, whose turn it is and your own 13 cards — and get the same
    pushed as `PlayingUpdated` (table channel) and `HandDealt` (your own
@@ -1191,8 +1278,9 @@ You can currently only:
 12. Keep your seat with `POST /tables/{table}/heartbeat` every ~30 s: a
     player who goes quiet (closed tab, lost connection) has their seat freed
     after 5 minutes, or 15 during a board.
-13. Play alone against robots: `POST /tables` with `robots: true` deals a
-    board at once, or a manager fills any free seat with
+13. Play alone against robots: `POST /tables` with `robots: true` fills the
+    table with robots, and your one Start deals a board (robots are always
+    ready), or a manager fills any free seat with
     `POST /tables/{table}/seats/robots`. The robots bid, play, answer claims
     and move on to the next board by themselves while a human is seated.
 14. Once you have finished a board, compare its results at every table

@@ -209,7 +209,7 @@ class PlayingStateTest extends TestCase
     $this->actingAs(User::factory()->create())->getJson('/tables/999999/playing')->assertNotFound();
   }
 
-  public function test_the_fourth_seat_broadcasts_the_public_state_without_cards(): void
+  public function test_the_last_start_broadcasts_the_public_state_without_cards(): void
   {
     Event::fake([PlayingUpdated::class, HandDealt::class]);
 
@@ -241,6 +241,8 @@ class PlayingStateTest extends TestCase
       $this->seats->seat($table, User::factory()->create(), $seat);
     }
 
+    $this->startBoard($table);
+
     Event::assertNotDispatched(PlayingUpdated::class);
     Event::assertNotDispatched(HandDealt::class);
   }
@@ -270,7 +272,7 @@ class PlayingStateTest extends TestCase
   }
 
   /**
-   * Seat four fresh players, N/E/S/W.
+   * Seat four fresh players, N/E/S/W, who all press Start, which deals.
    *
    * @return array<string, User>
    */
@@ -282,6 +284,8 @@ class PlayingStateTest extends TestCase
       $players[$seat] = User::factory()->create();
       $this->seats->seat($table, $players[$seat], $seat);
     }
+
+    $this->startBoard($table);
 
     return $players;
   }

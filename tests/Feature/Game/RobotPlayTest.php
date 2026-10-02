@@ -201,28 +201,36 @@ class RobotPlayTest extends TestCase
     $playing = BoardTable::where('table_id', $table->id)->sole();
     $this->assertSame(0, $playing->seats()->whereNotNull('ready_at')->count());
 
-    // a human sitting down runs the table, and the robots start at once
+    // a human sitting down runs the table; their Start deals, and the
+    // robots start at once
     $newcomer = User::factory()->create();
     $this->actingAs($newcomer)->postJson("/tables/$table->id/seats", ['seat' => 'N'])->assertCreated();
 
     $table->refresh();
     $this->assertNull($table->unattended_since);
     $this->assertSame($newcomer->id, $table->moderated_by);
+    $this->assertSame($playing->id, $this->state->currentPlaying($table)->id);
 
-    $next = $this->state->currentPlaying($table);
+    $this->actingAs($newcomer)->postJson("/tables/$table->id/start")
+      ->assertOk()
+      ->assertJsonPath('message', 'Board dealt.');
+
+    $next = $this->state->currentPlaying($table->refresh());
     $this->assertNotSame($playing->id, $next->id);
     $this->assertSame($newcomer->id, $this->state->actingUserId($next), 'the robots should have called up to the human');
   }
 
   /**
-   * The human creates a table with robots, which deals the first board;
-   * the robots then call until it is the human's turn.
+   * The human creates a table with robots and presses Start, which deals the
+   * first board; the robots then call until it is the human's turn.
    */
   private function robotTable(): Table
   {
     $response = $this->actingAs($this->human)
       ->postJson('/tables', ['name' => 'Practice', 'robots' => true])
       ->assertCreated();
+
+    $this->actingAs($this->human)->postJson('/tables/'.$response->json('data.id').'/start')->assertOk();
 
     return Table::findOrFail($response->json('data.id'));
   }
@@ -312,6 +320,8 @@ class RobotPlayTest extends TestCase
       foreach (array_diff(Seats::SEATS, [$human]) as $seat) {
         app(RobotService::class)->seatRobot($table, $seat, $this->human);
       }
+
+      $this->startBoard($table);
 
       $playing = $this->state->currentPlaying($table->refresh());
 

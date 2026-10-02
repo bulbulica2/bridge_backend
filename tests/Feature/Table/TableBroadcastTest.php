@@ -54,7 +54,7 @@ class TableBroadcastTest extends TestCase
     });
   }
 
-  public function test_the_fourth_seat_broadcasts_the_dealt_board(): void
+  public function test_the_last_start_broadcasts_the_dealt_board(): void
   {
     $this->seed(CardSeeder::class);
     Event::fake([TableUpdated::class]);
@@ -62,21 +62,51 @@ class TableBroadcastTest extends TestCase
     $table = Table::factory()->create(['board_id' => null]);
 
     foreach (['N', 'E', 'S'] as $seat) {
-      TableSeat::factory()->create(['table_id' => $table->id, 'seat' => $seat]);
+      TableSeat::factory()->create(['table_id' => $table->id, 'seat' => $seat, 'ready_at' => now()]);
     }
 
-    $this->actingAs(User::factory()->create())
+    $fourth = User::factory()->create();
+
+    $this->actingAs($fourth)
       ->postJson("/tables/$table->id/seats", ['seat' => 'W'])
       ->assertCreated();
 
+    // sitting down deals nothing: the newcomer is not ready
+    Event::assertDispatched(TableUpdated::class, fn (TableUpdated $event) => $event->table['board_id'] === null
+      && collect($event->table['seats'])->firstWhere('seat', 'W')['ready'] === false);
+
+    $this->actingAs($fourth)
+      ->postJson("/tables/$table->id/start")
+      ->assertOk();
+
     Event::assertDispatched(TableUpdated::class, function (TableUpdated $event) use ($table) {
-      // the joiner's response carries their hand as `playing`; the channel
+      // the starter's response carries their hand as `playing`; the channel
       // must never see it
       return $event->table['board_id'] !== null
         && $event->table['board_id'] === $table->fresh()->board_id
         && $event->table['free_seats'] === []
         && ! array_key_exists('playing', $event->table);
     });
+  }
+
+  public function test_pressing_start_broadcasts_who_is_ready(): void
+  {
+    Event::fake([TableUpdated::class]);
+
+    $table = Table::factory()->create(['board_id' => null]);
+    $player = User::factory()->create();
+    TableSeat::factory()->create(['table_id' => $table->id, 'user_id' => $player->id, 'seat' => 'N']);
+
+    $this->actingAs($player)->postJson("/tables/$table->id/start")->assertOk();
+
+    Event::assertDispatched(TableUpdated::class, fn (TableUpdated $event) => $event->table['board_id'] === null
+      && $event->table['seats'][0]['ready'] === true
+      && $event->table['seats'][0]['ready_at'] !== null);
+
+    $this->actingAs($player)->deleteJson("/tables/$table->id/start")->assertOk();
+
+    Event::assertDispatchedTimes(TableUpdated::class, 2);
+    Event::assertDispatched(TableUpdated::class, fn (TableUpdated $event) => $event->table['seats'][0]['ready'] === false);
   }
 
   public function test_a_manager_seating_someone_broadcasts_the_table(): void

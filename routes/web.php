@@ -9,6 +9,7 @@ use App\Http\Controllers\Game\ClaimController;
 use App\Http\Controllers\Game\PlayingController;
 use App\Http\Controllers\Game\TableController;
 use App\Http\Controllers\Game\TableSeatController;
+use App\Http\Controllers\Game\TableStartController;
 use App\Http\Controllers\UserController;
 use Illuminate\Support\Facades\Route;
 
@@ -50,6 +51,11 @@ Route::middleware('auth')->group(function () {
   // playing requests count as a heartbeat too (last_seen_at), so an active
   // player is never released as idle
   Route::middleware('seen')->group(function () {
+    // ready to play, or not after all: the board is dealt once the table is
+    // full and every human there has pressed Start (robots always have)
+    Route::post('tables/{table}/start', [TableStartController::class, 'store'])->name('tables.start.store');
+    Route::delete('tables/{table}/start', [TableStartController::class, 'destroy'])->name('tables.start.destroy');
+
     // the game state of the board the table is on, for its seated players
     Route::get('tables/{table}/playing', [PlayingController::class, 'show'])->name('tables.playing.show');
 

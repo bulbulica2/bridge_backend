@@ -139,6 +139,8 @@ class BoardResultsTest extends TestCase
       app(TableSeatService::class)->seat($table, $players[$seat], $seat);
     }
 
+    $this->startBoard($table);
+
     $playing = BoardTable::where('table_id', $table->id)->sole();
     $boardId = $playing->board_id;
 
