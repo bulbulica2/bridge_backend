@@ -163,6 +163,8 @@ class TableSeatService
    *
    * A playing that was under way is dropped: the four who started it are no
    * longer the four sitting there. See `BoardSelectionService::abandonPlaying`.
+   * So is an unfinished set, even between boards: it ends `abandoned`
+   * (`BoardSelectionService::abandonSet`), and the next board opens a new one.
    * The leaver's Start goes with their seat row; whoever takes the seat next
    * has to press it.
    *
@@ -191,8 +193,9 @@ class TableSeatService
 
       $seat->delete();
 
-      // whoever is left is not the four who started the board
+      // whoever is left is not the four who started the board, nor the set
       $this->boardSelection->abandonPlaying($table);
+      $this->boardSelection->abandonSet($table);
 
       // the human seated here longest, if any: a robot never runs a table
       $next = $table->seats()

@@ -6,6 +6,7 @@ use App\auxiliary\Seats;
 use App\Models\Bid;
 use App\Models\BoardTable;
 use App\Models\Card;
+use App\Models\TableSet;
 use App\Services\CardPlayService;
 use App\Services\PlayingStateService;
 use App\Services\ScoringService;
@@ -54,6 +55,7 @@ class PlayingResource extends JsonResource
       return [
         'phase' => $state->phase(null),
         'playing_id' => null,
+        'set' => null,
         'board' => null,
         'players' => null,
         'turn' => null,
@@ -81,6 +83,7 @@ class PlayingResource extends JsonResource
     return [
       'phase' => $state->phase($playing),
       'playing_id' => $playing->id,
+      'set' => $playing->tableSet === null ? null : self::set($playing->tableSet, (int) $playing->set_position),
       'board' => [
         'id' => $playing->board->id,
         'number' => $playing->board->number,
@@ -108,6 +111,26 @@ class PlayingResource extends JsonResource
       // as dealt, and who has asked for the next board
       'deal' => $finished ? $state->deal($playing) : null,
       'ready' => $this->when($this->live, fn () => $finished ? $state->ready($playing) : null),
+    ];
+  }
+
+  /**
+   * Where a table is in a set: its id (for `GET /sets/{set}`), its number at
+   * the table, `board`, the board's place in it, `of`, how many boards it
+   * has, and `finished`, true once it is over — after its last board, or as
+   * `ended` says, earlier (`abandoned` when one of its four left).
+   *
+   * @return array{id: int, number: int, board: int, of: int, finished: bool, ended: string|null}
+   */
+  public static function set(TableSet $set, int $board): array
+  {
+    return [
+      'id' => (int) $set->id,
+      'number' => $set->number,
+      'board' => $board,
+      'of' => $set->size,
+      'finished' => $set->isFinished(),
+      'ended' => $set->ended,
     ];
   }
 

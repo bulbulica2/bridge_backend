@@ -59,7 +59,8 @@ table, so local data is lost.
 
 Outside `APP_ENV=production` the seeders play every table through the game
 services (`TableSeatService`, `BoardSelectionService` — every player of a
-full table presses Start —, `AuctionService`, `CardPlayService`,
+full table presses Start, and asks for the next board of a set —,
+`AuctionService`, `CardPlayService`,
 `ClaimService`), so every seat, call, card and claim is one the API would have accepted and
 `GET /tables/{table}/playing` reads sensible turns, tricks and scores. You
 get one table per phase, named after it:
@@ -67,11 +68,12 @@ get one table per phase, named after it:
 | Table | State |
 |---|---|
 | `Your call` | full, mid-auction, and it is the admin's turn to call |
-| `Bidding` | full, mid-auction |
+| `Bidding` | full, mid-auction on the second board of its set (the first was played out) |
 | `Playing` | full, contract reached, between 1 and 51 cards played |
 | `Finished` | all 13 tricks played and scored, waiting for the next board |
 | `Claimed` | stopped mid-play by declarer's claim of a random share of the remaining tricks, which both defenders accepted; scored, waiting for the next board |
 | `Passed out` | four passes, finished with score 0 |
+| `Set over` | a whole set of four boards played out: the fourth is on show, the set's result is up (`GET /sets/{set}`), and the next set waits for everyone's Start |
 | `Waiting for players` | 2 players, no board yet |
 
 Log in as the admin (`email@email.com` / `pass`) to act at `Your call`.
@@ -179,6 +181,12 @@ an unattended table stays until somebody kicks its robots.
 | `BRIDGE_IDLE_SEAT_MINUTES` | `5` | minutes without a sign of life before a seat is freed (`config/bridge.php`) |
 | `BRIDGE_IDLE_PLAYING_SEAT_MINUTES` | `15` | the same while the table is in the middle of a board, where freeing the seat abandons it for the other three |
 | `BRIDGE_UNATTENDED_TABLE_MINUTES` | `10` | minutes a table with only robots left is kept before it is deleted |
+
+### Sets
+
+| Key | Default | Meaning |
+|---|---|---|
+| `BRIDGE_SET_SIZE` | `4` | boards in a set (`config/bridge.php`): Start deals the first, Next the rest, and after the last it takes everyone's Start again. A set keeps the size it opened with |
 
 ## Robots
 

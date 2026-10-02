@@ -14,6 +14,7 @@ use App\Models\BoardTable;
 use App\Models\Card;
 use App\Models\Table;
 use App\Models\TableSeat;
+use App\Models\TableSet;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
@@ -31,6 +32,12 @@ use RuntimeException;
  * into an auction before they have reached the table. Robots are ready from
  * the moment they sit down. After that, a finished board is followed by the
  * next one once the same four players ask for it (`moveOn()`).
+ *
+ * Boards come in sets (`TableSet`, `bridge.set_size` boards): everyone's
+ * Start opens a set with its first board, Next deals the rest, and after the
+ * last one Next is refused and it takes everyone's Start again to open the
+ * next set. A set one of its four players leaves is over too
+ * (`abandonSet()`).
  */
 class BoardSelectionService
 {
@@ -115,28 +122,34 @@ class BoardSelectionService
   }
 
   /**
-   * Deal a board to a full table, and open the playing. Clears the humans'
-   * Start: the next time the table needs one (a player left and was
-   * replaced, or a board was abandoned) everyone presses it again.
+   * Deal a board to a full table, and open the playing: the next board of
+   * `$set`, or with no set (a Start) the first board of a new one. Clears
+   * the humans' Start: the next time the table needs one (a new set, or a
+   * player left and was replaced) everyone presses it again.
    *
    * Returns null when a playing is already open. Mutates `$table`
    * (`board_id`).
    *
    * @param  Collection<int, TableSeat>  $seats  all four, with their users
    */
-  private function deal(Table $table, Collection $seats): ?BoardTable
+  private function deal(Table $table, Collection $seats, ?TableSet $set = null): ?BoardTable
   {
     if ($this->openPlaying($table) !== null) {
       return null;
     }
 
+    $set ??= $this->openSet($table, $seats);
+
     $board = $this->selectBoard($table, $seats);
 
     $table->update(['board_id' => $board->id]);
+    $table->unsetRelation('latestSet');
 
     $playing = BoardTable::create([
       'board_id' => $board->id,
       'table_id' => $table->id,
+      'table_set_id' => $set->id,
+      'set_position' => $set->playings()->reorder()->count() + 1,
       'started_at' => now(),
     ]);
 
@@ -163,11 +176,64 @@ class BoardSelectionService
   }
 
   /**
+   * Open the table's next set for the four seated now, numbered on from the
+   * last one played here, `bridge.set_size` boards long.
+   *
+   * @param  Collection<int, TableSeat>  $seats  all four
+   */
+  private function openSet(Table $table, Collection $seats): TableSet
+  {
+    // a Start only comes once the last set is over, so this is a guard
+    $this->abandonSet($table);
+
+    $set = TableSet::create([
+      'table_id' => $table->id,
+      'number' => (int) TableSet::where('table_id', $table->id)->max('number') + 1,
+      'size' => max(1, (int) config('bridge.set_size')),
+      'started_at' => now(),
+    ]);
+
+    foreach ($seats as $seat) {
+      $set->seats()->create(['user_id' => $seat->user_id, 'seat' => $seat->seat]);
+    }
+
+    return $set;
+  }
+
+  /**
+   * End the table's set early, because one of its four players has left:
+   * the set is `abandoned` and has no winner. The board on the table is
+   * dealt with by `abandonPlaying()` as before; a set is never resumed, so
+   * the next board waits for everyone's Start and opens a new set.
+   *
+   * Does nothing once the set is over.
+   */
+  public function abandonSet(Table $table): void
+  {
+    TableSet::query()
+      ->where('table_id', $table->id)
+      ->whereNull('finished_at')
+      ->each(fn (TableSet $set) => $set->end(TableSet::ENDED_ABANDONED));
+
+    $table->unsetRelation('latestSet');
+  }
+
+  /**
+   * Whether the set `$playing` was dealt in is over (a playing made outside
+   * the services has none, and counts as over): nothing follows it but a
+   * Start.
+   */
+  private function setOver(BoardTable $playing): bool
+  {
+    return $playing->tableSet === null || $playing->tableSet->isFinished();
+  }
+
+  /**
    * The caller's seat, once the table is locked, if Start means anything
-   * now: no board, or a finished one that the four seated now didn't all
-   * play (somebody left and was replaced). With a board in its auction or
-   * play, or finished with the same four still there (who go on with
-   * `moveOn()`), it is refused.
+   * now: no board, a finished one that ended its set, or a finished one
+   * that the four seated now didn't all play (somebody left and was
+   * replaced). With a board in its auction or play, or finished mid-set with
+   * the same four still there (who go on with `moveOn()`), it is refused.
    *
    * @throws StartBoardException
    */
@@ -188,7 +254,7 @@ class BoardSelectionService
 
     $refusal = match ($this->state->phase($playing)) {
       PlayingStateService::PHASE_WAITING => null,
-      PlayingStateService::PHASE_FINISHED => $this->seatedAsIn($table, $playing)
+      PlayingStateService::PHASE_FINISHED => $this->seatedAsIn($table, $playing) && ! $this->setOver($playing)
         ? 'The board is finished: the same four players go on with the next board (POST /tables/{table}/playing/next).'
         : null,
       default => 'A board is already in progress at this table.',
@@ -222,6 +288,8 @@ class BoardSelectionService
    * nobody asks for anyone else. Only the four who played the board go on
    * this way: once one of
    * them has been replaced, the table needs every human's Start again.
+   * Next only deals within a set: after its last board it is refused, and
+   * the next set takes everyone's Start.
    *
    * Asking twice changes nothing. Returns the new playing once it is dealt,
    * or null while somebody has still to ask.
@@ -265,6 +333,12 @@ class BoardSelectionService
         throw new NextBoardException('The players have changed since this board: the next one is dealt once every player has pressed Start.');
       }
 
+      // the set's last board: the result stays up, and a new set takes
+      // everyone's Start
+      if ($this->setOver($playing)) {
+        throw new NextBoardException('The set is over: press Start for a new one.');
+      }
+
       $asking = $playing->seats()->whereNull('ready_at')->where('user_id', $user->id);
 
       if ($asking->update(['ready_at' => now()]) === 0) {
@@ -277,7 +351,7 @@ class BoardSelectionService
         return null;
       }
 
-      $next = $this->deal($table, $table->seats()->with('user')->get());
+      $next = $this->deal($table, $table->seats()->with('user')->get(), $playing->tableSet);
 
       TableUpdated::dispatch($table);
 

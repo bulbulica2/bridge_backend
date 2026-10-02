@@ -21,6 +21,20 @@ return [
 
   /*
   |--------------------------------------------------------------------------
+  | Sets
+  |--------------------------------------------------------------------------
+  |
+  | How many boards a set has. Everyone's Start deals a set's first board,
+  | Next its others, and after its last one the table stops for the set's
+  | result until everyone presses Start again. A set keeps the size it was
+  | opened with, so changing this only affects sets opened afterwards.
+  |
+  */
+
+  'set_size' => (int) env('BRIDGE_SET_SIZE', 4),
+
+  /*
+  |--------------------------------------------------------------------------
   | Robots
   |--------------------------------------------------------------------------
   |

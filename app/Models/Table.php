@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasManyThrough;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Table extends Model
 {
@@ -31,6 +32,11 @@ class Table extends Model
       $table->boardPlays()
         ->whereNull('finished_at')
         ->each(fn (BoardTable $playing) => $playing->discardLogs());
+
+      // likewise a set nobody ended: its players have gone
+      $table->sets()
+        ->whereNull('finished_at')
+        ->each(fn (TableSet $set) => $set->end(TableSet::ENDED_ABANDONED));
     });
   }
 
@@ -113,6 +119,29 @@ class Table extends Model
   public function boardPlays(): HasMany
   {
     return $this->hasMany(BoardTable::class);
+  }
+
+  // the sets of boards played here, oldest first
+  public function sets(): HasMany
+  {
+    return $this->hasMany(TableSet::class)->orderBy('number');
+  }
+
+  // the set the table is on now or finished last, null before its first Start
+  public function latestSet(): HasOne
+  {
+    return $this->hasOne(TableSet::class)->latestOfMany('number');
+  }
+
+  /**
+   * `latestSet` as `TableResource` reads it, with how many boards it has
+   * dealt (`playings_max_set_position`), for `load()`/`with()`.
+   *
+   * @return array<string, \Closure>
+   */
+  public static function latestSetWithBoards(): array
+  {
+    return ['latestSet' => fn ($set) => $set->withMax('playings', 'set_position')];
   }
 
   // not tested yet

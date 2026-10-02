@@ -7,16 +7,17 @@ use App\Http\Resources\PlayingResource;
 use App\Http\Resources\UserResource;
 use App\Models\Board;
 use App\Models\BoardTable;
+use App\Models\TableSet;
 use App\Models\User;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 
 /**
  * Finished playings read back after the fact: a board's results at every
- * table that played it, with matchpoints (`GAME-RULES.md` §6), and one
- * player's history.
+ * table that played it, with matchpoints (`GAME-RULES.md` §6), a set's
+ * results, and one player's history.
  *
- * Both read `board_table` and its `board_table_seats` snapshot, which outlive
- * the table, so neither loses anything when a table is deleted.
+ * They read `board_table`, its `board_table_seats` snapshot and `table_sets`,
+ * which all outlive the table, so nothing is lost when a table is deleted.
  */
 class BoardResultsService
 {
@@ -73,6 +74,117 @@ class BoardResultsService
   }
 
   /**
+   * Whether the user may see a set's results: one of its four players, or
+   * somebody who has finished every board the set finished, at any table.
+   * Anyone else may still be dealt one of them (`BoardPolicy::view`).
+   */
+  public function maySeeSet(User $user, TableSet $set): bool
+  {
+    if ($set->hasPlayer($user->getKey())) {
+      return true;
+    }
+
+    $boards = $set->playings()->whereNotNull('finished_at')->with('board')->get()->pluck('board');
+
+    return $boards->isNotEmpty() && $boards->every(fn (Board $board) => $this->hasFinished($user, $board));
+  }
+
+  /**
+   * A set's results: its players, each of its finished boards in order with
+   * its result and matchpoints (against every table that has played the
+   * board, worked out now like `results()`), the totals per side and the
+   * winner.
+   *
+   * The winner is the side with the higher total score, the boards'
+   * `score_ns` added up: matchpoints only compare a pair with the other
+   * tables, and a board played at one table has none to give. Null while
+   * the set is unfinished, when it was abandoned, and on a tie; a forfeit
+   * hands it to the other side.
+   *
+   * @return array<string, mixed>
+   */
+  public function set(TableSet $set): array
+  {
+    $set->load([
+      'seats.user',
+      'playings' => fn ($playings) => $playings->whereNotNull('finished_at')->with(['board', 'contractBid']),
+    ]);
+
+    $boards = $set->playings->map(function (BoardTable $playing) {
+      $matchpoints = $this->matchpointsOf($playing);
+
+      return [
+        'position' => $playing->set_position,
+        'playing_id' => $playing->id,
+        'board' => self::board($playing->board),
+        ...PlayingResource::result($playing),
+        'top' => $matchpoints['top'],
+        'matchpoints' => ['ns' => $matchpoints['ns'], 'ew' => $matchpoints['top'] - $matchpoints['ns']],
+      ];
+    })->values();
+
+    $scoreNs = (int) $boards->sum('score_ns');
+    $top = (int) $boards->sum('top');
+    $matchpointsNs = (int) $boards->sum('matchpoints.ns');
+
+    $players = [];
+
+    foreach (Seats::SEATS as $seat) {
+      $user = $set->seats->firstWhere('seat', $seat)?->user;
+      $players[$seat] = $user === null ? null : new UserResource($user);
+    }
+
+    return [
+      'id' => $set->id,
+      'number' => $set->number,
+      // null once the table has been deleted
+      'table_id' => $set->table_id,
+      'of' => $set->size,
+      // boards dealt so far, one abandoned mid-play included
+      'boards_dealt' => (int) $set->playings()->reorder()->max('set_position'),
+      'started_at' => $set->started_at,
+      'finished_at' => $set->finished_at,
+      'finished' => $set->isFinished(),
+      'ended' => $set->ended,
+      'forfeited_by' => $set->forfeited_by,
+      'players' => $players,
+      'boards' => $boards->all(),
+      'totals' => [
+        'score' => ['ns' => $scoreNs, 'ew' => -$scoreNs],
+        'matchpoints' => ['ns' => $matchpointsNs, 'ew' => $top - $matchpointsNs],
+        'top' => $top,
+      ],
+      'winner' => match (true) {
+        $set->ended === TableSet::ENDED_FORFEIT => $set->forfeited_by === 'NS' ? 'EW' : 'NS',
+        $set->ended !== TableSet::ENDED_COMPLETED, $scoreNs === 0 => null,
+        default => $scoreNs > 0 ? 'NS' : 'EW',
+      },
+    ];
+  }
+
+  /**
+   * One finished playing's N-S matchpoints against every finished playing
+   * of its board, and the top.
+   *
+   * @return array{ns: int, top: int}
+   */
+  private function matchpointsOf(BoardTable $playing): array
+  {
+    $scores = BoardTable::query()
+      ->where('board_id', $playing->board_id)
+      ->whereNotNull('finished_at')
+      ->orderBy('id')
+      ->pluck('score', 'id');
+
+    $matchpoints = ScoringService::matchpoints($scores->map(fn ($score) => (int) $score)->values()->all());
+
+    return [
+      'ns' => $matchpoints[$scores->keys()->search($playing->id)],
+      'top' => ScoringService::matchpointTop($scores->count()),
+    ];
+  }
+
+  /**
    * The user's finished playings, latest first, one page at a time: the
    * board, their seat and partner, the contract and the score.
    */
@@ -81,7 +193,7 @@ class BoardResultsService
     return BoardTable::query()
       ->whereNotNull('finished_at')
       ->whereHas('seats', fn ($query) => $query->where('user_id', $user->getKey()))
-      ->with(['board', 'seats.user', 'contractBid'])
+      ->with(['board', 'tableSet', 'seats.user', 'contractBid'])
       ->orderByDesc('finished_at')
       ->orderByDesc('id')
       ->paginate($perPage)
@@ -93,6 +205,13 @@ class BoardResultsService
         return [
           'playing_id' => $playing->id,
           'table_id' => $playing->table_id,
+          // to group the history by set (GET /sets/{set} has its results)
+          'set' => $playing->tableSet === null ? null : [
+            'id' => $playing->tableSet->id,
+            'number' => $playing->tableSet->number,
+            'board' => $playing->set_position,
+            'of' => $playing->tableSet->size,
+          ],
           'board' => self::board($playing->board),
           'seat' => $seat,
           'partner' => $partner === null ? null : new UserResource($partner),

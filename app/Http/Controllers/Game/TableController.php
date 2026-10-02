@@ -17,7 +17,7 @@ class TableController extends BaseController
 {
   public function index(): JsonResponse
   {
-    $tables = Table::with('seats.user')
+    $tables = Table::with(['seats.user', ...Table::latestSetWithBoards()])
       ->orderByDesc('created_at')
       ->orderByDesc('id')
       ->get();

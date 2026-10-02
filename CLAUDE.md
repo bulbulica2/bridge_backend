@@ -125,7 +125,8 @@ vendor/bin/pint --test            # check formatting without changing files
   (`POST`/`DELETE /tables/{table}/claim`,
   `POST /tables/{table}/claim/response`); `Game\PlayingController@show`
   serves the game state and `@review` (`GET /playings/{playing}`) one
-  finished playing after the fact.
+  finished playing after the fact; `Game\TableSetController@show`
+  (`GET /sets/{set}`) a set's results.
   `Game\BidController@index` (`GET /bids`, public) lists the 38 calls in
   `PlayingResource::bid`'s shape, so clients learn the `bid_id`s they send;
   it orders them P, X, XX, then by `Bid::rank()`, never by id.
@@ -184,7 +185,7 @@ vendor/bin/pint --test            # check formatting without changing files
   `ready_at`; leaving deletes the seat row and its Start with it, and a seat
   change at the same table clears it. Nobody presses Start for anyone else.
   Start 409s (`StartBoardException`) while a board is in its auction or play,
-  or finished with the same four still seated (they use Next). Not at
+  or finished mid-set with the same four still seated (they use Next). Not at
   `POST /tables`, because the selection rule needs all four
   players' history and `board_table_seats` snapshots four seats. The deal
   (private `deal()`) applies
@@ -192,6 +193,16 @@ vendor/bin/pint --test            # check formatting without changing files
   holds a seat they've held on it, else `dealBoard()` shuffles a brand-new
   one — over the humans' history only, robots are ignored), sets
   `tables.board_id` and opens the `board_table` playing.
+  Boards come in **sets** (`TableSet`, `table_sets` + `table_set_seats`,
+  `bridge.set_size` = 4): a Start's deal opens a set (`openSet()`), Next
+  deals its next board (`board_table.table_set_id`/`set_position`),
+  `BoardTable::finish()` completes it on its last board, after which
+  `moveOn()` 409s ("The set is over: press Start for a new one.") and
+  `start()` accepts a Start with the same four seated; robots don't ask
+  then. `remove()` ends an unfinished set as `abandoned` (`abandonSet()`),
+  even between boards; `ended: forfeit`/`forfeited_by` exist for #76 but
+  nothing writes them yet. Sets outlive their table; `PlayingResource` and
+  `TableResource` show `set: {id, number, board, of, finished, ended}`.
   After a board finishes it stays on the table (the state then shows the
   whole `deal` and `ready`) until `moveOn()`
   (`POST /tables/{table}/playing/next`, `Game\PlayingController@next`)
@@ -402,7 +413,9 @@ vendor/bin/pint --test            # check formatting without changing files
   each player (so the last Start deals the board),
   `AuctionSeeder` (plans a random auction from legal calls, then makes it
   through `AuctionService`, optionally stopping where a seat is to call) and
-  `CardplaySeeder` (random legal cards through `CardPlayService`). They take
+  `CardplaySeeder` (random legal cards through `CardPlayService`); `Bidding`
+  is on the second board of its set and `Set over` has played a whole set,
+  through `moveOn()`. They take
   a `Table` and are run with `callWith()` from `TableSeeder`, which wraps it
   all in `Event::fakeFor()` so seeding queues no broadcasts.
   `tests/Feature/Database/DatabaseSeederTest` runs `migrate:fresh --seed`
@@ -421,7 +434,10 @@ vendor/bin/pint --test            # check formatting without changing files
   `GET /boards/{board}/results` (`Game\BoardController`): every finished
   playing of a board with matchpoints from the pure
   `ScoringService::matchpoints()` — computed on every read, **never
-  stored**, since each new playing changes everyone's. `history()` serves
+  stored**, since each new playing changes everyone's. `set()` serves
+  `GET /sets/{set}` (each finished board's result and matchpoints, totals,
+  `winner` by total score), for the set's players or anyone who finished
+  all its boards (`TableSetPolicy::view`). `history()` serves
   the paginated `GET /users/{user}/playings` and `GET /api/user/playings`
   (`UserController`). `GET /boards/{board}` shows the deal
   (`PlayingStateService::boardDeal()`), and `GET /playings/{playing}`

@@ -85,13 +85,13 @@ the same pattern:
 | Service | Responsible for | Tests |
 |---|---|---|
 | `TableSeatService` | joining, moving, leaving and kicking (`seat()`, `remove()`), heartbeats (`touch()`), freeing idle seats (`releaseIdleSeats()`) and deleting unattended tables (`deleteUnattendedTables()`) | `tests/Feature/Table*` |
-| `BoardSelectionService` | which board a table plays and when: Start (`start()`, `withdrawStart()`), deals once a full table's humans have all pressed it (`startIfReady()`), moves on after a finished board (`moveOn()`), detaches a board abandoned mid-play (`abandonPlaying()`) | `tests/Feature/Table/StartBoardTest`, `AssignBoardTest`, `tests/Feature/Game/NextBoardTest` |
+| `BoardSelectionService` | which board a table plays and when: Start (`start()`, `withdrawStart()`), deals once a full table's humans have all pressed it (`startIfReady()`) as the first board of a new set, moves on after a finished board within the set (`moveOn()`), detaches a board abandoned mid-play (`abandonPlaying()`) and ends a set one of its players left (`abandonSet()`) | `tests/Feature/Table/StartBoardTest`, `AssignBoardTest`, `tests/Feature/Game/NextBoardTest`, `BoardSetTest` |
 | `PlayingStateService` | the one place that works out a playing's phase, calls, cards, turn, who acts, the hands and dummy | feature tests |
 | `AuctionService` | one call (`call()`); `nextToCall`, `illegalReason`, `isOver`, `result` | `tests/Unit/AuctionServiceTest` |
 | `CardPlayService` | one card (`play()`); `nextToPlay`, `actingSeat`, `illegalReason`, `trickWinner`, `tricks`, `tricksWon` | `tests/Unit/CardPlayServiceTest` |
 | `ClaimService` | claims and concessions (`claim`, `respond`, `withdraw`) | `tests/Unit/ClaimServiceTest` |
 | `ScoringService` | duplicate scoring (`score()`, from declarer's side) and matchpoints (`matchpoints()`), pure static functions | `tests/Unit/ScoringTest` |
-| `BoardResultsService` | reads finished playings back for results across tables and a player's history | feature tests |
+| `BoardResultsService` | reads finished playings back for results across tables, a set's results (`set()`, `maySeeSet()`) and a player's history | feature tests (`BoardResultsTest`, `BoardSetTest`) |
 | `RobotService` | robot players: the pool they are seated from (`seatRobot()`), and one robot move at a time (`act()`: a call, a card or a claim, a claim answer, ready) through the services above | `tests/Feature/Game/RobotPlayTest`, `tests/Feature/Table/RobotSeatingTest` |
 
 Things worth knowing before you change them:
@@ -123,6 +123,15 @@ Things worth knowing before you change them:
   clears the humans' Start. A finished board is followed by `moveOn()` while
   the same four sit there (each player asks for themselves; nobody can ask
   for the others), by everyone's Start once one was replaced.
+- **Sets.** Boards come in sets of `bridge.set_size` (4): a Start's deal
+  opens a `TableSet` (`openSet()`, which snapshots the four into
+  `table_set_seats`), each Next deals the set's next board
+  (`board_table.table_set_id`/`set_position`), and `BoardTable::finish()`
+  completes the set on its last board — after which `moveOn()` 409s and
+  `start()` accepts a Start even with the same four seated. `remove()` ends
+  an unfinished set as `abandoned` (`abandonSet()`), even between boards.
+  Sets outlive their table like playings do; `TableResource` and
+  `PlayingResource` show where the table is as `set`.
   Start, like Next, takes the table row lock that seat changes take. A playing abandoned mid-board is
   *detached* (`table_id` set to null), never deleted, so the seat snapshot
   still records that those four saw the deal.
@@ -203,6 +212,9 @@ Policies in `app/Policies/` are auto-discovered.
 - `BoardPolicy::view` lets a player see a board's deal, results and reviews
   only once they have **finished** that board, with no admin override, since
   anyone else may still be dealt it.
+- `TableSetPolicy::view` lets a set's four players see its results
+  (`GET /sets/{set}`), and anyone else only once they have finished every
+  board it finished — the same reasoning, no admin override.
 
 ## Events and channels
 
@@ -255,12 +267,14 @@ All three keep the old code loaded: restart them after changing PHP.
 
 `DatabaseSeeder` branches on `APP_ENV`. Production gets only cards, bids and
 100 dealt boards. Everywhere else also gets an admin user
-(`email@email.com` / `pass`) and one table per phase of the game
+(`email@email.com` / `pass`) and one table per phase of the game, plus one
+whose set of boards is over
 ([`RUNNING.md`](RUNNING.md#seeded-data)).
 
 The seeders play those tables through the real services —
 `TableSeatService::seat()` and `BoardSelectionService::start()` (every
-player of a full table presses Start, so the last one deals the board),
+player of a full table presses Start, so the last one deals the board, and
+`moveOn()` for the next board of a set),
 `AuctionService` (via `AuctionSeeder`), `CardPlayService` (via
 `CardplaySeeder`) and `ClaimService` — so a seeded database only ever
 contains legal play. `TableSeeder` wraps it all in `Event::fakeFor()`, so

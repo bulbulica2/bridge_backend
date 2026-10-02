@@ -49,6 +49,7 @@ class PlayingStateTest extends TestCase
         'data' => [
           'phase' => 'waiting',
           'playing_id' => null,
+          'set' => null,
           'board' => null,
           'players' => null,
           'my_seat' => null,

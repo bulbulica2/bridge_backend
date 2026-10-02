@@ -29,7 +29,8 @@ class TableSeeder extends Seeder
   ) {}
 
   /**
-   * One table in each phase a player can find a board in, all reached
+   * One table in each phase a player can find a board in, and one whose
+   * set of boards is over, all reached
    * through the game services, so every seat, call and card is one the API
    * would have accepted. Needs BoardSeeder and UserSeeder to have run.
    */
@@ -49,7 +50,10 @@ class TableSeeder extends Seeder
     $table = $this->table('Your call', [$admin, ...User::factory(3)->create()]);
     $this->callWith(AuctionSeeder::class, ['table' => $table, 'stopAt' => $this->seatOf($table, $admin)]);
 
+    // on the second board of its set: the first was played out
     $table = $this->table('Bidding', User::factory(4)->create());
+    $this->playBoard($table);
+    $this->nextBoard($table);
     $this->callWith(AuctionSeeder::class, ['table' => $table, 'stopAt' => Arr::random(Seats::SEATS)]);
 
     // stopped after the opening lead, so dummy is face up, and before the last card
@@ -69,6 +73,18 @@ class TableSeeder extends Seeder
 
     $table = $this->table('Passed out', User::factory(4)->create());
     $this->callWith(AuctionSeeder::class, ['table' => $table, 'end' => AuctionSeeder::PASSED_OUT]);
+
+    // a whole set played out: its last board and the set's result are up,
+    // and the next set waits for everyone's Start
+    $table = $this->table('Set over', User::factory(4)->create());
+
+    for ($board = 1; $board <= config('bridge.set_size'); $board++) {
+      if ($board > 1) {
+        $this->nextBoard($table);
+      }
+
+      $this->playBoard($table);
+    }
 
     // short of players, so no board yet, and nobody has pressed Start
     $this->table('Waiting for players', User::factory(2)->create());
@@ -103,6 +119,26 @@ class TableSeeder extends Seeder
     }
 
     return $table;
+  }
+
+  /**
+   * Bid the board on the table to a contract and play all 52 cards.
+   */
+  private function playBoard(Table $table): void
+  {
+    $this->callWith(AuctionSeeder::class, ['table' => $table]);
+    $this->callWith(CardplaySeeder::class, ['table' => $table]);
+  }
+
+  /**
+   * Every player asks for the next board of the set, as
+   * `POST /tables/{table}/playing/next` does; the last one deals it.
+   */
+  private function nextBoard(Table $table): void
+  {
+    foreach ($table->seats()->with('user')->get() as $seat) {
+      $this->boards->moveOn($table, $seat->user);
+    }
   }
 
   /**
