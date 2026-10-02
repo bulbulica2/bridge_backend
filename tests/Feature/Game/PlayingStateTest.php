@@ -98,6 +98,7 @@ class PlayingStateTest extends TestCase
         'username' => $player->username,
         'description' => $player->description,
         'is_robot' => false,
+        'is_admin' => false,
       ], $response->json("data.players.$seat"));
     }
   }

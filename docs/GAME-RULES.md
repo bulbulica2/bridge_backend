@@ -488,7 +488,8 @@ a forfeit (`ended: abandoned`): a kick of a player who is there, leaving
 while an admin is away, an admin leaving. The board in play is abandoned as
 before (detached); the next board waits for everyone's Start and opens a
 new set. Outside a set nothing of this applies: Leave is immediate and the
-usual idle timeout (`BRIDGE_IDLE_SEAT_MINUTES`) frees a quiet player's seat.
+usual idle timeout (`BRIDGE_IDLE_SEAT_MINUTES`) frees a quiet player's seat
+(never an admin's: only the admin or another admin may take that one).
 
 **In code:** `table_sets` (+ `table_set_seats`, the four players) and
 `board_table.table_set_id`/`set_position`. `BoardSelectionService::deal()`

@@ -391,7 +391,9 @@ class TableSeatService
   /**
    * Free the seat of every player who has gone quiet for longer than
    * `bridge.idle_seat_minutes`, at a table that isn't in the middle of a set:
-   * there checkAway() decides instead. Each goes out through remove(),
+   * there checkAway() decides instead. An admin's seat is never freed: only
+   * the admin or another admin may take it (`TablePolicy::kick`). Each goes
+   * out through remove(),
    * exactly like a leave: moderation is handed on, an emptied table is
    * deleted and the others are told.
    *
@@ -401,9 +403,9 @@ class TableSeatService
   {
     $cutoff = now()->subMinutes(config('bridge.idle_seat_minutes'));
 
-    // robots send no heartbeat and are never idle
+    // robots send no heartbeat and are never idle; nor is an admin
     $candidates = TableSeat::query()
-      ->whereHas('user', fn ($user) => $user->humans())
+      ->whereHas('user', fn ($user) => $user->humans()->where('is_admin', false))
       ->where('last_seen_at', '<', $cutoff)
       ->whereNotIn('table_id', $this->tablesMidSet())
       ->orderBy('id')

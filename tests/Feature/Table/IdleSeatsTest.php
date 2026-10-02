@@ -114,6 +114,19 @@ class IdleSeatsTest extends TestCase
     $this->assertSame(2, $table->seats()->count());
   }
 
+  public function test_the_sweeper_never_frees_an_admins_seat(): void
+  {
+    [$table, $players] = $this->lobbyTable(['N', 'E']);
+    $players['N']->forceFill(['is_admin' => true])->save();
+
+    $this->travel(60)->minutes();
+
+    // E goes, the admin stays and keeps the table
+    $this->assertSame(1, $this->seats->releaseIdleSeats());
+    $this->assertSame([$players['N']->id], $table->seats()->pluck('user_id')->all());
+    $this->assertModelExists($table);
+  }
+
   public function test_the_sweeper_deletes_a_table_it_empties(): void
   {
     [$table] = $this->lobbyTable(['N', 'E']);

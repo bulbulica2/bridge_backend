@@ -54,7 +54,8 @@ routes/*.php
   `GET /tables/{table}/playing` after it. Anything else leaves the key out — above all `TableUpdated`,
   since the table channel must never carry a hand. Anything that shows a user to *other* players goes
   through `UserResource` (`id`, `name`, `username`, `description`,
-  `is_robot`), never
+  `is_robot`, `is_admin` — public so a client can hide **Remove** on an
+  admin's seat), never
   the raw `User` model: `email` isn't in `$hidden`, because the owner needs
   it on `GET /api/user`.
 
@@ -223,6 +224,11 @@ Policies in `app/Policies/` are auto-discovered.
   `is_admin` user; `created_by` grants nothing.
   Every HTTP table payload carries it as `can_manage`, so clients don't
   re-implement it.
+- `TablePolicy::kick` (a `Response`, returned from
+  `RemoveUserFromSeatRequest::authorize()` through `Gate::inspect()` so the
+  403 names the reason) lets anyone take their own seat, a manager anyone
+  else's, and anyone a robot's at an unattended table — except an admin's,
+  which only the admin or another admin may take.
 - `TablePolicy::play` limits the game state to players seated at the table.
 - `UserPolicy::ban` lets only an admin ban, and never themselves, another
   admin or a robot (a `Response` with the reason, returned from
@@ -285,7 +291,9 @@ to any new one. `tables:release-idle-seats` frees seats idle for
 `config('bridge.idle_seat_minutes')` (5) at a table that isn't mid-set,
 through the normal `remove()`, so it behaves exactly like the player
 leaving; mid-set `tables:check-away` marks them away instead and forfeits
-the set after three minutes. Robots send no heartbeat, so both skip them.
+the set after three minutes. Robots send no heartbeat, so both skip them;
+an admin's seat is never freed by either (`tables:check-away` may show an
+admin away, but never forfeits or frees for it).
 
 All three keep the old code loaded: restart them after changing PHP.
 

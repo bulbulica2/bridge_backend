@@ -4,6 +4,7 @@ namespace App\Policies;
 
 use App\Models\Table;
 use App\Models\User;
+use Illuminate\Auth\Access\Response;
 
 class TablePolicy
 {
@@ -26,13 +27,22 @@ class TablePolicy
    * Whether the user may take `$target`'s seat away: their own always (a
    * quit), anybody's if they manage the table, and a robot's at an
    * unattended table — one only robots are keeping — by anyone at all,
-   * since nobody manages it.
+   * since nobody manages it. An admin's seat is the exception: only the
+   * admin themselves or another admin may take it, never the moderator.
    */
-  public function kick(User $user, Table $table, User $target): bool
+  public function kick(User $user, Table $table, User $target): Response
   {
-    return $user->id === $target->id
-      || ($target->is_robot && $table->unattended_since !== null)
-      || $this->manage($user, $table);
+    if ($user->id === $target->id) {
+      return Response::allow();
+    }
+
+    if ($target->is_admin) {
+      return $user->is_admin ? Response::allow() : Response::deny('Only an admin can remove an admin.');
+    }
+
+    return ($target->is_robot && $table->unattended_since !== null) || $this->manage($user, $table)
+      ? Response::allow()
+      : Response::deny('Only the table moderator or an admin can remove other players.');
   }
 
   /**

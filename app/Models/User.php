@@ -70,7 +70,8 @@ class User extends Authenticatable
 
   /**
    * The user's record as shown to themselves (GET and PATCH /api/user):
-   * email included, plus `is_admin`, which stays hidden everywhere else, and
+   * email included, plus `is_admin` (hidden from the model's JSON; others see
+   * it through `UserResource`), and
    * `ban`, the ban keeping them away from the game (null when there is none).
    *
    * @return array<string, mixed>

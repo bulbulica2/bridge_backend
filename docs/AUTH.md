@@ -210,7 +210,9 @@ Policies live in `app/Policies/` and are auto-discovered by name
   broadcast leaves `can_manage` out (it has no single viewer); a client keeps
   its last value and refetches `GET /tables/{table}` when `moderated_by`
   changes. `GET /api/user` also returns the caller's own `is_admin`
-  (read-only), hidden from every other view of a user. See
+  (read-only); every public profile (`UserResource`, so seat payloads and
+  `TableUpdated` too) shows it as well, so a client can hide **Remove** on an
+  admin's seat. See
   [`API.md`](API.md#tables).
 - **`TablePolicy::kick(User, Table, User $target)`** decides who may take
   `$target`'s seat away (`DELETE /tables/{table}/seats/{user}`, through
@@ -218,7 +220,11 @@ Policies live in `app/Policies/` and are auto-discovered by name
   anyone who passes `manage` (a kick), and — at an **unattended** table
   (`unattended_since` set, only robots left) — **any** logged-in user when
   the target is a robot, since nobody manages that table. While a human sits
-  at the table, only its manager may kick a robot.
+  at the table, only its manager may kick a robot. An **admin**'s seat is the
+  exception: only the admin themselves or another admin may take it, never
+  the moderator (**403** `"Only an admin can remove an admin."`). It returns
+  a `Response`, which the form request passes on through `Gate::inspect()`,
+  so each 403 names its reason.
 - **`TablePolicy::play(User, Table)`** is true for players seated at the
   table right now — the same audience as the `private-table.{id}` channel. It
   gates `GET /tables/{table}/playing` (checked in `PlayingController`); anyone
