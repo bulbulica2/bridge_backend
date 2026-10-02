@@ -55,7 +55,7 @@ class BoardSetTest extends TestCase
     $boards = [];
 
     for ($board = 1; $board <= 4; $board++) {
-      $expected = ['id' => $set->id, 'number' => 1, 'board' => $board, 'of' => 4, 'finished' => false, 'ended' => null];
+      $expected = ['id' => $set->id, 'number' => 1, 'board' => $board, 'of' => 4, 'finished' => false, 'ended' => null, 'forfeited_by' => null];
 
       $this->state('N')->assertJsonPath('data.phase', 'auction')->assertJsonPath('data.set', $expected);
       $this->actingAs($this->players['E'])->getJson("/tables/{$this->table->id}")->assertJsonPath('data.set', $expected);
@@ -151,7 +151,7 @@ class BoardSetTest extends TestCase
     $this->next('N')->assertStatus(409)->assertJsonPath('message', 'The set is over: press Start for a new one.');
   }
 
-  public function test_a_player_leaving_mid_set_abandons_it(): void
+  public function test_a_player_taken_out_mid_set_abandons_it(): void
   {
     $this->startAll();
     $this->finish();
@@ -160,7 +160,8 @@ class BoardSetTest extends TestCase
     $set = TableSet::sole();
     $abandoned = $this->table->fresh()->board_id;
 
-    $this->actingAs($this->players['E'])->deleteJson("/tables/{$this->table->id}/seats")->assertOk();
+    // kicked while there (a Leave would hold the seat: SetForfeitTest)
+    $this->seats->remove($this->table, $this->players['E']);
 
     $set->refresh();
     $this->assertSame(TableSet::ENDED_ABANDONED, $set->ended);
@@ -205,7 +206,7 @@ class BoardSetTest extends TestCase
     $set = TableSet::sole();
 
     foreach (Seats::SEATS as $seat) {
-      $this->actingAs($this->players[$seat])->deleteJson("/tables/{$this->table->id}/seats")->assertOk();
+      $this->seats->remove($this->table, $this->players[$seat]);
     }
 
     $this->assertModelMissing($this->table);
@@ -287,7 +288,7 @@ class BoardSetTest extends TestCase
       ->assertJsonPath('data.winner', null);
 
     $this->nextAll();
-    $this->actingAs($this->players['W'])->deleteJson("/tables/{$this->table->id}/seats")->assertOk();
+    $this->seats->remove($this->table, $this->players['W']);
 
     // the board abandoned mid-play isn't listed; it was dealt, though
     $this->actingAs($this->players['W'])->getJson("/sets/$set->id")
@@ -304,7 +305,7 @@ class BoardSetTest extends TestCase
     $this->finish('3NT', 'N', 0, 9);
     $set = TableSet::sole();
 
-    // nothing forfeits a set yet (#76); the results already read it
+    // as tables:check-away would (SetForfeitTest)
     $set->update(['finished_at' => now(), 'ended' => TableSet::ENDED_FORFEIT, 'forfeited_by' => 'NS']);
 
     $this->actingAs($this->players['N'])->getJson("/sets/$set->id")

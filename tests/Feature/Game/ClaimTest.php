@@ -321,7 +321,8 @@ class ClaimTest extends TestCase
   {
     $this->claim('N', 13)->assertCreated();
 
-    $this->actingAs($this->players['E'])->deleteJson("/tables/{$this->table->id}/seats")->assertOk();
+    // gone for good (kicked; a Leave mid-set would only hold the seat)
+    app(TableSeatService::class)->remove($this->table, $this->players['E']);
 
     $playing = $this->playing->fresh();
     $this->assertNull($playing->table_id);

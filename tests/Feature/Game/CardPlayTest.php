@@ -346,9 +346,8 @@ class CardPlayTest extends TestCase
 
     $score = $this->playing->fresh()->score;
 
-    $this->actingAs($this->players['E'])
-      ->deleteJson("/tables/{$this->table->id}/seats")
-      ->assertOk();
+    // gone for good (kicked; a Leave mid-set would only hold the seat)
+    app(TableSeatService::class)->remove($this->table, $this->players['E']);
 
     $playing = $this->playing->fresh();
     $this->assertSame($this->table->id, $playing->table_id);

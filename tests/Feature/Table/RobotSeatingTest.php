@@ -216,22 +216,41 @@ class RobotSeatingTest extends TestCase
   {
     $table = $this->robotTable();
 
+    // mid-set, Leave holds the seat; their side (with a robot partner)
+    // forfeits the set once their time is up
     $this->actingAs($this->owner)->deleteJson("/tables/$table->id/seats")
+      ->assertStatus(202)
+      ->assertJsonPath('data.moderated_by', $this->owner->id);
+
+    $this->travel(config('bridge.set_forfeit_minutes'))->minutes();
+    $this->artisan('tables:check-away')->assertSuccessful();
+
+    $table->refresh();
+    $this->assertNull($table->moderated_by);
+    $this->assertSame(['N'], $table->freeSeats());
+    $this->assertNotNull($table->unattended_since);
+    $this->assertSame(3, $table->seats()->count());
+    $this->assertSame(['ended' => 'forfeit', 'forfeited_by' => 'NS'], $table->sets()->sole()->only('ended', 'forfeited_by'));
+    // the board in progress was abandoned, as when anyone leaves mid-board
+    $this->assertNull($table->board_id);
+  }
+
+  public function test_a_human_leaving_a_table_with_no_set_leaves_it_unattended_at_once(): void
+  {
+    $id = $this->actingAs($this->owner)->postJson('/tables', ['robots' => true])->assertCreated()->json('data.id');
+
+    $this->actingAs($this->owner)->deleteJson("/tables/$id/seats")
       ->assertOk()
       ->assertJsonPath('data.moderated_by', null)
       ->assertJsonPath('data.free_seats', ['N']);
 
-    $table->refresh();
-    $this->assertNotNull($table->unattended_since);
-    $this->assertSame(3, $table->seats()->count());
-    // the board in progress was abandoned, as when anyone leaves mid-board
-    $this->assertNull($table->board_id);
+    $this->assertNotNull(Table::findOrFail($id)->unattended_since);
   }
 
   public function test_anyone_may_kick_a_robot_from_an_unattended_table_and_the_last_one_deletes_it(): void
   {
     $table = $this->robotTable();
-    $this->actingAs($this->owner)->deleteJson("/tables/$table->id/seats")->assertOk();
+    $this->leaveForGood($table);
 
     $passerby = User::factory()->create();
     $robots = $table->seats()->with('user')->get()->pluck('user');
@@ -272,7 +291,7 @@ class RobotSeatingTest extends TestCase
   public function test_the_first_human_to_sit_at_an_unattended_table_runs_it(): void
   {
     $table = $this->robotTable();
-    $this->actingAs($this->owner)->deleteJson("/tables/$table->id/seats")->assertOk();
+    $this->leaveForGood($table);
 
     $newcomer = User::factory()->create();
 
@@ -291,7 +310,7 @@ class RobotSeatingTest extends TestCase
   public function test_an_unattended_table_is_deleted_after_ten_minutes(): void
   {
     $table = $this->robotTable();
-    $this->actingAs($this->owner)->deleteJson("/tables/$table->id/seats")->assertOk();
+    $this->leaveForGood($table);
 
     $this->travel(9)->minutes();
     $this->artisan('tables:delete-unattended')->expectsOutput('Deleted 0 unattended tables.')->assertSuccessful();
@@ -308,7 +327,7 @@ class RobotSeatingTest extends TestCase
   public function test_a_human_sitting_down_saves_an_unattended_table(): void
   {
     $table = $this->robotTable();
-    $this->actingAs($this->owner)->deleteJson("/tables/$table->id/seats")->assertOk();
+    $this->leaveForGood($table);
 
     $this->travel(9)->minutes();
     app(TableSeatService::class)->seat($table, User::factory()->create(), 'N');
@@ -327,7 +346,8 @@ class RobotSeatingTest extends TestCase
 
   public function test_the_idle_sweep_frees_humans_but_never_robots(): void
   {
-    $table = $this->robotTable();
+    // full but not started: no set, so the idle rule applies
+    $table = Table::findOrFail($this->actingAs($this->owner)->postJson('/tables', ['robots' => true])->json('data.id'));
 
     $this->travel(20)->minutes();
 
@@ -416,6 +436,15 @@ class RobotSeatingTest extends TestCase
     $id = $this->actingAs($creator)->postJson('/tables')->assertCreated()->json('data.id');
 
     return Table::findOrFail($id);
+  }
+
+  /**
+   * The owner leaves `$table` for good. Mid-set a Leave only holds the seat,
+   * so they go as a kick or a forfeit would take them out.
+   */
+  private function leaveForGood(Table $table): void
+  {
+    app(TableSeatService::class)->remove($table, $this->owner);
   }
 
   /**

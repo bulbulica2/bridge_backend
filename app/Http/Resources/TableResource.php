@@ -67,7 +67,7 @@ class TableResource extends JsonResource
   {
     return [
       ...Arr::except(parent::toArray($request), ['latest_set']),
-      'seats' => TableSeatResource::collection($this->whenLoaded('seats')),
+      'seats' => $this->whenLoaded('seats', fn () => TableSeatResource::forTable($this->seats)),
       'free_seats' => $this->resource->freeSeats(),
       'set' => $this->set(),
       'can_manage' => $this->when($this->withViewer, fn () => (bool) $request->user()?->can('manage', $this->resource)),

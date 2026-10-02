@@ -453,25 +453,60 @@ its matchpoints against every other table that has played it, and the set
 totals them, but matchpoints don't decide the set: a board only this table
 has played has nothing to be compared with.
 
-A set also ends **early**, with no winner, when one of its four players
-leaves the table before its last board is finished (`ended: abandoned`) —
-by quitting, moving, a kick or an idle release, even between boards. The
-board in play is abandoned as before (detached); the next board waits for
-everyone's Start and opens a new set. A side losing the set by going away
-too long (`ended: forfeit`, `forfeited_by`) is **planned** (#76): the
-columns exist and the results read them, but nothing ends a set that way
-yet, so for now leaving abandons the set.
+**Going away costs the set.** If a player leaves or stops responding during
+a set (a board in progress, or between boards of an unfinished set), their
+partnership **loses the set** — but only after **3 minutes**
+(`BRIDGE_SET_FORFEIT_MINUTES`); if they come back in time, play goes on:
+
+- A human with no sign of life (heartbeat or playing request) for a minute
+  (`BRIDGE_AWAY_SECONDS`, 60) is **away**: their seat is held — nobody else
+  can take it — and the board simply waits on them. The others see it, with
+  a countdown (`away_since`, `forfeit_at` per seat).
+- Any sign of life before the deadline brings them back: play continues
+  where it was.
+- Still away 3 minutes after their last sign of life, their side (`NS` or
+  `EW`) **forfeits** the set (`ended: forfeit`, `forfeited_by`): the other
+  side wins it, whatever the scores so far. The board in progress is
+  abandoned unscored (detached, as on any leave), the away player's seat is
+  freed through the normal leave path, and everyone sees the set's result.
+- Pressing **Leave** mid-set counts as going away (held for 3 minutes, they
+  may come back). **Moving** to another table mid-set forfeits at once, and
+  so does a manager **kicking** a player who is away.
+- Robots are never away. A human whose partner is a robot forfeits for that
+  side the same way.
+- **Admins** never cost their side the set: an absent admin is shown away
+  but has no deadline and their seat is never freed for it, and the table
+  just waits. While an admin is away nobody forfeits at all: the others'
+  countdowns stop and they may Leave (or move) at once without penalty —
+  the set ends `abandoned`. An admin's own Leave is immediate too.
+- Once the set is over (completed, forfeited or abandoned), anyone still
+  away is no longer held for it: their seat is freed (an admin's is kept).
+
+A set also ends **early**, with no winner, when one of its four players is
+taken out of the table before its last board is finished without it being
+a forfeit (`ended: abandoned`): a kick of a player who is there, leaving
+while an admin is away, an admin leaving. The board in play is abandoned as
+before (detached); the next board waits for everyone's Start and opens a
+new set. Outside a set nothing of this applies: Leave is immediate and the
+usual idle timeout (`BRIDGE_IDLE_SEAT_MINUTES`) frees a quiet player's seat.
 
 **In code:** `table_sets` (+ `table_set_seats`, the four players) and
 `board_table.table_set_id`/`set_position`. `BoardSelectionService::deal()`
 opens a set on a Start (`openSet()`) and continues it on Next;
 `BoardTable::finish()` completes the set when its last board ends;
-`TableSeatService::remove()` calls `BoardSelectionService::abandonSet()`.
+`TableSeatService::remove()` calls `BoardSelectionService::abandonSet()`,
+or `forfeitSet()` first when the player going is away or moving tables
+mid-set (`costsTheSet()` holds the admin exceptions).
+`TableSeatService::leave()` holds the seat on a mid-set Leave
+(`table_seats.away_since`), `touch()` clears it on any sign of life, and
+`checkAway()` (`tables:check-away`, scheduled every ten seconds) marks
+quiet players away, forfeits for the one away too long and frees those
+still away once the set is over.
 `moveOn()` refuses after the last board, and `start()` accepts a Start once
 the set is over even with the same four seated. A set outlives its table,
 like the playings in it. Its results are `GET /sets/{set}`
 (`BoardResultsService::set()`); the game state and table payloads carry
-`set: {id, number, board, of, finished, ended}`.
+`set: {id, number, board, of, finished, ended, forfeited_by}`.
 
 Status today: the data layer for steps 1–6 exists (migrations, models,
 seed data played through the game services, the seating unique indexes, board dealer and vulnerability

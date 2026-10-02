@@ -28,6 +28,9 @@ class TableSeatController extends BaseController
     TableSeatService $seatService,
     PlayingStateService $state
   ): JsonResponse {
+    // a move off a table mid-set loses that set: say so
+    $forfeited = $seatService->moveForfeits($table, $request->user());
+
     try {
       $seatService->seat($table, $request->user(), $request->validated('seat'));
     } catch (SeatUnavailableException $e) {
@@ -40,7 +43,7 @@ class TableSeatController extends BaseController
     // the table may hold a finished board: hand back the caller's state
     return $this->sendResponse(
       (new TableResource($table))->withPlaying($state->dealtStateFor($table, $request->user())),
-      'Seat taken successfully.',
+      'Seat taken successfully.'.($forfeited ? ' You walked out on a set at your old table, so your side forfeited it.' : ''),
       201
     );
   }
@@ -93,17 +96,19 @@ class TableSeatController extends BaseController
   }
 
   /**
-   * Give up your seat. The last player out deletes the table.
+   * Give up your seat. The last player out deletes the table. In the middle
+   * of a set the seat is held instead, and the caller is away
+   * (`TableSeatService::leave()`).
    */
   public function destroy(Request $request, Table $table, TableSeatService $seatService): JsonResponse
   {
     try {
-      $tableDeleted = $seatService->remove($table, $request->user());
+      $left = $seatService->leave($table, $request->user());
     } catch (SeatUnavailableException $e) {
       return $this->sendError($e->getMessage(), 409);
     }
 
-    return $this->removalResponse($table, $tableDeleted, 'You left the table.');
+    return $this->leaveResponse($table, $left);
   }
 
   /**
@@ -120,6 +125,13 @@ class TableSeatController extends BaseController
     $self = $request->user()->id === $user->id;
 
     try {
+      if ($self) {
+        return $this->leaveResponse($table, $seatService->leave($table, $user));
+      }
+
+      // kicking a player who is away mid-set costs their side the set, as
+      // their time running out would
+      $forfeited = $seatService->removalForfeits($table, $user);
       $tableDeleted = $seatService->remove($table, $user, $request->user());
     } catch (SeatUnavailableException $e) {
       // the seat is addressed in the URL, so "nobody sits there" is a 404
@@ -129,13 +141,14 @@ class TableSeatController extends BaseController
     return $this->removalResponse(
       $table,
       $tableDeleted,
-      $self ? 'You left the table.' : 'Player removed from the table.'
+      'Player removed from the table.'.($forfeited ? ' They were away mid-set, so their side forfeited it.' : '')
     );
   }
 
   /**
    * A sign of life from a seated player, sent every ~30 s while the table is
-   * open, so `tables:release-idle-seats` doesn't free their seat.
+   * open, so `tables:release-idle-seats` doesn't free their seat and, mid-set,
+   * `tables:check-away` doesn't mark them away (it brings back one who is).
    */
   public function heartbeat(Request $request, Table $table, TableSeatService $seatService): JsonResponse
   {
@@ -146,6 +159,28 @@ class TableSeatController extends BaseController
     return $this->sendResponse(
       ['last_seen_at' => $table->seats()->where('user_id', $request->user()->id)->first()->last_seen_at],
       'Heartbeat received.'
+    );
+  }
+
+  /**
+   * The answer to a player's own Leave: 202 with the table while their seat
+   * is held mid-set, else as removalResponse().
+   */
+  private function leaveResponse(Table $table, string $left): JsonResponse
+  {
+    if ($left !== TableSeatService::HELD) {
+      return $this->removalResponse($table, $left === TableSeatService::DELETED, 'You left the table.');
+    }
+
+    $table->load('seats.user');
+
+    $minutes = config('bridge.set_forfeit_minutes');
+
+    return $this->sendResponse(
+      new TableResource($table),
+      "You left in the middle of a set: your seat is held for $minutes ".($minutes === 1 ? 'minute' : 'minutes')
+        .'. Come back to the table before then, or your side forfeits the set.',
+      202
     );
   }
 

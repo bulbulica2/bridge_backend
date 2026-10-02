@@ -43,6 +43,14 @@ class Seats
     return self::SEATS[(self::indexOf($seat) + 2) % 4];
   }
 
+  /**
+   * The partnership a seat plays for: `NS` or `EW`.
+   */
+  public static function side(string $seat): string
+  {
+    return in_array(self::partner($seat), ['N', 'S'], true) ? 'NS' : 'EW';
+  }
+
   private static function indexOf(string $seat): int
   {
     $index = array_search($seat, self::SEATS, true);

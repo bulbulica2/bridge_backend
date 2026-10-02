@@ -84,8 +84,8 @@ the same pattern:
 
 | Service | Responsible for | Tests |
 |---|---|---|
-| `TableSeatService` | joining, moving, leaving and kicking (`seat()`, `remove()`), heartbeats (`touch()`), freeing idle seats (`releaseIdleSeats()`) and deleting unattended tables (`deleteUnattendedTables()`) | `tests/Feature/Table*` |
-| `BoardSelectionService` | which board a table plays and when: Start (`start()`, `withdrawStart()`), deals once a full table's humans have all pressed it (`startIfReady()`) as the first board of a new set, moves on after a finished board within the set (`moveOn()`), detaches a board abandoned mid-play (`abandonPlaying()`) and ends a set one of its players left (`abandonSet()`) | `tests/Feature/Table/StartBoardTest`, `AssignBoardTest`, `tests/Feature/Game/NextBoardTest`, `BoardSetTest` |
+| `TableSeatService` | joining, moving, leaving and kicking (`seat()`, `leave()`, `remove()`), heartbeats (`touch()`), freeing idle seats (`releaseIdleSeats()`), the away rule and set forfeit (`checkAway()`, `costsTheSet()`) and deleting unattended tables (`deleteUnattendedTables()`) | `tests/Feature/Table*` |
+| `BoardSelectionService` | which board a table plays and when: Start (`start()`, `withdrawStart()`), deals once a full table's humans have all pressed it (`startIfReady()`) as the first board of a new set, moves on after a finished board within the set (`moveOn()`), detaches a board abandoned mid-play (`abandonPlaying()`) and ends a set one of its players left (`abandonSet()`) or a side lost by going away (`forfeitSet()`) | `tests/Feature/Table/StartBoardTest`, `AssignBoardTest`, `SetForfeitTest`, `tests/Feature/Game/NextBoardTest`, `BoardSetTest` |
 | `PlayingStateService` | the one place that works out a playing's phase, calls, cards, turn, who acts, the hands and dummy | feature tests |
 | `AuctionService` | one call (`call()`); `nextToCall`, `illegalReason`, `isOver`, `result` | `tests/Unit/AuctionServiceTest` |
 | `CardPlayService` | one card (`play()`); `nextToPlay`, `actingSeat`, `illegalReason`, `trickWinner`, `tricks`, `tricksWon` | `tests/Unit/CardPlayServiceTest` |
@@ -129,7 +129,17 @@ Things worth knowing before you change them:
   (`board_table.table_set_id`/`set_position`), and `BoardTable::finish()`
   completes the set on its last board — after which `moveOn()` 409s and
   `start()` accepts a Start even with the same four seated. `remove()` ends
-  an unfinished set as `abandoned` (`abandonSet()`), even between boards.
+  an unfinished set as `abandoned` (`abandonSet()`), even between boards —
+  or as lost by the leaver's side (`forfeitSet()`) when they were away or
+  are moving to another table.
+- **Away mid-set.** In the middle of a set a seat is never just freed by
+  its player going: `TableSeatService::leave()` holds it on a Leave
+  (`table_seats.away_since`), `checkAway()` marks quiet players away after
+  `bridge.away_seconds` (60) and, `bridge.set_forfeit_minutes` (3) later,
+  takes them out through `remove()`, which forfeits the set for their side;
+  `touch()` (any sign of life) brings them back. `costsTheSet()` holds the
+  exceptions: robots are never away, an admin never forfeits, and while an
+  admin is away nobody does (Leave is then immediate).
   Sets outlive their table like playings do; `TableResource` and
   `PlayingResource` show where the table is as `set`.
   Start, like Next, takes the table row lock that seat changes take. A playing abandoned mid-board is
@@ -249,17 +259,22 @@ Three long-running processes sit next to `php artisan serve`:
   minute: `tables:release-idle-seats`
   (`App\Console\Commands\ReleaseIdleSeats`) and `tables:delete-unattended`
   (`App\Console\Commands\DeleteUnattendedTables`, which deletes tables only
-  robots have kept for `bridge.unattended_table_minutes` (10)).
+  robots have kept for `bridge.unattended_table_minutes` (10)); and every
+  **ten seconds** `tables:check-away` (`App\Console\Commands\CheckAwayPlayers`,
+  `TableSeatService::checkAway()`), since a minute is too coarse for the
+  three-minute set forfeit. It is a frequent check rather than a delayed
+  job per away player: being away starts with a heartbeat that *doesn't*
+  come, which no event marks.
 
 Reverb can't tell Laravel that a client disconnected, so the backend tracks
 presence with a heartbeat instead: `table_seats.last_seen_at` is set by
 `POST /tables/{table}/heartbeat` and by the `seen` middleware
 (`App\Http\Middleware\TouchTableSeat`) on every playing endpoint — add `seen`
-to any new one. The command frees seats idle for
-`config('bridge.idle_seat_minutes')` (5), or
-`bridge.idle_playing_seat_minutes` (15) at a table mid-board, through the
-normal `remove()`, so it behaves exactly like the player leaving. Robots
-send no heartbeat, so the sweep skips them.
+to any new one. `tables:release-idle-seats` frees seats idle for
+`config('bridge.idle_seat_minutes')` (5) at a table that isn't mid-set,
+through the normal `remove()`, so it behaves exactly like the player
+leaving; mid-set `tables:check-away` marks them away instead and forfeits
+the set after three minutes. Robots send no heartbeat, so both skip them.
 
 All three keep the old code loaded: restart them after changing PHP.
 

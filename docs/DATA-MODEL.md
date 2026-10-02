@@ -180,8 +180,15 @@ fresh seat is never idle), `ready_at` (nullable timestamp, cast to datetime:
 when the seat's player pressed Start, `POST /tables/{table}/start`; a robot's
 is set as it sits down, a human's starts null and is cleared again by a seat
 change at the same table and by every deal; `TableSeatResource` shows it as
-`ready`). This is the "who is sitting where at this table" join table. All
-five are fillable. Leaving deletes the row, Start with it.
+`ready`), `away_since` (nullable timestamp, cast to datetime: set only in
+the middle of a set, while the player is **away** — to their `last_seen_at`
+once `tables:check-away` notices a minute without a sign of life, or to now
+when they press Leave; cleared by any sign of life (`touch()`). Their side
+forfeits the set `bridge.set_forfeit_minutes` after it;
+`TableSeatResource` adds that moment as `forfeit_at`). This is the "who is
+sitting where at this table" join table. All six are fillable. Leaving
+deletes the row, Start with it — except a Leave mid-set, which keeps the row
+(the seat is held) and sets `away_since`.
 Unique indexes:
 - `(table_id, seat)`: one user per seat at a table (so at most 4 rows per
   table).
@@ -234,17 +241,30 @@ Seats are managed through `App\Services\TableSeatService`:
   Being kicked is not recorded anywhere, so a kicked player may immediately
   rejoin that table or any other.
 - `touch(Table, User)` sets the user's `last_seen_at` at that table to now
-  (a no-op if they don't sit there; `updated_at` is left alone). Called by
+  (a no-op if they don't sit there; `updated_at` is left alone), and clears
+  `away_since` if it was set, broadcasting `TableUpdated`. Called by
   `POST /tables/{table}/heartbeat` and by the `seen` middleware on the
   playing endpoints. `seat()` also refreshes it when a player changes seat.
 - `releaseIdleSeats()` frees, through `remove()`, every seat whose
   `last_seen_at` is older than `config('bridge.idle_seat_minutes')`
-  (`BRIDGE_IDLE_SEAT_MINUTES`, 5), or `bridge.idle_playing_seat_minutes`
-  (`BRIDGE_IDLE_PLAYING_SEAT_MINUTES`, 15) while the table has an unfinished
-  playing (`BoardSelectionService::openPlaying()`). Each seat is re-checked
+  (`BRIDGE_IDLE_SEAT_MINUTES`, 5), at a table **not** in the middle of a
+  set (`BoardSelectionService::currentSet()` null). Each seat is re-checked
   after its table row is locked, so a heartbeat, move or leave that lands
   in between wins. Returns how many seats it freed. Run every minute by the
   scheduled `tables:release-idle-seats` command.
+- `leave(Table, User)` is a player's own Leave: mid-set it holds the seat
+  (`away_since` now, returns `HELD`) when that would cost their side the
+  set; otherwise it is `remove()` (`LEFT`, or `DELETED` with the table).
+- `checkAway()` is the away rule (`bridge.away_seconds`, 60, and
+  `bridge.set_forfeit_minutes`, 3), run every ten seconds by the scheduled
+  `tables:check-away` command: mid-set it marks quiet humans away and takes
+  out, through `remove()`, the one away past the deadline, which forfeits
+  the set for their side; once a set is over it frees anyone still away
+  (an admin is only un-marked). Each table is checked under its lock.
+  `remove()` forfeits (`BoardSelectionService::forfeitSet()`) instead of
+  abandoning when the player going is away or moving to another table
+  mid-set, except an admin or while an admin there is away
+  (`costsTheSet()`).
 
 Relations: `table`, `user` (both belongsTo).
 `game\TableSeeder` creates each seeded table the way `POST /tables` does and
@@ -431,10 +451,12 @@ Fields (all fillable):
 - `ended` (enum `TableSet::ENDINGS`, nullable): null while it goes on, then
   `completed` (`BoardTable::finish()` on its last board), `abandoned` (one of
   its four left before that: `BoardSelectionService::abandonSet()`, from
-  `TableSeatService::remove()`) or `forfeit` — **planned** (#76), nothing
-  writes it yet.
+  `TableSeatService::remove()`) or `forfeit` (a player was away too long,
+  moved to another table or was kicked while away:
+  `BoardSelectionService::forfeitSet()` → `TableSet::forfeit()`, from
+  `TableSeatService::remove()`).
 - `forfeited_by` (enum `TableSet::SIDES`: `NS`, `EW`, nullable): the side that
-  lost by forfeit — planned with it, always null today.
+  lost by forfeit, null for any other ending.
 - timestamps.
 A table has at most one unfinished set at a time. Relations: `table`
 (belongsTo), `seats` (hasMany TableSetSeat), `playings` (hasMany BoardTable,

@@ -229,7 +229,8 @@ class RobotPlayTest extends TestCase
       return $table;
     }, [PlayingUpdated::class]);
 
-    $this->actingAs($this->human)->deleteJson("/tables/$table->id/seats")->assertOk();
+    // gone for good (a Leave mid-set would only hold the seat)
+    app(TableSeatService::class)->remove($table, $this->human);
 
     $table->refresh();
     $this->assertNotNull($table->unattended_since);

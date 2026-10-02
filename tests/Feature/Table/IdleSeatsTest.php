@@ -26,7 +26,7 @@ class IdleSeatsTest extends TestCase
   {
     parent::setUp();
 
-    config(['bridge.idle_seat_minutes' => 5, 'bridge.idle_playing_seat_minutes' => 15]);
+    config(['bridge.idle_seat_minutes' => 5]);
 
     $this->seats = app(TableSeatService::class);
   }
@@ -124,38 +124,31 @@ class IdleSeatsTest extends TestCase
     $this->assertModelMissing($table);
   }
 
-  public function test_a_board_in_progress_gets_the_longer_timeout_then_is_abandoned(): void
+  public function test_mid_set_the_sweeper_leaves_seats_to_the_away_rule(): void
   {
-    [$table, $players] = $this->fullTable();
-    $playing = BoardTable::where('table_id', $table->id)->firstOrFail();
+    [$table] = $this->fullTable();
 
-    // everybody else keeps playing; W has gone
-    foreach (['N' => 5, 'E' => 5, 'S' => 4] as $seat => $minutes) {
-      $this->travel($minutes)->minutes();
-      $this->actingAs($players[$seat])->getJson("/tables/$table->id/playing")->assertOk();
-    }
+    // long past the idle timeout: tables:check-away decides here
+    // (SetForfeitTest), not this sweeper
+    $this->travel(20)->minutes();
 
-    // W has been quiet 14 minutes: past the lobby timeout, not the playing one
     $this->assertSame(0, $this->seats->releaseIdleSeats());
     $this->assertSame(4, $table->seats()->count());
-
-    $this->travel(2)->minutes();
-
-    $this->assertSame(1, $this->seats->releaseIdleSeats());
-    $this->assertNull($this->seatOf($players['W']));
-    // left through remove(): the unfinished playing is detached, not deleted
-    $this->assertNull($playing->fresh()->table_id);
-    $this->assertNull($table->fresh()->board_id);
   }
 
-  public function test_a_finished_board_gets_the_lobby_timeout(): void
+  public function test_a_set_over_gets_the_idle_timeout(): void
   {
+    config(['bridge.set_size' => 1]);
+
     [$table] = $this->fullTable();
     $playing = BoardTable::where('table_id', $table->id)->firstOrFail();
     $playing->update(['auction_ended_at' => now()]);
     $playing->finish(null);
 
-    $this->travel(6)->minutes();
+    $this->travel(4)->minutes();
+    $this->assertSame(0, $this->seats->releaseIdleSeats());
+
+    $this->travel(2)->minutes();
 
     $this->assertSame(4, $this->seats->releaseIdleSeats());
     $this->assertModelMissing($table);
