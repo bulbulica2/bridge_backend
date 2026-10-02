@@ -44,7 +44,7 @@ class AssignBoardTest extends TestCase
     $this->assertDatabaseCount('board_table', 0);
   }
 
-  public function test_the_fourth_player_deals_a_board_and_opens_the_playing(): void
+  public function test_the_last_start_deals_a_board_and_opens_the_playing(): void
   {
     $table = Table::factory()->create(['board_id' => null]);
     $players = $this->fill($table);
@@ -100,6 +100,7 @@ class AssignBoardTest extends TestCase
     $this->seats->seat($table, User::factory()->create(), 'E');
     $this->seats->seat($table, User::factory()->create(), 'S');
     $this->seats->seat($table, User::factory()->create(), 'W');
+    $this->startBoard($table);
 
     $this->assertNotSame($stale->id, $table->fresh()->board_id);
   }
@@ -136,6 +137,7 @@ class AssignBoardTest extends TestCase
     $this->seats->seat($table, User::factory()->create(), 'E');
     $this->seats->seat($table, User::factory()->create(), 'S');
     $this->seats->seat($table, User::factory()->create(), 'W');
+    $this->startBoard($table);
 
     $this->assertSame($before + 1, Board::count());
     $this->assertSame(52, Board::findOrFail($table->fresh()->board_id)->cards()->count());
@@ -150,71 +152,6 @@ class AssignBoardTest extends TestCase
     $this->fill($table);
 
     $this->assertNotSame($empty->id, $table->fresh()->board_id);
-  }
-
-  public function test_a_manager_seating_the_fourth_player_starts_the_playing(): void
-  {
-    $manager = User::factory()->create();
-    $table = Table::factory()->create([
-      'board_id' => null,
-      'created_by' => $manager->id,
-      'moderated_by' => $manager->id,
-    ]);
-
-    $this->seats->seat($table, $manager, 'N');
-    $this->seats->seat($table, User::factory()->create(), 'E');
-    $this->seats->seat($table, User::factory()->create(), 'S');
-
-    $fourth = User::factory()->create();
-
-    $this->actingAs($manager)
-      ->postJson("/tables/$table->id/seats/users", ['user_id' => $fourth->id, 'seat' => 'W'])
-      ->assertCreated()
-      ->assertJsonPath('data.free_seats', []);
-
-    $this->assertNotNull($table->fresh()->board_id);
-    $this->assertDatabaseCount('board_table', 1);
-  }
-
-  public function test_the_join_response_carries_the_board_it_just_dealt(): void
-  {
-    $table = Table::factory()->create(['board_id' => null]);
-
-    foreach (['N', 'E', 'S'] as $seat) {
-      $this->seats->seat($table, User::factory()->create(), $seat);
-    }
-
-    $fourth = User::factory()->create();
-
-    $response = $this->actingAs($fourth)
-      ->postJson("/tables/$table->id/seats", ['seat' => 'W'])
-      ->assertCreated();
-
-    $this->assertSame($table->fresh()->board_id, $response->json('data.board_id'));
-  }
-
-  public function test_the_join_that_deals_the_board_carries_the_joiners_game_state(): void
-  {
-    $table = Table::factory()->create(['board_id' => null]);
-
-    foreach (['N', 'E', 'S'] as $seat) {
-      $this->seats->seat($table, User::factory()->create(), $seat);
-    }
-
-    $fourth = User::factory()->create();
-
-    $response = $this->actingAs($fourth)
-      ->postJson("/tables/$table->id/seats", ['seat' => 'W'])
-      ->assertCreated()
-      ->assertJsonPath('data.playing.phase', 'auction')
-      ->assertJsonPath('data.playing.my_seat', 'W')
-      ->assertJsonCount(13, 'data.playing.hand');
-
-    // exactly what the client would otherwise fetch next
-    $this->assertSame(
-      $this->actingAs($fourth)->getJson("/tables/$table->id/playing")->json('data'),
-      $response->json('data.playing')
-    );
   }
 
   public function test_a_join_that_does_not_fill_the_table_has_no_game_state(): void
@@ -282,6 +219,11 @@ class AssignBoardTest extends TestCase
     $this->seats->remove($table, $players['W']);
     $this->seats->seat($table, User::factory()->create(), 'W');
 
+    // the abandoned board took everyone's Start with it
+    $this->assertNull($table->fresh()->board_id);
+
+    $this->startBoard($table);
+
     $second = $table->fresh()->board_id;
 
     $this->assertNotNull($second);
@@ -291,7 +233,7 @@ class AssignBoardTest extends TestCase
   }
 
   /**
-   * Seat four fresh players, N/E/S/W.
+   * Seat four fresh players, N/E/S/W, who all press Start, which deals.
    *
    * @return array<string, User>
    */
@@ -303,6 +245,8 @@ class AssignBoardTest extends TestCase
       $players[$seat] = User::factory()->create();
       $this->seats->seat($table, $players[$seat], $seat);
     }
+
+    $this->startBoard($table);
 
     return $players;
   }

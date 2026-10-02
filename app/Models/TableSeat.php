@@ -17,12 +17,14 @@ class TableSeat extends Model
     'user_id',
     'seat',
     'last_seen_at',
+    'ready_at',
   ];
 
   protected function casts(): array
   {
     return [
       'last_seen_at' => 'datetime',
+      'ready_at' => 'datetime',
     ];
   }
 

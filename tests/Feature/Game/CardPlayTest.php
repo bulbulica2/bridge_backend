@@ -63,6 +63,8 @@ class CardPlayTest extends TestCase
       app(TableSeatService::class)->seat($this->table, $this->players[$seat], $seat);
     }
 
+    $this->startBoard($this->table);
+
     $this->table->refresh();
     $this->playing = BoardTable::where('table_id', $this->table->id)->firstOrFail();
 

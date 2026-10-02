@@ -58,7 +58,8 @@ table, so local data is lost.
 ### Seeded data
 
 Outside `APP_ENV=production` the seeders play every table through the game
-services (`TableSeatService`, `AuctionService`, `CardPlayService`,
+services (`TableSeatService`, `BoardSelectionService` — every player of a
+full table presses Start —, `AuctionService`, `CardPlayService`,
 `ClaimService`), so every seat, call, card and claim is one the API would have accepted and
 `GET /tables/{table}/playing` reads sensible turns, tricks and scores. You
 get one table per phase, named after it:
@@ -80,7 +81,8 @@ game. The seeders don't queue any broadcasts.
 
 No seeded table has robots. To play against robots, log in and create one
 with `POST /tables` and `{"robots": true}` (the admin must leave `Your call`
-first): the board is dealt at once. Robots move only through the queue, so
+first), then press Start (`POST /tables/{table}/start`): the robots are
+always ready, so that deals the board. Robots move only through the queue, so
 **`queue:work` must be running** or they never act (see
 [Robots](#robots)).
 
@@ -211,9 +213,11 @@ Measured for `39-fast-table-entry` on the XAMPP stack: Windows 11, PHP
 8.2.12 (ZTS, xdebug loaded in `debug` mode), MariaDB 10.4, a seeded DB, curl
 on the same machine. Medians of 30 requests (5 for `POST /tables`), in
 seconds. `GET /api/user` stands for a light logged-in request.
-`POST /tables` with `robots: true` is the whole way into a table: it deals
-the board and returns the caller's game state as `playing`, so no
-`GET /tables/{table}/playing` follows it any more. "4 at once" is the wall
+When this was measured, `POST /tables` with `robots: true` was the whole way
+into a table: it dealt the board and returned the caller's game state as
+`playing`. Since `40-start-board` it only seats the robots, and the
+creator's `POST /tables/{table}/start` deals and returns `playing` instead,
+so the dealing part of the time below has moved to that request. "4 at once" is the wall
 time of four `GET /api/user` sent together, as the SPA does when it opens a
 table.
 
@@ -272,8 +276,9 @@ measured in [bridge#55](https://github.com/bulbulica2/bridge/issues/55):
    rather than 0.19 s. With opcache off, Apache was noisy: 0.13–0.24 s a
    request.
 
-`POST /tables` with robots stays the slowest request (~0.6 s at best): it
-seats three robots and deals a board, all in the DB.
+`POST /tables` with robots was the slowest request (~0.6 s at best): it
+seated three robots and dealt a board, all in the DB. The deal is now the
+Start's (not re-measured).
 
 ### Serving through Apache (Windows, requests in parallel)
 

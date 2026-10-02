@@ -46,6 +46,8 @@ class AuctionTest extends TestCase
       $this->seats->seat($this->table, $this->players[$seat], $seat);
     }
 
+    $this->startBoard($this->table);
+
     $this->table->refresh();
 
     // North deals every test board, so the calls below read N, E, S, W

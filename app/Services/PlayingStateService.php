@@ -287,7 +287,7 @@ class PlayingStateService
 
   /**
    * `stateFor()`, or null while the table has no playing: what a request that
-   * may have dealt the board (taking the fourth seat) hands back with the
+   * may have dealt the board (the last Start) hands back with the
    * table, so the client can draw it without a `GET /tables/{table}/playing`.
    *
    * @return array<string, mixed>|null

@@ -106,10 +106,13 @@ vendor/bin/pint --test            # check formatting without changing files
   otherwise a kick, `TablePolicy::kick`) and `storeRobot`
   (`POST /tables/{table}/seats/robots`, a manager seats a robot), all behind
   the `auth` middleware. `POST /tables` takes `robots: true` to fill the
-  other three seats with robots. Both serialise a
+  other three seats with robots (it deals nothing). Both serialise a
   table through `App\Http\Resources\TableResource` (model fields plus
   `free_seats`), so every table payload has the same shape.
-  `POST /tables` and `POST /tables/{table}/seats` also add the caller's game
+  `Game\TableStartController` has `store`/`destroy`
+  (`POST`/`DELETE /tables/{table}/start`, press Start or take it back).
+  `POST /tables`, `POST /tables/{table}/start`, `POST /tables/{table}/seats`
+  and `POST /tables/{table}/seats/robots` also add the caller's game
   state as `playing`
   (`TableResource::withPlaying()` with
   `PlayingStateService::dealtStateFor()`, null with no board yet), so the
@@ -172,9 +175,19 @@ vendor/bin/pint --test            # check formatting without changing files
   disconnects back to Laravel, which is why this is a heartbeat and not a
   presence channel.
 - **Boards**: `App\Services\BoardSelectionService` owns which board a table
-  plays. `startPlayingIfFull()` fires from `seat()` when the **fourth** seat
-  is taken — not at `POST /tables`, because the selection rule needs all four
-  players' history and `board_table_seats` snapshots four seats. It applies
+  plays and when. Filling the table deals nothing by itself: each human
+  presses **Start** (`start()`, `POST /tables/{table}/start`, sets
+  `table_seats.ready_at`; `withdrawStart()` takes it back), a robot's
+  `ready_at` is set as it sits down, and `startIfReady()` — run by `start()`
+  and by every `seat()` — deals once the table is full and every seat is
+  ready (never at a robots-only table). Dealing clears the humans'
+  `ready_at`; leaving deletes the seat row and its Start with it, and a seat
+  change at the same table clears it. Nobody presses Start for anyone else.
+  Start 409s (`StartBoardException`) while a board is in its auction or play,
+  or finished with the same four still seated (they use Next). Not at
+  `POST /tables`, because the selection rule needs all four
+  players' history and `board_table_seats` snapshots four seats. The deal
+  (private `deal()`) applies
   the §8 rule (a board none of the four has played, else one where nobody
   holds a seat they've held on it, else `dealBoard()` shuffles a brand-new
   one — over the humans' history only, robots are ignored), sets
@@ -183,11 +196,12 @@ vendor/bin/pint --test            # check formatting without changing files
   whole `deal` and `ready`) until `moveOn()`
   (`POST /tables/{table}/playing/next`, `Game\PlayingController@next`)
   has marked all four snapshot seats' `board_table_seats.ready_at` — each
-  player for themselves, or a manager with `everyone` — and then calls
-  `startPlayingIfFull()` for the same four; it takes the table row lock
+  player for themselves, or a manager with `everyone` — and then deals
+  for the same four; it takes the table row lock
   like seat changes do, and 409s (`NextBoardException`) unless the board is
-  finished and the table full. Leaving between boards detaches nothing, and
-  whoever refills the seat deals the next board straight away.
+  finished and the same four sit in the same seats. Leaving between boards
+  detaches nothing; once the seat is refilled, everyone's Start deals the
+  next board.
   `abandonPlaying()` fires from `remove()`: an unfinished playing is
   **detached** (`table_id` set to null), never deleted, so the seat snapshot
   keeps recording that those four saw the deal. `dealBoard()` needs the 52
@@ -201,12 +215,13 @@ vendor/bin/pint --test            # check formatting without changing files
   snapshotted in the constructor as the same `TableResource` JSON the HTTP
   endpoints return (through `json_encode` — `resolve()` leaves nested
   resources as objects). `TableSeatService` dispatches it on every seat
-  change except one that deleted the table. Channels are in
+  change except one that deleted the table, and `BoardSelectionService` on
+  every Start pressed or taken back and every deal. Channels are in
   `routes/channels.php`: `table.{id}` admits players seated there. Channel
   auth is checked only at subscribe time, so a player who leaves stays
   subscribed — anything private to one player (their hand) must go on
   `App.Models.User.{id}`, never on the table channel.
-  `startPlayingIfFull()` dispatches `PlayingUpdated` (table channel, the
+  Dealing a board dispatches `PlayingUpdated` (table channel, the
   public game state only — no hand, no `my_seat`) and one `HandDealt` per
   human player (their own channel, their 13 cards) when it deals a board.
   `AuctionService` re-dispatches `PlayingUpdated` after every accepted call,
@@ -382,7 +397,8 @@ vendor/bin/pint --test            # check formatting without changing files
   passed out and one short of players. Seeders are split between
   `database/seeders/game/` (namespace `Database\Seeders\game`) and the root
   seeders folder. Everything is played through the real services:
-  `TableSeatService::seat()` (so the fourth player deals the board),
+  `TableSeatService::seat()`, then `BoardSelectionService::start()` for
+  each player (so the last Start deals the board),
   `AuctionSeeder` (plans a random auction from legal calls, then makes it
   through `AuctionService`, optionally stopping where a seat is to call) and
   `CardplaySeeder` (random legal cards through `CardPlayService`). They take

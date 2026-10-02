@@ -44,9 +44,10 @@ routes/*.php
   one), `TableSeatResource`, `PlayingResource` (the game state) and
   `UserResource`. `TableResource::withPlaying()` adds the caller's game
   state (`PlayingStateService::dealtStateFor()`, hand included) as
-  `playing`; only `POST /tables` and `POST /tables/{table}/seats` call it,
-  so a request that deals the board needs no `GET /tables/{table}/playing`
-  after it. Anything else leaves the key out — above all `TableUpdated`,
+  `playing`; only `POST /tables`, `POST /tables/{table}/start`,
+  `POST /tables/{table}/seats` and `POST /tables/{table}/seats/robots` call
+  it, so a request that deals the board needs no
+  `GET /tables/{table}/playing` after it. Anything else leaves the key out — above all `TableUpdated`,
   since the table channel must never carry a hand. Anything that shows a user to *other* players goes
   through `UserResource` (`id`, `name`, `username`, `description`,
   `is_robot`), never
@@ -84,7 +85,7 @@ the same pattern:
 | Service | Responsible for | Tests |
 |---|---|---|
 | `TableSeatService` | joining, moving, leaving and kicking (`seat()`, `remove()`), heartbeats (`touch()`), freeing idle seats (`releaseIdleSeats()`) and deleting unattended tables (`deleteUnattendedTables()`) | `tests/Feature/Table*` |
-| `BoardSelectionService` | which board a table plays: deals when the fourth seat fills (`startPlayingIfFull()`), moves on after a finished board (`moveOn()`), detaches a board abandoned mid-play (`abandonPlaying()`) | feature tests |
+| `BoardSelectionService` | which board a table plays and when: Start (`start()`, `withdrawStart()`), deals once a full table's humans have all pressed it (`startIfReady()`), moves on after a finished board (`moveOn()`), detaches a board abandoned mid-play (`abandonPlaying()`) | `tests/Feature/Table/StartBoardTest`, `AssignBoardTest`, `tests/Feature/Game/NextBoardTest` |
 | `PlayingStateService` | the one place that works out a playing's phase, calls, cards, turn, who acts, the hands and dummy | feature tests |
 | `AuctionService` | one call (`call()`); `nextToCall`, `illegalReason`, `isOver`, `result` | `tests/Unit/AuctionServiceTest` |
 | `CardPlayService` | one card (`play()`); `nextToPlay`, `actingSeat`, `illegalReason`, `trickWinner`, `tricks`, `tricksWon` | `tests/Unit/CardPlayServiceTest` |
@@ -111,10 +112,17 @@ Things worth knowing before you change them:
   `moderated_by` null); the first human to `seat()` there takes it over.
   Both reread the table under its row lock (`refresh()`), since who runs it
   may have changed since the caller loaded it.
-- **Boards** are chosen when the fourth player sits down, not when the table
-  is created, because the selection rule
+- **Boards** are dealt once the table is full **and** every human there has
+  pressed Start (`table_seats.ready_at`; robots are ready as they sit
+  down) — never by filling the table alone, so nobody is thrown into an
+  auction before reaching the table. Not when the table is created either,
+  because the selection rule
   ([`GAME-RULES.md` §8](GAME-RULES.md#8-game-flow-checklist-for-implementers))
-  needs all four players' history. A playing abandoned mid-board is
+  needs all four players' history. `startIfReady()` runs on every Start and
+  every `seat()` (a robot can be the one that completes the table); dealing
+  clears the humans' Start. A finished board is followed by `moveOn()` while
+  the same four sit there, by everyone's Start once one was replaced.
+  Start, like Next, takes the table row lock that seat changes take. A playing abandoned mid-board is
   *detached* (`table_id` set to null), never deleted, so the seat snapshot
   still records that those four saw the deal.
 - **Ending a board.** `BoardTable::finish()` is the only place a playing
@@ -202,7 +210,7 @@ to run it: [`RUNNING.md`](RUNNING.md#realtime-reverb)).
 
 | Event | Channel | Carries | Sent when |
 |---|---|---|---|
-| `TableUpdated` | `table.{id}` | the `TableResource` JSON, without `can_manage` | any seat change that didn't delete the table |
+| `TableUpdated` | `table.{id}` | the `TableResource` JSON, without `can_manage` | any seat change that didn't delete the table, a Start pressed or taken back, a board dealt |
 | `PlayingUpdated` | `table.{id}` | the public game state (no hand, no `my_seat`) | a board is dealt, and after every accepted call, card or claim action (a robot's too); `DriveRobots` listens to it |
 | `HandDealt` | `App.Models.User.{id}` | that player's 13 cards | a board is dealt (humans only) |
 
@@ -250,7 +258,8 @@ All three keep the old code loaded: restart them after changing PHP.
 ([`RUNNING.md`](RUNNING.md#seeded-data)).
 
 The seeders play those tables through the real services —
-`TableSeatService::seat()` (so the fourth player deals the board),
+`TableSeatService::seat()` and `BoardSelectionService::start()` (every
+player of a full table presses Start, so the last one deals the board),
 `AuctionService` (via `AuctionSeeder`), `CardPlayService` (via
 `CardplaySeeder`) and `ClaimService` — so a seeded database only ever
 contains legal play. `TableSeeder` wraps it all in `Event::fakeFor()`, so

@@ -80,8 +80,9 @@ board from the same sequence. It needs `CardSeeder` to have run and throws a
 `BoardSeeder` calls it `BoardSeeder::INITIAL_BOARDS` (5) times as a head start,
 and the production branch of `DatabaseSeeder` calls it 100 times; the API deals
 more whenever board selection runs out. `TableSeeder` seats its tables through
-`TableSeatService`, so the fourth player at each deals it one of those boards
-by the normal selection rule.
+`TableSeatService` and has the four players press Start
+(`BoardSelectionService::start()`), so the last one deals it one of those
+boards by the normal selection rule.
 `BoardFactory` itself deals no hands, so a board made through a factory
 (including the one `BoardTableFactory` — and through it `AuctionFactory` /
 `CardplayFactory` — creates by default) has **no** `board_card` rows. Board
@@ -133,11 +134,12 @@ it once `unattended_since` is older than `bridge.unattended_table_minutes`
 any unfinished playing first like a leave. `unattended_since` is null on
 every table a human sits at.
 `POST /tables` creates tables with `created_by` = `moderated_by` = the creator
-and `board_id` null. `board_id` is filled in later, by whoever takes the
-**fourth** seat: `TableSeatService::seat()` then calls
-`BoardSelectionService::startPlayingIfFull()`, which deals a board and opens
-the `board_table` playing. It goes back to null when a player leaves an
-unfinished playing.
+and `board_id` null. `board_id` is filled in later, once the table is full
+and every seat's `table_seats.ready_at` is set (each human pressed Start;
+robots are ready from the moment they sit down):
+`BoardSelectionService::startIfReady()`, run by `start()` and by
+`TableSeatService::seat()`, then deals a board and opens the `board_table`
+playing. It goes back to null when a player leaves an unfinished playing.
 `freeSeats()` returns the unoccupied seats (from the `seats` relation) in
 `N, E, S, W` order; `App\Http\Resources\TableResource` appends it to every
 table payload as `free_seats`.
@@ -148,8 +150,8 @@ table), `boardPlays` (hasMany BoardTable — boards this table has played),
 `players` (hasManyThrough User via TableSeat — marked "not tested yet" in
 code).
 `board_id` is the board being played **now** — null until the table has all
-four players, and null again once one of them leaves before the board is
-finished. Past boards are in `board_table`.
+four players and they have all pressed Start, and null again once one of
+them leaves before the board is finished. Past boards are in `board_table`.
 A table's playings, and a **finished** playing's `auctions` and `cardplays`,
 outlive it: the logs hang off `board_table`, which outlives the table, so no
 foreign key cascades them, and they are kept so the board can be reviewed
@@ -167,8 +169,12 @@ branch `34-board-review` lost their logs with their table.
 Fields: `table_id` (FK, cascade delete), `user_id` (FK, cascade delete),
 `seat` (enum `Seats::SEATS`), `last_seen_at` (timestamp, indexed, defaults
 to the current time; cast to datetime — also set by a `creating` hook, so a
-fresh seat is never idle). This is the "who is sitting where at this table"
-join table. All four are fillable.
+fresh seat is never idle), `ready_at` (nullable timestamp, cast to datetime:
+when the seat's player pressed Start, `POST /tables/{table}/start`; a robot's
+is set as it sits down, a human's starts null and is cleared again by a seat
+change at the same table and by every deal; `TableSeatResource` shows it as
+`ready`). This is the "who is sitting where at this table" join table. All
+five are fillable. Leaving deletes the row, Start with it.
 Unique indexes:
 - `(table_id, seat)`: one user per seat at a table (so at most 4 rows per
   table).
@@ -196,7 +202,12 @@ Seats are managed through `App\Services\TableSeatService`:
   - The user holds a seat at **this** table: the existing row's `seat` is
     updated in place. It is not deleted and re-created, so a table with one
     player isn't destroyed underneath them and the row keeps its `created_at`,
-    which is the join order the moderator handover reads.
+    which is the join order the moderator handover reads. A human's
+    `ready_at` is cleared: Start belongs to the seat.
+  - A new row gets `ready_at` set for a robot and null for a human, then
+    `BoardSelectionService::startIfReady()` runs: a robot filling the fourth
+    seat after every human pressed Start deals the board; a human sitting
+    down never does.
   - `$by` is the acting user when that isn't the user being seated. A manager
     may only seat somebody who sits nowhere: pulling a player off a table they
     chose would abandon that table's board for three other people, so it stays
@@ -346,7 +357,8 @@ Fields:
   (nullable), timestamps.
 
 Lifecycle (`App\Services\BoardSelectionService`):
-- **Opened** when a table's fourth seat is taken: the row is created with
+- **Opened** when a full table's last Start is pressed (or a robot fills
+  the fourth seat after every human pressed it): the row is created with
   `started_at`, and the four `table_seats` are copied into
   `board_table_seats`.
 - **Abandoned** when any player leaves before `finished_at` is set. The row is
@@ -367,7 +379,7 @@ Relations: `board`, `table`, `contractBid` (Bid), `declarer` (User) (all
 belongsTo), `seats` (hasMany BoardTableSeat), `auctions` / `cardPlays`
 (hasMany on `board_table_id`; eager-loadable). `discardLogs()` deletes both.
 `BoardTableFactory` has `auctionEnded()` (needs bids seeded) and `finished()`
-states. Rows are written by `BoardSelectionService` (a table filling up or
+states. Rows are written by `BoardSelectionService` (a full table's Start or
 moving on), `AuctionService`, `CardPlayService`, `ClaimService` and
 `BoardTable::finish()`; the seeders go through the same services.
 
@@ -379,7 +391,8 @@ Fields: `board_table_id` (FK, cascade delete), `user_id` (FK users), `seat`
 (enum `Seats::SEATS`), `ready_at` (nullable timestamp, cast `datetime`: once
 the playing is finished, when this player asked for the next board —
 `POST /tables/{table}/playing/next`; the next board is dealt when all four
-are set). All four are fillable.
+are set. Not to be confused with `table_seats.ready_at`, Start). All four
+are fillable.
 Unique `(board_table_id, seat)` and `(board_table_id, user_id)`; index
 `(user_id, seat)` for board selection ("has this user played board B?",
 "…from seat S?" — see

@@ -83,6 +83,8 @@ class MoveBetweenTablesTest extends TestCase
       $this->seats->seat($old, $players[$seat], $seat);
     }
 
+    $this->startBoard($old);
+
     $playing = BoardTable::where('table_id', $old->id)->firstOrFail();
 
     $this->seats->seat(Table::factory()->create(['board_id' => null]), $players['S'], 'N');
@@ -93,10 +95,11 @@ class MoveBetweenTablesTest extends TestCase
     $this->assertNull($old->fresh()->board_id);
   }
 
-  public function test_moving_into_a_fourth_seat_deals_the_new_table_a_board(): void
+  public function test_moving_into_a_fourth_seat_deals_nothing_until_everyone_presses_start(): void
   {
     $user = User::factory()->create();
-    $this->tableWith(['N' => $user, 'E' => User::factory()->create()]);
+    $old = $this->tableWith(['N' => $user, 'E' => User::factory()->create()]);
+    $this->startBoard($old);
 
     $new = Table::factory()->create(['board_id' => null]);
 
@@ -104,10 +107,32 @@ class MoveBetweenTablesTest extends TestCase
       $this->seats->seat($new, User::factory()->create(), $seat);
     }
 
+    $this->startBoard($new);
+    $this->assertTrue($user->seats()->firstOrFail()->ready_at !== null);
+
+    // the Start pressed at the old table stays there: it goes with the seat
     $this->seats->seat($new, $user, 'W');
+
+    $this->assertNull($user->seats()->firstOrFail()->ready_at);
+    $this->assertNull($new->fresh()->board_id);
+
+    $this->startBoard($new);
 
     $this->assertNotNull($new->fresh()->board_id);
     $this->assertSame(4, BoardTable::where('table_id', $new->id)->firstOrFail()->seats()->count());
+  }
+
+  public function test_changing_seat_at_the_same_table_clears_start(): void
+  {
+    $user = User::factory()->create();
+    $table = $this->tableWith(['N' => $user]);
+    $this->startBoard($table);
+
+    $this->assertNotNull($user->seats()->firstOrFail()->ready_at);
+
+    $this->seats->seat($table, $user, 'W');
+
+    $this->assertNull($user->seats()->firstOrFail()->ready_at);
   }
 
   public function test_a_failed_move_leaves_the_original_seat_untouched(): void
