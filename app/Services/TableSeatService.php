@@ -55,11 +55,18 @@ class TableSeatService
    * Broadcasts `TableUpdated` for the table sat at (and, through remove(), for
    * the table a move left), once the transaction commits.
    *
+   * A banned user is never seated (`not-banned` refuses them their own
+   * seat requests before this; here it stops a manager seating them).
+   *
    * @throws SeatUnavailableException
    */
   public function seat(Table $table, User $user, string $seat, ?User $by = null): TableSeat
   {
     $self = $by === null || $by->id === $user->id;
+
+    if (! $user->is_robot && ($ban = $user->activeBan()) !== null) {
+      throw new SeatUnavailableException($self ? $ban->message() : 'That user is banned.');
+    }
 
     try {
       return DB::transaction(function () use ($table, $user, $seat, $self) {
@@ -268,8 +275,8 @@ class TableSeatService
    * This frees the seat at once, whoever asked: a player's own Leave goes
    * through leave(), which holds the seat instead in the middle of a set.
    * Mid-set, a player taken out while away (by checkAway(), or kicked) or
-   * walking out on the set for another table (`$walkOut`, from seat())
-   * costs their side the set (`BoardSelectionService::forfeitSet()`), unless
+   * walking out on the set (`$walkOut`: a move to another table from
+   * seat(), or a ban from `UserBanService::ban()`) costs their side the set (`BoardSelectionService::forfeitSet()`), unless
    * costsTheSet() lets them off; anyone else leaving mid-set abandons it.
    *
    * A table lives only while somebody sits at it, so removing the last player

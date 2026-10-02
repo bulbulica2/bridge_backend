@@ -11,6 +11,7 @@ use App\Http\Controllers\Game\TableController;
 use App\Http\Controllers\Game\TableSeatController;
 use App\Http\Controllers\Game\TableSetController;
 use App\Http\Controllers\Game\TableStartController;
+use App\Http\Controllers\UserBanController;
 use App\Http\Controllers\UserController;
 use Illuminate\Support\Facades\Route;
 
@@ -29,51 +30,61 @@ Route::get('bids', [BidController::class, 'index'])->name('bids.index');
 // table
 Route::middleware('auth')->group(function () {
   Route::resource('tables', TableController::class, [
-    'only' => ['index', 'store', 'show'],
+    'only' => ['index', 'show'],
   ]);
 
-  // take or give up a seat at an existing table
-  Route::post('tables/{table}/seats', [TableSeatController::class, 'store'])->name('tables.seats.store');
-  Route::delete('tables/{table}/seats', [TableSeatController::class, 'destroy'])->name('tables.seats.destroy');
+  // every game action: a banned user gets a 403 naming the end of the ban
+  // and its reason
+  Route::middleware('not-banned')->group(function () {
+    Route::post('tables', [TableController::class, 'store'])->name('tables.store');
 
-  // a table manager (its moderator or an admin) seats another user
-  Route::post('tables/{table}/seats/users', [TableSeatController::class, 'storeUser'])->name('tables.seats.users.store');
+    // take or give up a seat at an existing table
+    Route::post('tables/{table}/seats', [TableSeatController::class, 'store'])->name('tables.seats.store');
+    Route::delete('tables/{table}/seats', [TableSeatController::class, 'destroy'])->name('tables.seats.destroy');
 
-  // a table manager puts a robot in a free seat
-  Route::post('tables/{table}/seats/robots', [TableSeatController::class, 'storeRobot'])->name('tables.seats.robots.store');
+    // a table manager (its moderator or an admin) seats another user
+    Route::post('tables/{table}/seats/users', [TableSeatController::class, 'storeUser'])->name('tables.seats.users.store');
 
-  // quit if it is your own seat, otherwise a manager kicking that player out
-  // (or anyone kicking a robot from an unattended table)
-  Route::delete('tables/{table}/seats/{user}', [TableSeatController::class, 'destroyUser'])->name('tables.seats.users.destroy');
+    // a table manager puts a robot in a free seat
+    Route::post('tables/{table}/seats/robots', [TableSeatController::class, 'storeRobot'])->name('tables.seats.robots.store');
 
-  // a seated player is still there; the client sends it every ~30 s while the table is open
-  Route::post('tables/{table}/heartbeat', [TableSeatController::class, 'heartbeat'])->name('tables.heartbeat');
+    // quit if it is your own seat, otherwise a manager kicking that player out
+    // (or anyone kicking a robot from an unattended table)
+    Route::delete('tables/{table}/seats/{user}', [TableSeatController::class, 'destroyUser'])->name('tables.seats.users.destroy');
 
-  // playing requests count as a heartbeat too (last_seen_at), so an active
-  // player is never released as idle
-  Route::middleware('seen')->group(function () {
-    // ready to play, or not after all: the board is dealt once the table is
-    // full and every human there has pressed Start (robots always have)
-    Route::post('tables/{table}/start', [TableStartController::class, 'store'])->name('tables.start.store');
-    Route::delete('tables/{table}/start', [TableStartController::class, 'destroy'])->name('tables.start.destroy');
+    // a seated player is still there; the client sends it every ~30 s while the table is open
+    Route::post('tables/{table}/heartbeat', [TableSeatController::class, 'heartbeat'])->name('tables.heartbeat');
 
-    // the game state of the board the table is on, for its seated players
-    Route::get('tables/{table}/playing', [PlayingController::class, 'show'])->name('tables.playing.show');
+    // playing requests count as a heartbeat too (last_seen_at), so an active
+    // player is never released as idle
+    Route::middleware('seen')->group(function () {
+      // ready to play, or not after all: the board is dealt once the table is
+      // full and every human there has pressed Start (robots always have)
+      Route::post('tables/{table}/start', [TableStartController::class, 'store'])->name('tables.start.store');
+      Route::delete('tables/{table}/start', [TableStartController::class, 'destroy'])->name('tables.start.destroy');
 
-    // once the board is finished: ready for the next one (each player for themselves)
-    Route::post('tables/{table}/playing/next', [PlayingController::class, 'next'])->name('tables.playing.next');
+      // the game state of the board the table is on, for its seated players
+      Route::get('tables/{table}/playing', [PlayingController::class, 'show'])->name('tables.playing.show');
 
-    // the next call in the auction: bid, pass, double or redouble
-    Route::post('tables/{table}/calls', [CallController::class, 'store'])->name('tables.calls.store');
+      // once the board is finished: ready for the next one (each player for themselves)
+      Route::post('tables/{table}/playing/next', [PlayingController::class, 'next'])->name('tables.playing.next');
 
-    // the next card of the trick, from your own hand or, as declarer, dummy's
-    Route::post('tables/{table}/cards', [CardPlayController::class, 'store'])->name('tables.cards.store');
+      // the next call in the auction: bid, pass, double or redouble
+      Route::post('tables/{table}/calls', [CallController::class, 'store'])->name('tables.calls.store');
 
-    // claim some of the remaining tricks (0 concedes), answer a claim, or withdraw your own
-    Route::post('tables/{table}/claim', [ClaimController::class, 'store'])->name('tables.claim.store');
-    Route::post('tables/{table}/claim/response', [ClaimController::class, 'respond'])->name('tables.claim.respond');
-    Route::delete('tables/{table}/claim', [ClaimController::class, 'destroy'])->name('tables.claim.destroy');
+      // the next card of the trick, from your own hand or, as declarer, dummy's
+      Route::post('tables/{table}/cards', [CardPlayController::class, 'store'])->name('tables.cards.store');
+
+      // claim some of the remaining tricks (0 concedes), answer a claim, or withdraw your own
+      Route::post('tables/{table}/claim', [ClaimController::class, 'store'])->name('tables.claim.store');
+      Route::post('tables/{table}/claim/response', [ClaimController::class, 'respond'])->name('tables.claim.respond');
+      Route::delete('tables/{table}/claim', [ClaimController::class, 'destroy'])->name('tables.claim.destroy');
+    });
   });
+
+  // an admin bans a user for some days, or lifts their ban early
+  Route::post('users/{user}/ban', [UserBanController::class, 'store'])->name('users.ban.store');
+  Route::delete('users/{user}/ban', [UserBanController::class, 'destroy'])->name('users.ban.destroy');
 
   // look users up by username or name, e.g. a manager picking someone to seat
   Route::get('users', [UserController::class, 'index'])->middleware('throttle:30,1')->name('users.index');

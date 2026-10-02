@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\User\SearchUsersRequest;
 use App\Http\Requests\User\UpdateProfileRequest;
+use App\Http\Resources\UserBanResource;
 use App\Http\Resources\UserResource;
 use App\Models\User;
 use App\Services\BoardResultsService;
@@ -41,11 +42,26 @@ class UserController extends BaseController
   }
 
   /**
-   * Another user's public profile.
+   * Another user's public profile. An admin also gets their current `ban`
+   * (null when there is none) and every ban they have had, latest first;
+   * nobody else ever sees either.
    */
-  public function show(User $user): JsonResponse
+  public function show(Request $request, User $user): JsonResponse
   {
-    return $this->sendResponse(new UserResource($user), 'User retrieved successfully.');
+    $profile = new UserResource($user);
+
+    if ($request->user()->can('manageBans', $user)) {
+      $bans = $user->bans()->with('bannedBy', 'liftedBy')->get();
+      $active = $user->activeBan();
+
+      $profile = [
+        ...$profile->resolve($request),
+        'ban' => $active === null ? null : (new UserBanResource($bans->find($active->id)))->resolve($request),
+        'bans' => UserBanResource::collection($bans)->resolve($request),
+      ];
+    }
+
+    return $this->sendResponse($profile, 'User retrieved successfully.');
   }
 
   /**

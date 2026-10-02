@@ -57,7 +57,32 @@ ones they made, plus any they inherit when a moderator leaves), `seats`
 (hasMany TableSeat), `tables`
 (hasManyThrough Table via TableSeat), `auctions`, `cardPlays`,
 `playedSeats` (hasMany BoardTableSeat — boards the user played and from which
-seat).
+seat), `bans` (hasMany UserBan, latest first). `activeBan()` is the ban in
+force now, or null — read fresh every time, since it runs out by itself.
+`toOwnArray()` (the user's own record, `GET`/`PATCH /api/user`) adds
+`is_admin` and `ban` (`UserBan::toOwnArray()`, or null).
+
+### UserBan (`user_bans`)
+An admin keeping a user away from the game until `until`
+(`POST /users/{user}/ban`, see [`API.md`](API.md#bans) and
+[`AUTH.md`](AUTH.md#bans)). Fillable: `user_id` (FK users, cascade on
+delete), `banned_by` (FK users, the admin; nullable, null on delete),
+`reason` (text, shown to the banned user), `banned_at`, `until`,
+`lifted_at` (nullable), `lifted_by` (FK users, nullable, null on delete).
+The three timestamps are cast to datetime. Index `(user_id, until)`.
+- A ban is **in force** while `lifted_at` is null and `until` is in the
+  future (scope `UserBan::active()`). It ends by itself: nothing writes
+  anything at `until`, every check compares with `now()`.
+- `lifted_at`/`lifted_by` are set when an admin lifts it
+  (`DELETE /users/{user}/ban`) or bans the user again — a new ban replaces
+  the one in force rather than stacking.
+- Rows are never deleted (only with their user), so the table is the user's
+  ban history, which admins see on `GET /users/{user}`.
+- `message()` is the refusal text (`"You are banned until 12 Oct 2026:
+  <reason>"`); `toOwnArray()` is `{reason, until, banned_at}`, what the
+  banned user is shown — never which admin. `UserBan::MAX_DAYS` (365) caps a
+  ban's length.
+- Relations: `user`, `bannedBy`, `liftedBy` (all belongsTo User).
 
 ### Board (`boards`)
 Fields: `number` (unsigned int, not unique), `dealer` (enum `Seats::SEATS`),
@@ -478,7 +503,8 @@ four see the set's results (`TableSetPolicy::view`).
 ```
 User ──< TableSeat >── Table           (a User may be a robot: is_robot)
   │                       └── board_id ──> Board (current board)
-  └── (created_by / moderated_by on Table; never a robot)
+  ├── (created_by / moderated_by on Table; never a robot)
+  └──< UserBan                           (+banned_by, lifted_by ──> User)
 
 Board ──< board_card (pivot, +seat) >── Card
 
