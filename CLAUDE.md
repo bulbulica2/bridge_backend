@@ -159,9 +159,26 @@ vendor/bin/pint --test            # check formatting without changing files
   Reuse the service for join/move instead of re-checking; both `seat()` and
   `remove()` take an optional `$by` (the acting user) for when it isn't the
   user being seated or removed, so the error names "that user". Being kicked
-  isn't recorded anywhere — there is no ban list, so a kicked player can
-  rejoin at once. Both also call into `BoardSelectionService` (below), so
-  they mutate the passed-in `$table`'s `board_id`.
+  isn't recorded anywhere, so a kicked player can rejoin at once; only a ban
+  (below) keeps them out, and `seat()` refuses a banned user. Both also call
+  into `BoardSelectionService` (below), so they mutate the passed-in
+  `$table`'s `board_id`.
+- **Bans**: an admin bans a user for 1–365 days
+  (`POST`/`DELETE /users/{user}/ban`, `UserBanController`,
+  `App\Services\UserBanService`, `UserPolicy::ban` — never an admin,
+  yourself or a robot). `user_bans` keeps every ban as history; one is in
+  force while `lifted_at` is null and `until` is ahead
+  (`UserBan::active()`, `User::activeBan()`), so it ends by itself with
+  nothing scheduled, and a new ban closes the one in force. `ban()` frees
+  the seat through `remove(..., walkOut: true)` (mid-set: forfeit at once),
+  deletes the user's `sessions` rows, replaces their `remember_token` and
+  dispatches `UserBanned` on their own channel. A banned user can still log
+  in (`GET /api/user` adds `ban`), but the `not-banned` route middleware
+  (`App\Http\Middleware\EnsureNotBanned`) refuses every game action with a
+  403 envelope naming the end date and reason: every route that changes
+  something at a table goes in that group in `routes/web.php`. The
+  `table.{id}` channel refuses them too. Admins see `ban`/`bans` on
+  `GET /users/{user}` (`UserBanResource`), nobody else does.
 - **Idle seats**: `table_seats.last_seen_at` is a player's last sign of life.
   `TableSeatService::touch()` sets it, from `POST /tables/{table}/heartbeat`
   (`TableSeatController@heartbeat`, sent by the client every ~30 s) and from
@@ -351,7 +368,8 @@ vendor/bin/pint --test            # check formatting without changing files
   payload carries `can_manage` (the policy for the caller), so clients never
   mirror it; `TableUpdated` builds its `TableResource` `withoutViewer()`, since
   the request user there is whoever made the change. `is_admin` is shown only
-  on the caller's own record (`User::toOwnArray()`, `GET`/`PATCH /api/user`).
+  on the caller's own record (`User::toOwnArray()`, `GET`/`PATCH /api/user`),
+  next to their own `ban`.
 - **Domain enums** are plain constant classes in `app/auxiliary/` (lowercase
   namespace `App\auxiliary`): `Suits`, `Seats` (`N,E,S,W`, clockwise),
   `Vulnerability`. Migrations build DB enum columns from these, so changing

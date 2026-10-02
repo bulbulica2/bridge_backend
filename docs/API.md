@@ -25,6 +25,22 @@ call and card endpoints use it for 409s. Laravel validation failures still use t
 to `auth` routes get Laravel's default `401 {"message": "Unauthenticated."}`,
 and policy failures get Laravel's default `403 {"message": "..."}`.
 
+A **banned** user (see [Bans](#bans)) gets a 403 in the envelope shape from
+every game action — `POST /tables` and every route under `/tables/{table}/`
+except `GET /tables/{table}` — with the end of the ban and its reason in the
+message and the ban in `data`:
+
+```json
+{
+  "status": 403,
+  "message": "You are banned until 12 Oct 2026: Playing two accounts at once.",
+  "data": {"ban": {"reason": "Playing two accounts at once.", "until": "2026-10-12T18:30:00.000000Z", "banned_at": "2026-10-05T18:30:00.000000Z"}}
+}
+```
+
+It comes before any other check (seated, policy, validation). Reading — the
+lobby, profiles, histories, results — stays open.
+
 ## Implemented & routed
 
 | Method | Path | Controller@action | Auth | Returns |
@@ -52,13 +68,15 @@ and policy failures get Laravel's default `403 {"message": "..."}`.
 | POST | `/tables/{table}/claim/response` | `Game\ClaimController@respond` | `auth` + seated at the table (`TablePolicy::play`) | accept or reject the pending claim (200, the updated game state) |
 | DELETE | `/tables/{table}/claim` | `Game\ClaimController@destroy` | `auth` + seated at the table (`TablePolicy::play`) | withdraw your own pending claim (200, the updated game state) |
 | GET | `/users?search=` | `UserController@index` | `auth` + `throttle:30,1` | find users by username or name (public profiles + `seated`, at most 10) |
-| GET | `/users/{user}` | `UserController@show` | `auth` | another user's public profile (no email) |
+| GET | `/users/{user}` | `UserController@show` | `auth` | another user's public profile (no email); an admin also gets their `ban` and `bans` |
+| POST | `/users/{user}/ban` | `UserBanController@store` | `auth` + admin (`UserPolicy::ban`) | ban that user for some days: frees their seat (mid-set their side forfeits), logs them out (201) |
+| DELETE | `/users/{user}/ban` | `UserBanController@destroy` | `auth` + admin | lift their ban at once (200; 404 if not banned) |
 | GET | `/users/{user}/playings` | `UserController@playings` | `auth` | that user's finished playings, latest first, paginated |
 | GET | `/boards/{board}` | `Game\BoardController@show` | `auth` + finished that board (`BoardPolicy::view`) | the board with all four hands as dealt |
 | GET | `/boards/{board}/results` | `Game\BoardController@results` | `auth` + finished that board (`BoardPolicy::view`) | every finished playing of the board, with matchpoints |
 | GET | `/playings/{playing}` | `Game\PlayingController@review` | `auth` + finished that playing's board (`BoardPolicy::view`) | one finished playing with its auction and tricks, to review it |
 | GET | `/sets/{set}` | `Game\TableSetController@show` | `auth` + one of the set's players, or finished all its boards (`TableSetPolicy::view`) | a set of boards' results: each board's result and matchpoints, totals per side, the winner |
-| GET | `/api/user` | closure | `auth:sanctum` | current authenticated `User` (the caller's own record, email and `is_admin` included) |
+| GET | `/api/user` | closure | `auth:sanctum` | current authenticated `User` (the caller's own record, email, `is_admin` and `ban` included) |
 | PATCH | `/api/user` | `UserController@update` | `auth:sanctum` | edit your own `name` / `description` |
 | GET | `/api/user/playings` | `UserController@ownPlayings` | `auth:sanctum` | your own finished playings, as `GET /users/{user}/playings` |
 | GET, POST | `/broadcasting/auth` | Laravel's `BroadcastController@authenticate` | session (`web` group) | signs a websocket subscription to a private channel, or 403 — see [Realtime](#realtime-websocket) and [`AUTH.md`](AUTH.md#websocket-channels-reverb) |
@@ -385,7 +403,8 @@ flags users who are already `seated` somewhere (they would 409 here).
   message `"User seated successfully."`). Seating the **fourth** player deals
   nothing: the newcomer has to press Start themselves.
 - **409** if the seat is taken (`"Seat E is already taken."`) or the user
-  already sits at any table (`"That user is already seated at a table."`).
+  already sits at any table (`"That user is already seated at a table."`),
+  or is [banned](#bans) (`"That user is banned."`).
   A full table always hits the taken-seat case.
 - Unlike `POST /tables/{table}/seats`, this does **not** move a seated player.
   A manager has no authority over the table that player chose, and pulling them
@@ -1104,7 +1123,9 @@ A user's profile has two views:
   (which adds `seated`) and nested in every table payload.
 - **Own**: the full serialised `User` (adds `email`, `email_verified_at`,
   timestamps; `password` and `remember_token` stay hidden) plus `is_admin`
-  (boolean, read-only). Only the user themselves gets it, from
+  (boolean, read-only) and `ban`: the [ban](#bans) keeping them away from
+  the game, `{reason, until, banned_at}`, or `null`. Only the user
+  themselves gets it, from
   `GET /api/user` and `PATCH /api/user`; `is_admin` is hidden from every other
   view of a user. A client doesn't need it to decide what a player may do at
   a table — use the table's `can_manage`.
@@ -1153,6 +1174,81 @@ doesn't exist. Requires a logged-in session (**401** for guests).
   "data": {"id": 3, "name": "Ann", "username": "ann", "description": "Plays a strong club.", "is_robot": false}
 }
 ```
+
+For an **admin** the profile adds `ban`, the ban in force (`null` when
+there is none), and `bans`, every ban the user has had, latest first —
+both in the admin shape of [`POST /users/{user}/ban`](#post-usersuserban).
+Nobody else ever gets either key, not even the user themselves (they have
+`ban` on `GET /api/user`, without who gave it).
+
+### Bans
+
+An admin keeps a user who cheats, plays several accounts at once or
+colludes away from the game for a number of days. While banned the user
+may still log in and read their own record (`GET /api/user`'s `ban`), but
+every game action is refused with a 403 naming the end date and the reason
+(see the top of this file), and a table manager can't seat them (409
+`"That user is banned."`). The ban ends by itself at `until`; nothing has
+to run. Bans are kept as history (`user_bans`, see
+[`DATA-MODEL.md`](DATA-MODEL.md#userban-user_bans)).
+
+#### `POST /users/{user}/ban`
+Admins only.
+
+| Field | Rules |
+|---|---|
+| `days` | **required**, integer, 1–365: the ban ends this many days from now |
+| `reason` | **required**, string, max 1000: shown to the banned user |
+
+At once, in one transaction:
+- the user's seat, if they hold one, is freed as if they had walked out
+  (moderation is handed on, an emptied table is deleted, the others get
+  `TableUpdated`). In the middle of a [set](#sets) their side **forfeits**
+  it immediately, with no three-minute grace (unless an admin at the table
+  is away, when it is abandoned, as for any leave);
+- their sessions are deleted and their remember-me token replaced, so their
+  next request is a **401** (see [`AUTH.md`](AUTH.md#bans));
+- [`UserBanned`](#event-userbanned) goes to their own channel, so an open
+  client can log them out and show the reason.
+
+A ban already in force is replaced: it is closed (`lifted_at`, `lifted_by`)
+and the new one starts now, shorter or longer.
+
+- **201**, message `"User banned until 12 Oct 2026."`, plus
+  `" They were in the middle of a set, so their side forfeited it."` when
+  it cost a set:
+
+```json
+{
+  "status": 201,
+  "message": "User banned until 12 Oct 2026.",
+  "data": {
+    "id": 4,
+    "user_id": 9,
+    "reason": "Playing two accounts at once.",
+    "banned_at": "2026-10-05T18:30:00.000000Z",
+    "until": "2026-10-12T18:30:00.000000Z",
+    "banned_by": {"id": 1, "name": "Admin", "username": "admin", "description": null, "is_robot": false},
+    "lifted_at": null,
+    "lifted_by": null,
+    "active": true
+  }
+}
+```
+
+- **403** (`{message}`) for a non-admin (`"Only an admin can ban a user."`),
+  and for an admin aiming at themselves (`"You cannot ban yourself."`),
+  another admin (`"An admin cannot be banned."`) or a robot
+  (`"A robot cannot be banned."`) — checked before validation.
+- **422** (default Laravel shape) for a missing `reason` or `days` out of range.
+- **404** for an unknown user, **401** for guests.
+
+#### `DELETE /users/{user}/ban`
+Admins only (**403** `{message}` otherwise). Lifts the ban in force at once:
+**200**, `"Ban lifted."`, with the ban in the same shape (`lifted_at`,
+`lifted_by` set, `active: false`). **404** `"That user is not banned."`
+(envelope) when there is none. Their sessions are already gone, so the
+user just logs in again.
 
 ### `GET /users/{user}/playings` and `GET /api/user/playings`
 A user's **finished** playings (played out, claimed or passed out), latest first,
@@ -1242,7 +1338,7 @@ protocol, so any Pusher client (`pusher-js`, Laravel Echo) works.
 | Channel (as the client names it) | Echo | Who may subscribe | Carries |
 |---|---|---|---|
 | `private-table.{id}` | `echo.private('table.' + id)` | players seated at table `{id}` (`routes/channels.php`) | `TableUpdated`, `PlayingUpdated` |
-| `private-App.Models.User.{id}` | `echo.private('App.Models.User.' + id)` | user `{id}` only | `HandDealt` — one player's own cards |
+| `private-App.Models.User.{id}` | `echo.private('App.Models.User.' + id)` | user `{id}` only | `HandDealt` — one player's own cards; `UserBanned` |
 
 A client should subscribe to its table's channel **after** it has a seat
 (the subscription is refused otherwise), and re-subscribe after moving to
@@ -1420,13 +1516,36 @@ A played card needs no per-player event: it only takes a card out of one
 hand, which that player's client can drop itself (or re-read from
 `GET /tables/{table}/playing`).
 
+### Event `UserBanned`
+
+Class `App\Events\UserBanned`, on `private-App.Models.User.{id}` (Echo:
+`echo.private('App.Models.User.' + myId).listen('UserBanned', ...)`). Same
+delivery as `TableUpdated`.
+
+**Sent when** an admin bans the user
+([`POST /users/{user}/ban`](#post-usersuserban)). Their sessions are already
+gone, so the client should log out at once and show the reason; logging in
+again works, and `GET /api/user` carries the same `ban`.
+
+```json
+{
+  "reason": "Playing two accounts at once.",
+  "until": "2026-10-12T18:30:00.000000Z",
+  "banned_at": "2026-10-05T18:30:00.000000Z"
+}
+```
+
+A banned user is refused `private-table.{id}` subscriptions (403); their own
+channel stays open.
+
 ## Stubs and not built
 
 - No endpoint yet for: renaming or transferring a table by hand, or
   assigning a board to a table by hand (one is dealt automatically once the
   table is full and everyone has pressed Start, and after each finished
   board once the players move on).
-- No ban list: kicking a player doesn't stop them rejoining.
+- Kicking a player doesn't stop them rejoining: only an admin's
+  [ban](#bans) does.
 - Robots bid a SAYC-style system and play by rules of thumb
   ([`ROBOTS.md`](ROBOTS.md)); better card play is planned as a separate
   issue. Robots never redouble or claim. The robots work out a short
@@ -1447,7 +1566,9 @@ You can currently only:
    there longest if you were the moderator
 5. As a table's manager (its moderator, or an admin), find a user by username or name (`GET /users?search=`) and seat
    them at it, or kick a player out of it
-6. Read any player's public profile, and edit your own name and description
+6. Read any player's public profile, and edit your own name and description;
+   as an admin, ban a user for some days (`POST /users/{user}/ban`), which
+   takes them off their table and logs them out, or lift the ban
 7. Subscribe to your table's websocket channel and get every seat change
    (and the board being dealt) pushed as `TableUpdated`, instead of polling
 8. Press Start (`POST /tables/{table}/start`) and see who else has (each

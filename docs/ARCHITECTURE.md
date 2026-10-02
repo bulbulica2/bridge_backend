@@ -12,7 +12,7 @@ A request goes through the same layers everywhere:
 
 ```
 routes/*.php
-  → middleware (auth, seen, throttle)
+  → middleware (auth, not-banned, seen, throttle)
   → controller            app/Http/Controllers/{Game,Auth,…}
   → form request          app/Http/Requests/<Area>/   (authorize() + rules())
   → service               app/Services/               (the rules and the writes)
@@ -27,7 +27,11 @@ routes/*.php
   record (`GET`/`PATCH /api/user`) and board history
   (`GET /api/user/playings`); Sanctum's `EnsureFrontendRequestsAreStateful`
   is prepended to that group in `bootstrap/app.php`, which also registers
-  the `seen` middleware alias.
+  the `seen` and `not-banned` middleware aliases. Every game action sits in
+  one `not-banned` route group (`App\Http\Middleware\EnsureNotBanned`): a
+  banned user gets a 403 naming the end of the ban and its reason before
+  anything else runs. Put any new route that changes something at a table
+  inside it.
 - **Controllers** in `app/Http/Controllers/Game/` extend `BaseController`.
   Answer with its `sendResponse($data, $message, $code)` and
   `sendError($message, $code, $errors = [])`, which both return
@@ -93,6 +97,7 @@ the same pattern:
 | `ScoringService` | duplicate scoring (`score()`, from declarer's side) and matchpoints (`matchpoints()`), pure static functions | `tests/Unit/ScoringTest` |
 | `BoardResultsService` | reads finished playings back for results across tables, a set's results (`set()`, `maySeeSet()`) and a player's history | feature tests (`BoardResultsTest`, `BoardSetTest`) |
 | `RobotService` | robot players: the pool they are seated from (`seatRobot()`), and one robot move at a time (`act()`: a call, a card or a claim, a claim answer, ready) through the services above | `tests/Feature/Game/RobotPlayTest`, `tests/Feature/Table/RobotSeatingTest` |
+| `UserBanService` | an admin's bans (`ban()`, `lift()`): a ban frees the user's seat through `TableSeatService::remove()` as a walk-out (mid-set their side forfeits at once), deletes their `sessions` rows, replaces their remember token and sends `UserBanned`; a new ban replaces the one in force | `tests/Feature/User/UserBanTest` |
 
 Things worth knowing before you change them:
 
@@ -219,6 +224,10 @@ Policies in `app/Policies/` are auto-discovered.
   Every HTTP table payload carries it as `can_manage`, so clients don't
   re-implement it.
 - `TablePolicy::play` limits the game state to players seated at the table.
+- `UserPolicy::ban` lets only an admin ban, and never themselves, another
+  admin or a robot (a `Response` with the reason, returned from
+  `BanUserRequest::authorize()`); `UserPolicy::manageBans` (admins) gates
+  lifting a ban and seeing a user's bans on `GET /users/{user}`.
 - `BoardPolicy::view` lets a player see a board's deal, results and reviews
   only once they have **finished** that board, with no admin override, since
   anyone else may still be dealt it.
@@ -236,6 +245,7 @@ to run it: [`RUNNING.md`](RUNNING.md#realtime-reverb)).
 | `TableUpdated` | `table.{id}` | the `TableResource` JSON, without `can_manage` | any seat change that didn't delete the table, a Start pressed or taken back, a board dealt |
 | `PlayingUpdated` | `table.{id}` | the public game state (no hand, no `my_seat`) | a board is dealt, and after every accepted call, card or claim action (a robot's too); `DriveRobots` listens to it |
 | `HandDealt` | `App.Models.User.{id}` | that player's 13 cards | a board is dealt (humans only) |
+| `UserBanned` | `App.Models.User.{id}` | the ban: `reason`, `until`, `banned_at` | an admin bans that user, so their open client logs out |
 
 - Events implement `ShouldBroadcast` (queued, so a Reverb outage fails a
   queued job, not the player's request) and `ShouldDispatchAfterCommit`
@@ -246,7 +256,8 @@ to run it: [`RUNNING.md`](RUNNING.md#realtime-reverb)).
   subscribes, so a player who leaves the table stays subscribed. The table
   channel must therefore only carry what any player may see; anything private
   to one player goes on their `App.Models.User.{id}` channel. Dummy's hand
-  and a claimer's hand are the exceptions, because they are face up.
+  and a claimer's hand are the exceptions, because they are face up. The
+  table channel refuses a banned user.
 
 ## Scheduler, queue and commands
 

@@ -70,13 +70,35 @@ class User extends Authenticatable
 
   /**
    * The user's record as shown to themselves (GET and PATCH /api/user):
-   * email included, plus `is_admin`, which stays hidden everywhere else.
+   * email included, plus `is_admin`, which stays hidden everywhere else, and
+   * `ban`, the ban keeping them away from the game (null when there is none).
    *
    * @return array<string, mixed>
    */
   public function toOwnArray(): array
   {
-    return [...$this->toArray(), 'is_admin' => (bool) $this->is_admin];
+    return [
+      ...$this->toArray(),
+      'is_admin' => (bool) $this->is_admin,
+      'ban' => $this->activeBan()?->toOwnArray(),
+    ];
+  }
+
+  /**
+   * Every ban this user has had, current, lifted or run out, latest first.
+   */
+  public function bans(): HasMany
+  {
+    return $this->hasMany(UserBan::class)->latest('banned_at')->latest('id');
+  }
+
+  /**
+   * The ban in force now, if any. Read fresh every time: it runs out by
+   * itself at `until`.
+   */
+  public function activeBan(): ?UserBan
+  {
+    return $this->bans()->active()->first();
   }
 
   public function createdTables(): HasMany

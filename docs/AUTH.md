@@ -51,8 +51,41 @@ customizations:
   `App\Services\RobotService`. Their emails are `@robots.invalid`, so a
   password-reset link for one reaches nobody (and would still not let it log
   in).
+- **A banned user can still log in** (see [Bans](#bans)).
 
 See [`DATA-MODEL.md`](DATA-MODEL.md#user-users) for the `User` fields.
+
+## Bans
+
+An admin may ban a user for some days (`POST /users/{user}/ban`, see
+[`API.md`](API.md#bans)). What that does to their login:
+
+- **Forced logout.** The ban deletes every `sessions` row of theirs (with
+  `SESSION_DRIVER=database`, the default; other drivers keep no rows to
+  delete) and replaces their `remember_token`, so neither an open session
+  nor a remember-me cookie authenticates them any more: their next request
+  is a **401**. At the same moment `UserBanned` (`{reason, until,
+  banned_at}`) goes to their `private-App.Models.User.{id}` channel, which
+  their open client is still subscribed to, so it can log them out at once
+  and show the reason instead of waiting for a 401. A request of theirs
+  already in flight when the ban lands may still save its session back;
+  that changes nothing that matters, as every game action is refused anyway.
+- **Logging in while banned works**, on purpose, so they can read why:
+  `GET /api/user` (and `PATCH /api/user`) carry `ban: {reason, until,
+  banned_at}`, `null` when not banned. Their own profile and history, other
+  players' profiles, the lobby and results all stay readable.
+- **Every game action is refused** with a **403** in the envelope shape,
+  `"You are banned until 12 Oct 2026: <reason>"`, with the ban in `data.ban`:
+  `POST /tables` and every route under `/tables/{table}/` but
+  `GET /tables/{table}` — seats, heartbeat, Start, the game state, calls,
+  cards, claims, Next. One route middleware does it, `not-banned`
+  (`App\Http\Middleware\EnsureNotBanned`), on that route group in
+  `routes/web.php`, before any other check. `POST /broadcasting/auth` refuses
+  them `private-table.{id}` (403, from the channel callback); their own
+  channel stays open.
+- **It ends by itself** at `until`: every check compares with `now()`, so no
+  job runs and the next request just works. An admin may lift it early
+  (`DELETE /users/{user}/ban`); the user then logs in again.
 
 ## Authenticated API check
 
@@ -129,8 +162,8 @@ Channel rules (`routes/channels.php`):
 
 | Channel | Who may subscribe |
 |---|---|
-| `private-table.{id}` | users **seated at that table** right now. Seated elsewhere, seated nowhere, or a guest → 403 |
-| `private-App.Models.User.{id}` | only user `{id}` themselves (the Laravel default). Carries `HandDealt` |
+| `private-table.{id}` | users **seated at that table** right now and not [banned](#bans). Seated elsewhere, seated nowhere, banned, or a guest → 403 |
+| `private-App.Models.User.{id}` | only user `{id}` themselves (the Laravel default). Carries `HandDealt` and `UserBanned` |
 
 **Authorization is checked once, at subscribe time.** A player who leaves or
 is kicked stays subscribed until their socket closes — Reverb has no way to
@@ -193,7 +226,16 @@ Policies live in `app/Policies/` and are auto-discovered by name
   [`API.md`](API.md#get-tablestableplaying).
 - Taking your own seat, or giving it up, is self-service and has no policy
   check — including through `DELETE /tables/{table}/seats/{user}` when
-  `{user}` is the caller, which is a quit rather than a kick.
+  `{user}` is the caller, which is a quit rather than a kick. A banned
+  user is refused all of it by the `not-banned` middleware (see
+  [Bans](#bans)).
+- **`UserPolicy::ban(User, User $target)`** decides who may ban whom
+  (`POST /users/{user}/ban`, through `BanUserRequest::authorize()`, before
+  validation): only an admin, and never themselves, another admin or a
+  robot. Each refusal is a **403** `{message}` saying which.
+  **`UserPolicy::manageBans`** (admins only) gates lifting a ban
+  (`DELETE /users/{user}/ban`) and seeing a user's `ban`/`bans` on
+  `GET /users/{user}`.
 
 ## Known gaps
 - `User.is_admin` has no endpoint to set it; it is only set in the database
