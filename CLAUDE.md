@@ -417,7 +417,7 @@ vendor/bin/pint --test            # check formatting without changing files
     won't run.
 - **Seeding** (`DatabaseSeeder`) branches on `APP_ENV`: `production` seeds only
   cards, bids and 100 dealt boards (through `BoardSeeder`, so they have
-  hands); anything else also seeds a fixed admin user (`email@email.com` /
+  hands); anything else also seeds a fixed admin user (`email@abc.com` /
   `pass`, `UserSeeder::ADMIN_EMAIL`) and `game\TableSeeder`'s tables, one
   per phase (see `RUNNING.md`): the admin's own table left mid-auction on
   the admin's turn, another mid-auction, one mid-play, one finished, one

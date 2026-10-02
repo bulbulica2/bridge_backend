@@ -12,7 +12,7 @@ class UserSeeder extends Seeder
    * The fixed admin's login (password `pass`). TableSeeder sits them at a
    * table where it is their turn to call.
    */
-  public const ADMIN_EMAIL = 'email@email.com';
+  public const ADMIN_EMAIL = 'email@abc.com';
 
   /**
    * Run the database seeds.

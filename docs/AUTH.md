@@ -197,7 +197,7 @@ Policies live in `app/Policies/` and are auto-discovered by name
 
 ## Known gaps
 - `User.is_admin` has no endpoint to set it; it is only set in the database
-  (the seeded `email@email.com` admin, or `UserFactory::isAdmin()` in tests).
+  (the seeded `email@abc.com` admin, or `UserFactory::isAdmin()` in tests).
 - Registration rules are in `Auth/RegisteredUserController`: `name` required
   max 255; `username` required, max 255, unique, not `robot-…`; `email` required, lowercase,
   valid, max 255, unique; `password` confirmed, Breeze `Password::defaults()`.
