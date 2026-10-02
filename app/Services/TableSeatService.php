@@ -154,14 +154,12 @@ class TableSeatService
    *
    * A table lives only while somebody sits at it, so removing the last player
    * deletes it. If a human is left and the leaver was the moderator, the role
-   * passes to the creator when they are still seated, otherwise to the human
-   * who joined earliest; robots never get it. If only robots are left, the
-   * table is kept as unattended (`unattended_since`, no moderator): its
-   * robots wait, anyone may kick them, and the first human to sit down runs
-   * it (see seat()). A table is only ever managed by one person, and
-   * `TablePolicy::manage` already treats a seated creator as that person.
-   * `created_by` never moves: it is what the per-creator active-table limit
-   * counts.
+   * passes to the human seated here longest (earliest seat row), the creator
+   * included but not preferred; robots never get it. If only robots are
+   * left, the table is kept as unattended (`unattended_since`, no
+   * moderator): its robots wait, anyone may kick them, and the first human
+   * to sit down runs it (see seat()). `created_by` never moves and grants
+   * nothing: it is what the per-creator active-table limit counts.
    *
    * A playing that was under way is dropped: the four who started it are no
    * longer the four sitting there. See `BoardSelectionService::abandonPlaying`.
@@ -196,11 +194,12 @@ class TableSeatService
       // whoever is left is not the four who started the board
       $this->boardSelection->abandonPlaying($table);
 
-      // the creator if they are still here, else the earliest human joiner
-      // still at the table, if any: a robot never runs a table
-      $humans = $table->seats()->whereHas('user', fn ($user) => $user->humans());
-      $next = (clone $humans)->where('user_id', $table->created_by)->first()
-        ?? $humans->orderBy('created_at')->orderBy('id')->first();
+      // the human seated here longest, if any: a robot never runs a table
+      $next = $table->seats()
+        ->whereHas('user', fn ($user) => $user->humans())
+        ->orderBy('created_at')
+        ->orderBy('id')
+        ->first();
 
       if ($next === null && ! $table->seats()->exists()) {
         $table->delete();

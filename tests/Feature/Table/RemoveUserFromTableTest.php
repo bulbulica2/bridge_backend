@@ -82,13 +82,27 @@ class RemoveUserFromTableTest extends TestCase
     $this->assertDatabaseMissing('table_seats', ['table_id' => $table->id, 'user_id' => $player->id]);
   }
 
+  public function test_an_admin_can_kick_the_moderator(): void
+  {
+    [$table, $moderator, $player] = $this->tableWithCreatorAndPlayer();
+
+    // the role passes on as on any leave
+    $this->actingAs(User::factory()->isAdmin()->create())
+      ->deleteJson("/tables/$table->id/seats/$moderator->id")
+      ->assertOk()
+      ->assertJsonPath('message', 'Player removed from the table.')
+      ->assertJsonPath('data.moderated_by', $player->id);
+
+    $this->assertDatabaseMissing('table_seats', ['table_id' => $table->id, 'user_id' => $moderator->id]);
+  }
+
   public function test_a_non_manager_cannot_kick_someone_else(): void
   {
     [$table, $creator, $player] = $this->tableWithCreatorAndPlayer();
 
     $this->actingAs($player)->deleteJson("/tables/$table->id/seats/$creator->id")
       ->assertForbidden()
-      ->assertJsonPath('message', 'Only the table creator, its moderator or an admin can remove other players.');
+      ->assertJsonPath('message', 'Only the table moderator or an admin can remove other players.');
 
     $this->assertDatabaseHas('table_seats', ['table_id' => $table->id, 'user_id' => $creator->id]);
   }
@@ -185,5 +199,42 @@ class RemoveUserFromTableTest extends TestCase
       ->assertForbidden();
 
     $this->assertDatabaseHas('table_seats', ['table_id' => $table->id, 'user_id' => $third->id]);
+  }
+
+  public function test_a_creator_who_comes_back_is_a_plain_player(): void
+  {
+    [$table, $creator, $player] = $this->tableWithCreatorAndPlayer();
+
+    $this->actingAs($creator)->deleteJson("/tables/$table->id/seats/$creator->id")->assertOk();
+    $this->actingAs($creator)->postJson("/tables/$table->id/seats", ['seat' => 'S'])
+      ->assertCreated()
+      ->assertJsonPath('data.moderated_by', $player->id)
+      ->assertJsonPath('data.can_manage', false);
+
+    $this->actingAs($creator)->deleteJson("/tables/$table->id/seats/$player->id")->assertForbidden();
+    $this->actingAs($creator)
+      ->postJson("/tables/$table->id/seats/users", ['user_id' => User::factory()->create()->id, 'seat' => 'W'])
+      ->assertForbidden();
+    $this->actingAs($creator)->postJson("/tables/$table->id/seats/robots", ['seat' => 'W'])->assertForbidden();
+
+    $this->assertDatabaseHas('table_seats', ['table_id' => $table->id, 'user_id' => $player->id]);
+    $this->assertDatabaseMissing('table_seats', ['table_id' => $table->id, 'seat' => 'W']);
+  }
+
+  public function test_the_creator_coming_back_does_not_get_the_role_when_the_moderator_leaves(): void
+  {
+    [$table, $creator, $player] = $this->tableWithCreatorAndPlayer();
+
+    $this->actingAs($creator)->deleteJson("/tables/$table->id/seats/$creator->id")->assertOk();
+    $this->travel(1)->minutes();
+    $third = User::factory()->create();
+    $this->actingAs($third)->postJson("/tables/$table->id/seats", ['seat' => 'S'])->assertCreated();
+    $this->travel(1)->minutes();
+    $this->actingAs($creator)->postJson("/tables/$table->id/seats", ['seat' => 'W'])->assertCreated();
+
+    // $third has sat here longer than the returning creator
+    $this->actingAs($player)->deleteJson("/tables/$table->id/seats/$player->id")
+      ->assertOk()
+      ->assertJsonPath('data.moderated_by', $third->id);
   }
 }

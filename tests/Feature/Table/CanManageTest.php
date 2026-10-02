@@ -55,12 +55,12 @@ class CanManageTest extends TestCase
     $this->assertCanManage($moderator, $table, true);
   }
 
-  public function test_a_seated_creator_can_manage(): void
+  public function test_a_creator_seated_again_is_a_plain_player(): void
   {
     [$table, $creator] = $this->tableWhoseCreatorLeft();
     TableSeat::factory()->create(['table_id' => $table->id, 'user_id' => $creator->id, 'seat' => 'S']);
 
-    $this->assertCanManage($creator, $table, true);
+    $this->assertCanManage($creator, $table, false);
   }
 
   public function test_an_admin_can_manage_seated_or_not(): void

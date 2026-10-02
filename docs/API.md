@@ -46,7 +46,7 @@ and policy failures get Laravel's default `403 {"message": "..."}`.
 | POST | `/tables/{table}/heartbeat` | `Game\TableSeatController@heartbeat` | `auth` + seated at the table (`TablePolicy::play`) | "still here": keeps the caller's seat from being freed as idle (200, `{last_seen_at}`) |
 | GET | `/tables/{table}/playing` | `Game\PlayingController@show` | `auth` + seated at the table (`TablePolicy::play`) | the game state of the table's current board, with the caller's own hand |
 | POST | `/tables/{table}/calls` | `Game\CallController@store` | `auth` + seated at the table (`TablePolicy::play`) | make your call in the auction (201, the updated game state) |
-| POST | `/tables/{table}/playing/next` | `Game\PlayingController@next` | `auth` + seated at the table (`TablePolicy::play`); with `everyone`, `TablePolicy::manage` | once the board is finished, ask for the next one; the last of the four deals it (200, the game state) |
+| POST | `/tables/{table}/playing/next` | `Game\PlayingController@next` | `auth` + seated at the table (`TablePolicy::play`) | once the board is finished, ask for the next one; the last of the four deals it (200, the game state) |
 | POST | `/tables/{table}/cards` | `Game\CardPlayController@store` | `auth` + seated at the table (`TablePolicy::play`) | play the next card of the trick — yours, or dummy's as declarer (201, the updated game state) |
 | POST | `/tables/{table}/claim` | `Game\ClaimController@store` | `auth` + seated at the table (`TablePolicy::play`) | claim some of the remaining tricks for your side, 0 to concede (201, the updated game state) |
 | POST | `/tables/{table}/claim/response` | `Game\ClaimController@respond` | `auth` + seated at the table (`TablePolicy::play`) | accept or reject the pending claim (200, the updated game state) |
@@ -122,10 +122,10 @@ shape less `can_manage` (see [Realtime](#realtime-websocket)).
 
 `can_manage` (boolean) is whether **the caller** may manage the table —
 seat other users and kick players — i.e. `TablePolicy::manage` evaluated for
-them (see [`AUTH.md`](AUTH.md#authorization)): true for its `moderated_by`,
-for its creator while seated there, and for any admin, seated or not. Show
+them (see [`AUTH.md`](AUTH.md#authorization)): true for its `moderated_by`
+and for any admin, seated or not — never for `created_by` as such. Show
 the manager controls from it rather than re-deriving the rule from
-`moderated_by`/`created_by`. In `GET /tables` it is per table, for the
+`moderated_by`. In `GET /tables` it is per table, for the
 caller.
 
 A seated player's `user` is their **public profile** only
@@ -303,9 +303,9 @@ Give up the seat you hold at this table. No body.
   ```
 - **200** and the updated table (same shape as `GET /tables/{table}`) if
   players remain. If the leaver was `moderated_by`, the role passes to the
-  creator if still seated, else the **human** who joined earliest
-  (`table_seats.created_at`, then `id`) — never a robot; `created_by` is
-  left alone. If only robots remain, the table becomes **unattended**
+  **human** seated there longest (`table_seats.created_at`, then `id`) —
+  never a robot, and the creator gets no preference; `created_by` is left
+  alone. If only robots remain, the table becomes **unattended**
   (`unattended_since` set, `moderated_by: null`; see [Tables](#tables)).
   The seat you left stays free: no robot takes it.
 - **409** `"You are not seated at this table."` if you hold no seat there.
@@ -327,11 +327,13 @@ table gives the first seat up for good, and the first table may well be gone
 (or full) by the time they come back.
 
 ### `POST /tables/{table}/seats/users`
-A table manager puts **another** user into a free seat. A table has exactly
-one manager: its current `moderated_by` user, which also covers the creator
-for as long as they sit there. Any `is_admin` user qualifies too, whether or
-not they sit at the table, while a creator who has **left** does not
-(`App\Policies\TablePolicy::manage`, see [`AUTH.md`](AUTH.md#authorization)).
+A table manager puts **another** user into a free seat. A table has one
+role, its moderator: the current `moderated_by` user (the creator when the
+table is made; see [`DELETE /tables/{table}/seats`](#delete-tablestableseats)
+for the handoff). Any `is_admin` user qualifies too, whether or not they sit
+at the table. `created_by` grants nothing: a creator who left and came back
+is a plain player (`App\Policies\TablePolicy::manage`, see
+[`AUTH.md`](AUTH.md#authorization)).
 
 | Field | Rules | Default |
 |---|---|---|
@@ -341,7 +343,7 @@ not they sit at the table, while a creator who has **left** does not
 Find the `user_id` with [`GET /users?search=`](#get-userssearch), which also
 flags users who are already `seated` somewhere (they would 409 here).
 
-- **403** `"Only the table creator, its moderator or an admin can seat other
+- **403** `"Only the table moderator or an admin can seat other
   players."` (Laravel's default `{message}` shape) for anyone else. This is
   checked before the body is validated.
 - **201** with the updated table (same shape as `GET /tables/{table}`,
@@ -370,7 +372,7 @@ in a free seat. The robot is the pool's first one that sits nowhere; a new
 |---|---|---|
 | `seat` | **required**, one of `N`, `E`, `S`, `W` | — |
 
-- **403** `"Only the table creator, its moderator or an admin can seat a
+- **403** `"Only the table moderator or an admin can seat a
   robot."` (Laravel's default `{message}` shape) for anyone else, checked
   before the body is validated.
 - **201** with the updated table (same shape as `GET /tables/{table}`,
@@ -390,15 +392,16 @@ Take a player out of their seat. No body. `{user}` is a `users.id`.
 
 - If `{user}` is the logged-in user this is a **quit** and is always allowed.
 - Otherwise it is a **kick** and requires `TablePolicy::kick`: the table's
-  manager (`TablePolicy::manage`) may kick anyone, and at an **unattended**
+  manager (`TablePolicy::manage`) may kick anyone — an admin may kick the
+  moderator too, e.g. to stop cheating — and at an **unattended**
   table (only robots left) **any** logged-in user may kick a **robot**.
-  Anyone else gets **403** `"Only the table creator, its moderator or an
-  admin can remove other players."` (Laravel's default `{message}` shape).
+  Anyone else gets **403** `"Only the table moderator or an admin can
+  remove other players."` (Laravel's default `{message}` shape).
 - **200** and the updated table (same shape as `GET /tables/{table}`), with
   message `"You left the table."` for a quit or `"Player removed from the
   table."` for a kick. If the removed player was `moderated_by`, the role
-  passes to the creator when they are still seated, otherwise to the human
-  who joined earliest; `created_by` is left alone. Removing the last human
+  passes to the human seated there longest, as on a quit; `created_by` is
+  left alone. Removing the last human
   leaves the table unattended, as `DELETE /tables/{table}/seats` does.
 - **200** and the table is **deleted** if that was the last player:
   ```json
@@ -597,9 +600,10 @@ next one. The finished board stays on the table — `result` and the whole
 `deal` on show — until **every** player has asked; the last one to ask deals
 the next board. Built by `App\Services\BoardSelectionService::moveOn()`.
 
-| Field | Rules |
-|---|---|
-| `everyone` | optional boolean. `true` asks for all four at once: a table manager's call (`TablePolicy::manage` — the moderator, a still-seated creator, or an admin, seated or not) |
+No body. Every player asks for themselves (robots ask as soon as the board
+ends); nobody — not the moderator, not an admin — can ask for anyone else.
+The `everyone` field this endpoint used to take is **ignored**: sending it
+only asks for the caller, like any other request.
 
 - **200** with the game state, exactly what `GET /tables/{table}/playing`
   would now return:
@@ -617,8 +621,9 @@ the next board. Built by `App\Services\BoardSelectionService::moveOn()`.
   - `"The players have changed since this board: ..."` — the table is full
     again, but not with the four who played the board: everyone presses
     Start ([`POST /tables/{table}/start`](#post-tablestablestart)) instead.
-- **403** for anyone not seated at this table, and for `everyone` from
-  anyone but a manager; **401** for guests, **404** for an unknown table id.
+- **403** `"Only the players seated at this table can ask for the next
+  board."` for anyone not seated at this table, admins included; **401** for
+  guests, **404** for an unknown table id.
 
 The next board is picked by the same rule as the first (`GAME-RULES.md` §8:
 none of the four has played it, else nobody has played it from the seat they
@@ -1247,10 +1252,9 @@ You can currently only:
 3. List tables, show one table with its free seats, and create a table
    (the creator is seated, up to 3 active tables per creator)
 4. Join a free seat at another table, and leave your seat — which deletes the
-   table if you were the last player, or hands it to the creator (if still
-   seated) or the earliest remaining player if you were the moderator
-5. As a table's manager (its moderator, the creator while seated, or an
-   admin), find a user by username or name (`GET /users?search=`) and seat
+   table if you were the last player, or hands it to the human seated
+   there longest if you were the moderator
+5. As a table's manager (its moderator, or an admin), find a user by username or name (`GET /users?search=`) and seat
    them at it, or kick a player out of it
 6. Read any player's public profile, and edit your own name and description
 7. Subscribe to your table's websocket channel and get every seat change

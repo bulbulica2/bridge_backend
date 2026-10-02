@@ -145,33 +145,35 @@ class NextBoardTest extends TestCase
     Event::assertDispatched(PlayingUpdated::class, fn (PlayingUpdated $e) => $e->playing['phase'] === 'auction');
   }
 
-  public function test_a_manager_moves_everyone_on(): void
+  public function test_a_moderator_asking_for_everyone_only_asks_for_themselves(): void
   {
     $this->finish();
+    $this->table->update(['moderated_by' => $this->players['N']->id]);
 
-    // the creator (north, from the factory) is not the manager here
-    $this->table->update(['moderated_by' => $this->players['N']->id, 'created_by' => $this->players['N']->id]);
-
-    $this->next('E', everyone: true)->assertForbidden();
-
+    // `everyone` is ignored: the others still have to ask
     $this->next('N', everyone: true)
       ->assertOk()
-      ->assertJsonPath('message', 'Next board dealt.')
-      ->assertJsonPath('data.phase', 'auction');
+      ->assertJsonPath('message', 'Waiting for the other players.')
+      ->assertJsonPath('data.phase', 'finished');
+
+    $this->assertSame(
+      [$this->players['N']->id],
+      $this->playing->seats()->whereNotNull('ready_at')->pluck('user_id')->all()
+    );
   }
 
-  public function test_an_unseated_admin_may_move_everyone_on_but_not_ask_for_themselves(): void
+  public function test_an_unseated_admin_may_not_ask_even_for_everyone(): void
   {
     $this->finish();
     $admin = User::factory()->create(['is_admin' => true]);
 
     $this->actingAs($admin)->postJson("/tables/{$this->table->id}/playing/next")->assertForbidden();
-
     $this->actingAs($admin)
       ->postJson("/tables/{$this->table->id}/playing/next", ['everyone' => true])
-      ->assertOk()
-      ->assertJsonPath('data.phase', 'auction')
-      ->assertJsonPath('data.my_seat', null);
+      ->assertForbidden()
+      ->assertJsonPath('message', 'Only the players seated at this table can ask for the next board.');
+
+    $this->assertNull($this->playing->seats()->whereNotNull('ready_at')->first());
   }
 
   public function test_only_seated_players_may_ask(): void

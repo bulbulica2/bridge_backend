@@ -26,6 +26,6 @@ class AddRobotToSeatRequest extends FormRequest
 
   protected function failedAuthorization(): void
   {
-    throw new AuthorizationException('Only the table creator, its moderator or an admin can seat a robot.');
+    throw new AuthorizationException('Only the table moderator or an admin can seat a robot.');
   }
 }

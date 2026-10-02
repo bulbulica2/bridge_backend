@@ -147,25 +147,29 @@ class TableSeatServiceTest extends TestCase
     $this->service->remove($table, User::factory()->create(), User::factory()->create());
   }
 
-  public function test_the_moderator_role_goes_back_to_a_still_seated_creator(): void
+  public function test_the_moderator_role_goes_to_the_longest_seated_human_not_the_creator(): void
   {
     $creator = User::factory()->create();
     $moderator = User::factory()->create();
+    $first = User::factory()->create();
     $table = Table::factory()->create([
       'board_id' => null,
       'created_by' => $creator->id,
       'moderated_by' => $moderator->id,
     ]);
 
-    // the moderator joined first, so without the creator rule they'd hand
-    // the table to $other
+    // the creator came back last, after a robot: neither is preferred
     $this->service->seat($table, $moderator, 'N');
-    $this->service->seat($table, $creator, 'E');
-    $this->service->seat($table, User::factory()->create(), 'S');
+    $this->travel(1)->minutes();
+    $this->service->seat($table, $first, 'E');
+    $this->travel(1)->minutes();
+    $this->service->seat($table, User::factory()->robot()->create(), 'S');
+    $this->travel(1)->minutes();
+    $this->service->seat($table, $creator, 'W');
 
     $this->service->remove($table, $moderator);
 
-    $this->assertSame($creator->id, $table->fresh()->moderated_by);
+    $this->assertSame($first->id, $table->fresh()->moderated_by);
   }
 
   public function test_leaving_a_table_you_do_not_sit_at_is_rejected(): void
