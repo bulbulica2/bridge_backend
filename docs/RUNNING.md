@@ -373,6 +373,22 @@ If you see that, do what it says. On a checkout with no `.env`,
 test; that is Dotenv probing for the file and is harmless (plain
 `vendor/bin/phpunit` doesn't show it).
 
+### CI
+
+GitHub Actions (`.github/workflows/tests.yml`) runs two checks on every PR
+against `main`, on every push to one, and on every push to `main`: **`pint`**
+(`vendor/bin/pint --test`) and **`tests`** (the full suite through
+`vendor/bin/phpunit`). Both run on Ubuntu with PHP 8.2 and no Xdebug
+(`coverage: none`), install from `composer.lock`, and use exactly the
+`phpunit.xml` setup above — no MySQL, no `.env`, no Reverb. The workflow must
+never set `DB_*` or `APP_ENV`, or the `TestCase` guard fails every test. A new
+push cancels the PR's older run; the Actions tab can also re-run it by hand.
+Results show as checks on the PR and under the repo's
+[Actions](https://github.com/bulbulica2/bridge_backend/actions/workflows/tests.yml)
+tab, and `main`'s branch protection requires both to pass before a PR can be
+merged. Linux is case-sensitive where Windows isn't, so a class or file name
+whose case doesn't match can pass locally and fail there.
+
 It also sets `QUEUE_CONNECTION=sync`, so the robots' queued moves run inside
 the request that made them due (one after another, not nested) and a test
 sees a board with robots advance to the human's turn straight away; the

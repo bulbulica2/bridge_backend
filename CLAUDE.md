@@ -13,7 +13,10 @@ the GitHub issue whose title starts with it) and merged to `main` via PR;
 commit messages are prefixed with the branch name. When the work on an issue
 is done (tests and `pint --test` pass, docs updated), commit, push and open
 the PR against `main` straight away — don't stop to ask first. The PR title
-is the commit subject, and the body says `Closes #<issue>`.
+is the commit subject, and the body says `Closes #<issue>`. GitHub Actions
+(`.github/workflows/tests.yml`) runs the `pint` and `tests` checks on every
+PR and push; still run both locally first, and fix a red check before
+merging — `main` requires them.
 
 If you don't know bridge rules (auction legality, declarer/dummy, trick
 winner, scoring), read `docs/GAME-RULES.md` before touching game

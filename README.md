@@ -1,5 +1,7 @@
 # bridge_backend
 
+[![tests](https://github.com/bulbulica2/bridge_backend/actions/workflows/tests.yml/badge.svg)](https://github.com/bulbulica2/bridge_backend/actions/workflows/tests.yml)
+
 Laravel 11 / PHP 8.2 API for an online **contract bridge** app: four players
 sit at a table, bid in an auction and play 13 tricks on a pre-dealt board,
 with results compared across tables (duplicate bridge). Sanctum session

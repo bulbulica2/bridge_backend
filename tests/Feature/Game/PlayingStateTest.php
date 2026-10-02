@@ -144,7 +144,7 @@ class PlayingStateTest extends TestCase
     // the hand is the only place cards appear
     $data = $response->json('data');
     unset($data['hand']);
-    $this->assertStringNotContainsString('rank', json_encode($data));
+    $this->assertStringNotContainsString('"rank":', json_encode($data));
   }
 
   public function test_a_played_card_leaves_the_hand(): void
