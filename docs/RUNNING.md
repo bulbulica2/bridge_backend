@@ -165,13 +165,16 @@ seconds:
 - `tables:release-idle-seats` (every minute) frees the seat of every human
   player who has sent no heartbeat or playing request for too long, exactly
   as if they had left (see [`API.md`](API.md#post-tablestableheartbeat)) —
-  only at tables that aren't in the middle of a set. Robots are never idle.
+  only at tables that aren't in the middle of a set. Robots and admins are
+  never idle: an admin's seat is only ever taken by the admin or another
+  admin.
 - `tables:check-away` (every **ten seconds**) handles the middle of a set
   (see [`API.md`](API.md#away-mid-set-and-the-forfeit)): it marks a human
   with no sign of life for `BRIDGE_AWAY_SECONDS` as away, and once they have
   been away `BRIDGE_SET_FORFEIT_MINUTES` their side forfeits the set and
   their seat is freed. It also frees the seats of players still away when a
-  set ends. A minute would be too coarse for a three-minute deadline, so it
+  set ends. An admin is shown away but never forfeits nor loses the seat.
+  A minute would be too coarse for a three-minute deadline, so it
   runs every few seconds; `schedule:work` (and `schedule:run`, which keeps
   running through the minute) runs such sub-minute tasks.
 - `tables:delete-unattended` deletes every table that only robots have kept

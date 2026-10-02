@@ -87,10 +87,12 @@ vendor/bin/pint --test            # check formatting without changing files
   `EnsureFrontendRequestsAreStateful` is prepended to the api group.
 - **Player identity**: `email` is not in `User::$hidden` (the owner needs it),
   so anything showing a user to *other* players goes through
-  `App\Http\Resources\UserResource` (`id`, `name`, `username`, `description`)
+  `App\Http\Resources\UserResource` (`id`, `name`, `username`, `description`,
+  `is_robot`, `is_admin`)
   — never the raw model. `TableResource` does this for seats via
   `TableSeatResource`; `GET /users/{user}` (`UserController@show`) serves the
-  same public profile (plus `is_robot`). `GET /users?search=`
+  same public profile. `is_admin` is public so a client can hide **Remove**
+  on an admin's seat. `GET /users?search=`
   (`UserController@index`, `throttle:30,1`) finds up to 10 **human** users by
   `username`/`name` — never by email, never robots — and loads
   `withExists('seats as seated')`, which `UserResource` adds as `seated`
@@ -186,7 +188,8 @@ vendor/bin/pint --test            # check formatting without changing files
   playing endpoints; add `seen` to any new playing route. The scheduled
   `tables:release-idle-seats` command (`routes/console.php`,
   `App\Console\Commands\ReleaseIdleSeats`) calls `releaseIdleSeats()`,
-  which frees stale **human** seats (robots are never idle) through
+  which frees stale **human** seats (robots are never idle, nor are
+  admins) through
   `remove()` — so it is exactly a leave —
   after `config('bridge.idle_seat_minutes')` (5), only at tables **not**
   mid-set (`BoardSelectionService::currentSet()` null), re-checking each
@@ -363,13 +366,14 @@ vendor/bin/pint --test            # check formatting without changing files
   plain player). Admins, seated or not, may also kick the moderator. Check it in
   the form request's `authorize()` so non-managers get 403 before validation
   (`AddUserToSeatRequest`, `AddRobotToSeatRequest`). `TablePolicy::kick`
-  (`RemoveUserFromSeatRequest`) allows yourself, a manager, or anyone
-  kicking a robot from an unattended table. Every HTTP table
+  (`RemoveUserFromSeatRequest`, through `Gate::inspect()`) allows yourself,
+  a manager, or anyone kicking a robot from an unattended table — but an
+  admin's seat only to the admin or another admin. Every HTTP table
   payload carries `can_manage` (the policy for the caller), so clients never
   mirror it; `TableUpdated` builds its `TableResource` `withoutViewer()`, since
-  the request user there is whoever made the change. `is_admin` is shown only
-  on the caller's own record (`User::toOwnArray()`, `GET`/`PATCH /api/user`),
-  next to their own `ban`.
+  the request user there is whoever made the change. The caller's own record
+  (`User::toOwnArray()`, `GET`/`PATCH /api/user`) adds their own `ban` next
+  to `is_admin`.
 - **Domain enums** are plain constant classes in `app/auxiliary/` (lowercase
   namespace `App\auxiliary`): `Suits`, `Seats` (`N,E,S,W`, clockwise),
   `Vulnerability`. Migrations build DB enum columns from these, so changing

@@ -37,6 +37,7 @@ class ProfileTest extends TestCase
           'username' => $other->username,
           'description' => 'Plays a strong club.',
           'is_robot' => false,
+          'is_admin' => false,
         ],
       ])
       ->assertJsonMissingPath('data.email');
@@ -56,8 +57,9 @@ class ProfileTest extends TestCase
     $this->actingAs($admin)->getJson('/api/user')->assertJsonPath('is_admin', true);
     $this->actingAs($admin)->patchJson('/api/user', ['name' => 'Boss'])->assertJsonPath('data.is_admin', true);
 
-    // nobody else's view of a user shows it
-    $this->actingAs($user)->getJson("/users/$admin->id")->assertJsonMissingPath('data.is_admin');
+    // everyone else sees it too, on the public profile
+    $this->actingAs($user)->getJson("/users/$admin->id")->assertJsonPath('data.is_admin', true);
+    $this->actingAs($admin)->getJson("/users/$user->id")->assertJsonPath('data.is_admin', false);
   }
 
   public function test_show_unknown_user_is_404(): void

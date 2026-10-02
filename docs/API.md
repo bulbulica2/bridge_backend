@@ -56,7 +56,7 @@ lobby, profiles, histories, results — stays open.
 | DELETE | `/tables/{table}/seats` | `Game\TableSeatController@destroy` | `auth` | give up your seat; deletes the table if you were the last player |
 | POST | `/tables/{table}/seats/users` | `Game\TableSeatController@storeUser` | `auth` + `TablePolicy::manage` | a table manager seats another user (201) |
 | POST | `/tables/{table}/seats/robots` | `Game\TableSeatController@storeRobot` | `auth` + `TablePolicy::manage` | a table manager puts a robot in a free seat (201) |
-| DELETE | `/tables/{table}/seats/{user}` | `Game\TableSeatController@destroyUser` | `auth` (+ `TablePolicy::kick`: a manager, to remove anyone but yourself; anyone, to remove a robot from an unattended table) | quit your seat, or kick that player out |
+| DELETE | `/tables/{table}/seats/{user}` | `Game\TableSeatController@destroyUser` | `auth` (+ `TablePolicy::kick`: a manager, to remove anyone but yourself or an admin; another admin, to remove an admin; anyone, to remove a robot from an unattended table) | quit your seat, or kick that player out |
 | POST | `/tables/{table}/start` | `Game\TableStartController@store` | `auth` + seated at the table (`TablePolicy::play`) | press Start; the first board of a new set is dealt once the table is full and every human there has pressed it (200, the table plus `playing`) |
 | DELETE | `/tables/{table}/start` | `Game\TableStartController@destroy` | `auth` + seated at the table (`TablePolicy::play`) | take your Start back while no board is dealt (200, the table) |
 | POST | `/tables/{table}/heartbeat` | `Game\TableSeatController@heartbeat` | `auth` + seated at the table (`TablePolicy::play`) | "still here": keeps the caller's seat from being freed as idle (200, `{last_seen_at}`) |
@@ -161,9 +161,13 @@ caller.
 
 A seated player's `user` is their **public profile** only
 (`App\Http\Resources\UserResource`, via `TableSeatResource`): `id`, `name`,
-`username`, `description`, `is_robot`. It never carries `email` (or anything
-else from the `users` row), so listing tables does not reveal who plays under
-which address. The same profile is served by `GET /users/{user}`.
+`username`, `description`, `is_robot`, `is_admin`. It never carries `email`
+(or anything else from the `users` row), so listing tables does not reveal
+who plays under which address. The same profile is served by
+`GET /users/{user}`. `is_admin` marks a seat only another admin may take
+away (see `DELETE /tables/{table}/seats/{user}`): hide **Remove** on it
+unless the caller is an admin, and show an **Admin** badge — players can
+see an admin is at the table.
 
 **Robots.** A seat can hold a robot player instead of a human: a `users` row
 with `is_robot: true`, username `robot-<n>`, from a pool that grows as it is
@@ -270,7 +274,7 @@ Rules:
     "unattended_since": null,
     "seats": [{"id": 12, "table_id": 7, "user_id": 3, "seat": "E", "last_seen_at": "...", "ready_at": null,
                "away_since": null, "created_at": "...", "updated_at": "...", "ready": false, "forfeit_at": null,
-               "user": {"id": 3, "name": "Ann", "username": "ann", "description": "Plays a strong club.", "is_robot": false}}],
+               "user": {"id": 3, "name": "Ann", "username": "ann", "description": "Plays a strong club.", "is_robot": false, "is_admin": false}}],
     "free_seats": ["N", "S", "W"],
     "can_manage": true,
     "playing": null
@@ -453,6 +457,12 @@ Take a player out of their seat. No body. `{user}` is a `users.id`.
   table (only robots left) **any** logged-in user may kick a **robot**.
   Anyone else gets **403** `"Only the table moderator or an admin can
   remove other players."` (Laravel's default `{message}` shape).
+- An **admin**'s seat (`user.is_admin`) is the exception: only another
+  admin may kick them, never the moderator — **403** `"Only an admin can
+  remove an admin."`. An admin is at a table to watch it or to act against
+  cheating, so nobody they might be watching can send them away. Nothing
+  automatic frees it either: not the idle timeout, not the away rule (see
+  the heartbeat below), and an admin can't be banned.
 - **200** and the updated table (same shape as `GET /tables/{table}`), with
   message `"You left the table."` for a quit or `"Player removed from the
   table."` for a kick. If the removed player was `moderated_by`, the role
@@ -512,7 +522,9 @@ brings you back.
 **Idle seats are freed — outside a set.** The scheduled command
 `tables:release-idle-seats` (every minute; see
 [`RUNNING.md`](RUNNING.md#scheduler-idle-seats)) frees the seat of every
-**human** player (robots send no heartbeat and are never idle) whose
+**human** player other than an admin (robots send no heartbeat and are
+never idle; an admin's seat is only ever taken by another admin or
+themselves) whose
 `last_seen_at` is older than `BRIDGE_IDLE_SEAT_MINUTES` (default 5), at a
 table that is **not** in the middle of a set (no set yet, or the last one
 is over). It goes through `TableSeatService::remove()`, so it is exactly a
@@ -562,8 +574,7 @@ table just waits for them. While an admin at the table is away, nobody
 forfeits: every other away seat's `forfeit_at` is null too, and a Leave or a
 move is immediate and ends the set `abandoned`. An admin's own Leave or move
 is immediate as well. Once the set is over an away admin just stops being
-away. (An admin seat is still subject to the idle timeout above, outside a
-set; that is #78.)
+away, and keeps the seat: the idle timeout above skips admins too.
 
 Outside a set nothing of this applies: nobody is marked away, Leave frees
 the seat at once, and the idle timeout above is the only one.
@@ -655,10 +666,10 @@ page refresh or a reconnect. No body. Built by
     "set": {"id": 5, "number": 1, "board": 2, "of": 4, "finished": false, "ended": null, "forfeited_by": null},
     "board": {"id": 7, "number": 7, "dealer": "S", "vulnerable": "N-S E-W"},
     "players": {
-      "N": {"id": 1, "name": "Ann", "username": "ann", "description": null, "is_robot": false},
-      "E": {"id": 2, "name": "Bob", "username": "bob", "description": null, "is_robot": false},
-      "S": {"id": 3, "name": "Cy", "username": "cy", "description": null, "is_robot": false},
-      "W": {"id": 9, "name": "Robot 1", "username": "robot-1", "description": "A robot player.", "is_robot": true}
+      "N": {"id": 1, "name": "Ann", "username": "ann", "description": null, "is_robot": false, "is_admin": false},
+      "E": {"id": 2, "name": "Bob", "username": "bob", "description": null, "is_robot": false, "is_admin": false},
+      "S": {"id": 3, "name": "Cy", "username": "cy", "description": null, "is_robot": false, "is_admin": false},
+      "W": {"id": 9, "name": "Robot 1", "username": "robot-1", "description": "A robot player.", "is_robot": true, "is_admin": false}
     },
     "turn": "N",
     "acting_user_id": 1,
@@ -971,7 +982,7 @@ table or detached, are left out. Built by
       {
         "playing_id": 42,
         "table_id": 3,
-        "players": {"N": {"id": 1, "name": "Ann", "username": "ann", "description": null, "is_robot": false}, "E": {...}, "S": {...}, "W": {...}},
+        "players": {"N": {"id": 1, "name": "Ann", "username": "ann", "description": null, "is_robot": false, "is_admin": false}, "E": {...}, "S": {...}, "W": {...}},
         "contract": {"id": 22, "call": "4S", "level": 4, "strain": "S", "special": false},
         "doubled": 0,
         "declarer": "N",
@@ -1118,7 +1129,9 @@ boards finished so far) and after its table is deleted.
 A user's profile has two views:
 
 - **Public** (`UserResource`): `id`, `name`, `username`, `description`,
-  `is_robot` (true for a robot player, see [Tables](#tables)). This is
+  `is_robot` (true for a robot player, see [Tables](#tables)) and
+  `is_admin` (true for an admin, whose seat only another admin may take
+  away — see `DELETE /tables/{table}/seats/{user}`). This is
   what other players see — in `GET /users/{user}`, in `GET /users?search=`
   (which adds `seated`) and nested in every table payload.
 - **Own**: the full serialised `User` (adds `email`, `email_verified_at`,
@@ -1126,9 +1139,10 @@ A user's profile has two views:
   (boolean, read-only) and `ban`: the [ban](#bans) keeping them away from
   the game, `{reason, until, banned_at}`, or `null`. Only the user
   themselves gets it, from
-  `GET /api/user` and `PATCH /api/user`; `is_admin` is hidden from every other
-  view of a user. A client doesn't need it to decide what a player may do at
-  a table — use the table's `can_manage`.
+  `GET /api/user` and `PATCH /api/user`. A client doesn't need `is_admin` to
+  decide what a player may do at a table — use the table's `can_manage` —
+  except that an admin's seat has no **Remove** for anyone but another
+  admin.
 
 ### `GET /users?search=`
 Look users up by text, e.g. for a table manager picking someone to seat with
@@ -1157,8 +1171,8 @@ guests).
   "status": 200,
   "message": "Users retrieved successfully.",
   "data": [
-    {"id": 3, "name": "Ann", "username": "ann", "description": "Plays a strong club.", "is_robot": false, "seated": false},
-    {"id": 7, "name": "Joanna", "username": "jo", "description": null, "is_robot": false, "seated": true}
+    {"id": 3, "name": "Ann", "username": "ann", "description": "Plays a strong club.", "is_robot": false, "is_admin": false, "seated": false},
+    {"id": 7, "name": "Joanna", "username": "jo", "description": null, "is_robot": false, "is_admin": false, "seated": true}
   ]
 }
 ```
@@ -1171,7 +1185,7 @@ doesn't exist. Requires a logged-in session (**401** for guests).
 {
   "status": 200,
   "message": "User retrieved successfully.",
-  "data": {"id": 3, "name": "Ann", "username": "ann", "description": "Plays a strong club.", "is_robot": false}
+  "data": {"id": 3, "name": "Ann", "username": "ann", "description": "Plays a strong club.", "is_robot": false, "is_admin": false}
 }
 ```
 
@@ -1228,7 +1242,7 @@ and the new one starts now, shorter or longer.
     "reason": "Playing two accounts at once.",
     "banned_at": "2026-10-05T18:30:00.000000Z",
     "until": "2026-10-12T18:30:00.000000Z",
-    "banned_by": {"id": 1, "name": "Admin", "username": "admin", "description": null, "is_robot": false},
+    "banned_by": {"id": 1, "name": "Admin", "username": "admin", "description": null, "is_robot": false, "is_admin": true},
     "lifted_at": null,
     "lifted_by": null,
     "active": true
@@ -1408,13 +1422,13 @@ the request (the one who did gets it in their HTTP response).
         "id": 21, "table_id": 7, "user_id": 12, "seat": "N",
         "last_seen_at": "...", "ready_at": "2026-09-22T10:16:40.000000Z", "away_since": null,
         "created_at": "...", "updated_at": "...", "ready": true, "forfeit_at": null,
-        "user": {"id": 12, "name": "Alice", "username": "alice", "description": null, "is_robot": false}
+        "user": {"id": 12, "name": "Alice", "username": "alice", "description": null, "is_robot": false, "is_admin": false}
       },
       {
         "id": 22, "table_id": 7, "user_id": 13, "seat": "E",
         "last_seen_at": "...", "ready_at": null, "away_since": null,
         "created_at": "...", "updated_at": "...", "ready": false, "forfeit_at": null,
-        "user": {"id": 13, "name": "Bob", "username": "bob", "description": null, "is_robot": false}
+        "user": {"id": 13, "name": "Bob", "username": "bob", "description": null, "is_robot": false, "is_admin": false}
       }
     ],
     "free_seats": ["S", "W"],

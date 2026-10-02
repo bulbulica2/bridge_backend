@@ -107,6 +107,55 @@ class RemoveUserFromTableTest extends TestCase
     $this->assertDatabaseHas('table_seats', ['table_id' => $table->id, 'user_id' => $creator->id]);
   }
 
+  public function test_the_moderator_cannot_kick_an_admin(): void
+  {
+    [$table, $moderator, $admin] = $this->tableWithCreatorAndPlayer();
+    $admin->forceFill(['is_admin' => true])->save();
+
+    $this->actingAs($moderator)->deleteJson("/tables/$table->id/seats/$admin->id")
+      ->assertForbidden()
+      ->assertJsonPath('message', 'Only an admin can remove an admin.');
+
+    $this->assertDatabaseHas('table_seats', ['table_id' => $table->id, 'user_id' => $admin->id]);
+  }
+
+  public function test_another_admin_can_kick_an_admin(): void
+  {
+    [$table, , $admin] = $this->tableWithCreatorAndPlayer();
+    $admin->forceFill(['is_admin' => true])->save();
+
+    $this->actingAs(User::factory()->isAdmin()->create())
+      ->deleteJson("/tables/$table->id/seats/$admin->id")
+      ->assertOk()
+      ->assertJsonPath('message', 'Player removed from the table.');
+
+    $this->assertDatabaseMissing('table_seats', ['table_id' => $table->id, 'user_id' => $admin->id]);
+  }
+
+  public function test_an_admin_may_leave_by_themselves(): void
+  {
+    [$table, , $admin] = $this->tableWithCreatorAndPlayer();
+    $admin->forceFill(['is_admin' => true])->save();
+
+    $this->actingAs($admin)->deleteJson("/tables/$table->id/seats/$admin->id")
+      ->assertOk()
+      ->assertJsonPath('message', 'You left the table.');
+
+    $this->assertDatabaseMissing('table_seats', ['table_id' => $table->id, 'user_id' => $admin->id]);
+  }
+
+  public function test_seats_say_which_players_are_admins(): void
+  {
+    [$table, $moderator, $admin] = $this->tableWithCreatorAndPlayer();
+    $admin->forceFill(['is_admin' => true])->save();
+
+    $seats = collect($this->actingAs($moderator)->getJson("/tables/$table->id")->assertOk()->json('data.seats'))
+      ->keyBy('seat');
+
+    $this->assertTrue($seats['E']['user']['is_admin']);
+    $this->assertFalse($seats['N']['user']['is_admin']);
+  }
+
   public function test_a_stranger_cannot_kick(): void
   {
     [$table, , $player] = $this->tableWithCreatorAndPlayer();

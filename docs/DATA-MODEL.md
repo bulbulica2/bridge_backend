@@ -30,8 +30,10 @@ duplicate scoring (`ScoringService`) are enforced in code.
 
 ### User (`users`)
 Fields: `name`, `username`, `email`, `password` (hashed), `description`,
-`is_admin` (hidden from JSON, cast to boolean, not fillable; grants
-`TablePolicy::manage` on every table), `is_robot` (boolean, default false,
+`is_admin` (hidden from the model's JSON but shown by `UserResource`, cast
+to boolean, not fillable; grants `TablePolicy::manage` on every table, and
+only another admin may kick an admin — `TablePolicy::kick`), `is_robot`
+(boolean, default false,
 indexed, cast to boolean, not fillable), standard Breeze fields
 (`email_verified_at`, `remember_token`).
 `is_robot` marks a **robot player**. Robots are ordinary `users` rows made
@@ -50,7 +52,7 @@ writable by its owner through `PATCH /api/user` (max 1000 chars), along with
 `name`. `email` is **not** in `$hidden` — the owner's own `GET /api/user`
 needs it — so any payload showing a user to *other* players must go through
 `App\Http\Resources\UserResource` (`id`, `name`, `username`, `description`,
-`is_robot`) rather than the raw model.
+`is_robot`, `is_admin`) rather than the raw model.
 Relations: `createdTables` (hasMany Table via `created_by`), `moderatedTables`
 (hasMany Table via `moderated_by` — a user can moderate several tables: the
 ones they made, plus any they inherit when a moderator leaves), `seats`
@@ -270,7 +272,8 @@ Seats are managed through `App\Services\TableSeatService`:
   `away_since` if it was set, broadcasting `TableUpdated`. Called by
   `POST /tables/{table}/heartbeat` and by the `seen` middleware on the
   playing endpoints. `seat()` also refreshes it when a player changes seat.
-- `releaseIdleSeats()` frees, through `remove()`, every seat whose
+- `releaseIdleSeats()` frees, through `remove()`, every human non-admin
+  seat whose
   `last_seen_at` is older than `config('bridge.idle_seat_minutes')`
   (`BRIDGE_IDLE_SEAT_MINUTES`, 5), at a table **not** in the middle of a
   set (`BoardSelectionService::currentSet()` null). Each seat is re-checked

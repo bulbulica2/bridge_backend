@@ -58,7 +58,7 @@ class BoardResultsTest extends TestCase
     $row = $response->json('data.results.0');
     $this->assertSame(Seats::SEATS, array_keys($row['players']));
     $this->assertSame(
-      ['id', 'name', 'username', 'description', 'is_robot'],
+      ['id', 'name', 'username', 'description', 'is_robot', 'is_admin'],
       array_keys($row['players']['N'])
     );
     $this->assertSame($a->seats->firstWhere('seat', 'E')->user_id, $row['players']['E']['id']);
