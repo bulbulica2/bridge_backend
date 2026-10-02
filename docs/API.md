@@ -1571,7 +1571,8 @@ channel stays open.
 ## Practical implication for a frontend right now
 
 You can currently only:
-1. Register/login/logout (session-based, see [`AUTH.md`](AUTH.md))
+1. Register/login/logout (session-based, with an optional `remember` on
+   login to stay logged in past the session; see [`AUTH.md`](AUTH.md))
 2. List/show cards, and list the 38 bids with their ids (`GET /bids`)
 3. List tables, show one table with its free seats, and create a table
    (the creator is seated, up to 3 active tables per creator)

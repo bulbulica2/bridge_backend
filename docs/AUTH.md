@@ -23,19 +23,20 @@ header.
 2. `POST /register` or `POST /login` with the `X-XSRF-TOKEN` header set from
    that cookie. On success, Laravel sets a session cookie; subsequent
    requests are authenticated via that cookie.
-3. `POST /logout` to end the session.
+3. `POST /logout` to end the session. Log in with `remember: true` to stay
+   logged in after the session expires (see [Remember me](#remember-me)).
 
 ## Routes (`routes/auth.php`, all web/session-based)
 
 | Method | Path | Controller | Middleware | Notes |
 |---|---|---|---|---|
 | POST | `/register` | `Auth\RegisteredUserController@store` | `guest` | body `{name, username, email, password, password_confirmation}`; creates user, logs them in, 204 |
-| POST | `/login` | `Auth\AuthenticatedSessionController@store` | `guest` | validated via `Auth\LoginRequest`; never logs in a robot |
+| POST | `/login` | `Auth\AuthenticatedSessionController@store` | `guest` | body `{email, password, remember?}` (validated via `Auth\LoginRequest`); `remember` keeps the user logged in past the session, see [Remember me](#remember-me); never logs in a robot; 204 |
 | POST | `/forgot-password` | `Auth\PasswordResetLinkController@store` | `guest` | sends reset link email |
 | POST | `/reset-password` | `Auth\NewPasswordController@store` | `guest` | |
 | GET | `/verify-email/{id}/{hash}` | `Auth\VerifyEmailController` | `auth`, `signed`, `throttle:6,1` | signed link from email |
 | POST | `/email/verification-notification` | `Auth\EmailVerificationNotificationController@store` | `auth`, `throttle:6,1` | resend verification email |
-| POST | `/logout` | `Auth\AuthenticatedSessionController@destroy` | `auth` | |
+| POST | `/logout` | `Auth\AuthenticatedSessionController@destroy` | `auth` | ends the session and any remember-me login, 204 |
 
 These are the stock Laravel Breeze auth controllers, with two
 customizations:
@@ -54,6 +55,29 @@ customizations:
 - **A banned user can still log in** (see [Bans](#bans)).
 
 See [`DATA-MODEL.md`](DATA-MODEL.md#user-users) for the `User` fields.
+
+## Remember me
+
+`POST /login` takes an optional boolean `remember` (`true`/`1`/`"on"`;
+missing means `false`). `LoginRequest::authenticate()` passes
+`$this->boolean('remember')` to `Auth::attempt()`, so with it Laravel also
+sets the long-lived, encrypted `remember_web_<hash>` cookie, holding the
+user's id and `users.remember_token`.
+
+- **How long.** The session itself lasts `SESSION_LIFETIME` minutes (120 by
+  default) of inactivity. The remember-me cookie lasts Laravel's default
+  **400 days** (576000 minutes; `config/auth.php` sets no `remember` on the
+  `web` guard to change it).
+- **What it does.** Sanctum's stateful guard is `web`, so once the session
+  has expired, the next authenticated request (normally `GET /api/user`)
+  logs the user back in from that cookie and starts a new session, instead
+  of answering 401. Without `remember`, an expired session is a 401 and the
+  user has to log in again.
+- **How it ends.** `POST /logout` (`Auth::guard('web')->logout()`) forgets
+  the cookie and replaces the user's `remember_token`. There is one token per
+  user, not per device, so logging out anywhere also ends remember-me on
+  every other device of theirs (their open sessions there carry on until they
+  expire). A [ban](#bans) replaces the token the same way.
 
 ## Bans
 
