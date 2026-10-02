@@ -282,7 +282,7 @@ All three keep the old code loaded: restart them after changing PHP.
 
 `DatabaseSeeder` branches on `APP_ENV`. Production gets only cards, bids and
 100 dealt boards. Everywhere else also gets an admin user
-(`email@email.com` / `pass`) and one table per phase of the game, plus one
+(`email@abc.com` / `pass`) and one table per phase of the game, plus one
 whose set of boards is over
 ([`RUNNING.md`](RUNNING.md#seeded-data)).
 

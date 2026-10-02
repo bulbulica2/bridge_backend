@@ -76,7 +76,7 @@ get one table per phase, named after it:
 | `Set over` | a whole set of four boards played out: the fourth is on show, the set's result is up (`GET /sets/{set}`), and the next set waits for everyone's Start |
 | `Waiting for players` | 2 players, no board yet |
 
-Log in as the admin (`email@email.com` / `pass`) to act at `Your call`.
+Log in as the admin (`email@abc.com` / `pass`) to act at `Your call`.
 The other seeded users all have the password `password`. Calls, cards and
 dealt boards are random, so each `migrate:fresh --seed` gives a different
 game. The seeders don't queue any broadcasts.
