@@ -24,6 +24,11 @@ return new class extends Migration
       // robot is ready from the moment it sits down. The board is dealt once
       // the table is full and every seat is ready, which clears the humans'
       $table->timestamp('ready_at')->nullable();
+      // mid-set only: since when the player has been away, i.e. their last
+      // sign of life once tables:check-away noticed a minute without one, or
+      // when they pressed Leave. Their side forfeits the set
+      // bridge.set_forfeit_minutes after it, unless they come back first
+      $table->timestamp('away_since')->nullable();
       $table->timestamps();
 
       // one user per seat at a table

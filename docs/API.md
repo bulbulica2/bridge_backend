@@ -113,13 +113,20 @@ Every table payload — from index, store, show or leave — is built by
 (`id`, `name`, `created_by`, `moderated_by`, `board_id`, `unattended_since`,
 timestamps), plus
 `seats` (`TableSeat` rows — `id`, `table_id`, `user_id`, `seat`,
-`last_seen_at`, `ready_at`, timestamps — each with its `user` and `ready`),
+`last_seen_at`, `ready_at`, `away_since`, timestamps — each with its `user`,
+`ready` and `forfeit_at`),
 `free_seats` (the unoccupied seats in `N, E, S, W` order), `set` and
 `can_manage`.
 `set` is where the table is in its [set of boards](#sets): the set it is on
 now, or the one it finished last — `{id, number, board, of, finished,
-ended}` as in the game state, `board` being how many of its boards have been
-dealt — and `null` before the table's first Start.
+ended, forfeited_by}` as in the game state, `board` being how many of its
+boards have been dealt — and `null` before the table's first Start.
+A seat's `away_since` and `forfeit_at` are null unless its player is
+[away mid-set](#away-mid-set-and-the-forfeit): `away_since` is since when
+(their last sign of life, or their Leave), `forfeit_at` when their side
+forfeits the set if they aren't back by then — show it as a countdown. An
+away seat with `forfeit_at: null` has no deadline (an admin's, or anyone's
+while an admin at the table is away).
 A seat's `ready` (boolean, from `ready_at`) is whether its player has pressed
 **Start** (see [`POST /tables/{table}/start`](#post-tablestablestart)); a
 robot's is always true. It is public: everyone at the table sees who is
@@ -244,7 +251,7 @@ Rules:
     "board_id": null, "created_at": "...", "updated_at": "...",
     "unattended_since": null,
     "seats": [{"id": 12, "table_id": 7, "user_id": 3, "seat": "E", "last_seen_at": "...", "ready_at": null,
-               "created_at": "...", "updated_at": "...", "ready": false,
+               "away_since": null, "created_at": "...", "updated_at": "...", "ready": false, "forfeit_at": null,
                "user": {"id": 3, "name": "Ann", "username": "ann", "description": "Plays a strong club.", "is_robot": false}}],
     "free_seats": ["N", "S", "W"],
     "can_manage": true,
@@ -289,6 +296,13 @@ Take a free seat at an existing table.
     (`board_table.table_id` set to null, snapshot kept). The response describes
     only the table you joined; re-fetch `GET /tables` if the client tracks the
     old one.
+  - Moving off a table **in the middle of a set** (your seat held after a
+    Leave included) **forfeits that set for your side at once** (see
+    [Away mid-set](#away-mid-set-and-the-forfeit)); the message then reads
+    `"Seat taken successfully. You walked out on a set at your old table, so
+    your side forfeited it."`. Not for an admin, nor while an admin there is
+    away: the set is then just abandoned. The SPA should confirm before
+    moving a player who is mid-set (the old table's `set.finished` is false).
   - Moving **within** the same table is a plain seat change (e.g. `N` -> `E`).
     The table is not deleted on the way out even if you are its only player.
     Note a full table can never allow this, since every target seat is taken.
@@ -305,6 +319,19 @@ Take a free seat at an existing table.
 ### `DELETE /tables/{table}/seats`
 Give up the seat you hold at this table. No body.
 
+- **202** in the **middle of a set** (a board of it in progress, or between
+  its boards): leaving is going away, and your seat is **held** rather than
+  freed — see [Away mid-set](#away-mid-set-and-the-forfeit). You stay
+  seated with `away_since` set to now and `forfeit_at` three minutes later;
+  any request at the table before then (heartbeat, `GET .../playing`, …)
+  brings you back, otherwise your side forfeits the set and the seat is
+  freed then. The body is the table (same shape as `GET /tables/{table}`),
+  message `"You left in the middle of a set: your seat is held for 3
+  minutes. Come back to the table before then, or your side forfeits the
+  set."`. Leaving again changes nothing. The SPA should confirm before a
+  Leave mid-set, and stop its heartbeat afterwards (a heartbeat brings you
+  back). Not for an admin, nor while an admin at the table is away: then
+  the seat is freed at once (below) and the set ends `abandoned`.
 - **200** and the table is **deleted** if you were the last player:
   ```json
   {"status": 200, "message": "You left the table. Nobody was left, so the table was deleted.", "data": {"table_deleted": true}}
@@ -319,8 +346,8 @@ Give up the seat you hold at this table. No body.
 - **409** `"You are not seated at this table."` if you hold no seat there.
 - **404** if the table id doesn't exist.
 
-If the table had a board under way that nobody had finished, leaving
-**abandons** it: `tables.board_id` goes back to null and the `board_table` row
+If the table had a board under way that nobody had finished, the seat being
+freed **abandons** it: `tables.board_id` goes back to null and the `board_table` row
 is detached (`table_id` set to null) rather than deleted, keeping its
 `board_table_seats` snapshot so those four players are never dealt that deal
 again; the calls and cards made so far are deleted. A finished playing is
@@ -399,6 +426,8 @@ Robots are sent away like any player, with `DELETE /tables/{table}/seats/{user}`
 Take a player out of their seat. No body. `{user}` is a `users.id`.
 
 - If `{user}` is the logged-in user this is a **quit** and is always allowed.
+  It is exactly `DELETE /tables/{table}/seats`, held seat (**202**) mid-set
+  included.
 - Otherwise it is a **kick** and requires `TablePolicy::kick`: the table's
   manager (`TablePolicy::manage`) may kick anyone — an admin may kick the
   moderator too, e.g. to stop cheating — and at an **unattended**
@@ -415,7 +444,12 @@ Take a player out of their seat. No body. `{user}` is a `users.id`.
   ```json
   {"status": 200, "message": "You left the table. Nobody was left, so the table was deleted.", "data": {"table_deleted": true}}
   ```
-- Abandons an unfinished playing just as `DELETE /tables/{table}/seats` does.
+- A kick frees the seat at once, even mid-set, and abandons an unfinished
+  playing just as a freed seat on `DELETE /tables/{table}/seats` does.
+  Mid-set it ends the set `abandoned` — unless the kicked player was
+  **away**: then their side **forfeits** it, as their time running out
+  would have, and the message adds `" They were away mid-set, so their side
+  forfeited it."`.
 - **404** if the table id or user id doesn't exist, or if `{user}` holds no
   seat at this table — `"That user is not seated at this table."`, or
   `"You are not seated at this table."` when you aimed at yourself. (Note
@@ -446,20 +480,74 @@ The playing endpoints — `POST`/`DELETE /tables/{table}/start`,
 middleware, `App\Http\Middleware\TouchTableSeat`), even when the call or
 card itself is refused. Taking or changing a seat also sets it.
 
-**Idle seats are freed.** The scheduled command `tables:release-idle-seats`
-(every minute; see [`RUNNING.md`](RUNNING.md#scheduler-idle-seats)) frees the
-seat of every **human** player (robots send no heartbeat and are never
-idle) whose `last_seen_at` is older than
-`BRIDGE_IDLE_SEAT_MINUTES` (default 5), or `BRIDGE_IDLE_PLAYING_SEAT_MINUTES`
-(default 15) while their table has a board in its auction or play. It goes
-through `TableSeatService::remove()`, so it is exactly a leave: `moderated_by`
-is handed on, an unfinished playing is abandoned (the other three get
-`board_id: null` and must refill the seat and press Start to get a new
-board), the player's Start goes with their seat, an emptied
-table is deleted, and `TableUpdated` is broadcast. A finished board waiting
-for `playing/next` uses the shorter timeout, since leaving then abandons
-nothing. A client whose own seat vanished this way sees it in the next
-`TableUpdated` (or a 403 from its next heartbeat) and should offer to rejoin.
+**Keep beating while the tab is hidden.** The heartbeat is how the server
+tells a player who is still there from one who has gone, and in the middle
+of a set going quiet for three minutes loses the set (below). So the SPA
+must keep sending it while the page is hidden (`document.visibilityState`),
+at least while the table is mid-set: switching to another tab while partner
+thinks is not leaving. (Browsers may throttle a hidden tab's timers to about
+once a minute after a few minutes; that can show a player away briefly, but
+not for the three minutes a forfeit takes.) Stop it after a Leave, or it
+brings you back.
+
+**Idle seats are freed — outside a set.** The scheduled command
+`tables:release-idle-seats` (every minute; see
+[`RUNNING.md`](RUNNING.md#scheduler-idle-seats)) frees the seat of every
+**human** player (robots send no heartbeat and are never idle) whose
+`last_seen_at` is older than `BRIDGE_IDLE_SEAT_MINUTES` (default 5), at a
+table that is **not** in the middle of a set (no set yet, or the last one
+is over). It goes through `TableSeatService::remove()`, so it is exactly a
+leave: `moderated_by` is handed on, the player's Start goes with their
+seat, an emptied table is deleted, and `TableUpdated` is broadcast. A
+client whose own seat vanished this way sees it in the next `TableUpdated`
+(or a 403 from its next heartbeat) and should offer to rejoin. In the middle
+of a set the away rule below decides instead.
+
+#### Away mid-set, and the forfeit
+
+During a set — a board of it in progress, or between its boards — a
+player who goes away costs their partnership the set (`GAME-RULES.md` §8,
+"Sets of boards"), but only after three minutes. `tables:check-away`,
+scheduled **every ten seconds** (a minute is too coarse for a three-minute
+deadline; one check every few seconds rather than a delayed job per
+player), does it:
+
+1. **Away.** A human with no sign of life for `BRIDGE_AWAY_SECONDS`
+   (default 60, two missed heartbeats) is marked away: their seat's
+   `away_since` is set to their `last_seen_at`, and `forfeit_at` to
+   `BRIDGE_SET_FORFEIT_MINUTES` (default 3) after it. A `TableUpdated` tells
+   the table. Their seat is **held** — nobody else can take it — and the
+   board waits on them. Pressing **Leave** (`DELETE /tables/{table}/seats`)
+   mid-set marks them away at once (`away_since` now).
+2. **Back in time.** Any sign of life before `forfeit_at` — a heartbeat or a
+   playing request — clears `away_since`, with a `TableUpdated`; play
+   continues where it was.
+3. **Forfeit.** Still away at `forfeit_at`, their side (`NS` or `EW`) loses
+   the set: it ends with `ended: "forfeit"` and `forfeited_by` that side
+   (`GET /sets/{set}`'s `winner` is the other side), the board in progress
+   is abandoned unscored (detached, as on any leave), and their seat is
+   freed through the normal leave path — `TableUpdated` carries the new
+   `set` and the free seat. With two away, the one away longest forfeits.
+4. **After the set.** Once a set is over, however it ended, nobody is held
+   for it: the next check frees the seat of anyone still away (a Leave
+   that was never taken back, say).
+
+**Moving** to another table mid-set forfeits at once, and a manager
+**kicking** a player who is away forfeits for their side too. **Robots** are
+never away; a human whose partner is a robot forfeits for that side all the
+same.
+
+**Admins** never cost their side the set: an admin who goes quiet is shown
+away, but with `forfeit_at: null`, their seat is never freed for it, and the
+table just waits for them. While an admin at the table is away, nobody
+forfeits: every other away seat's `forfeit_at` is null too, and a Leave or a
+move is immediate and ends the set `abandoned`. An admin's own Leave or move
+is immediate as well. Once the set is over an away admin just stops being
+away. (An admin seat is still subject to the idle timeout above, outside a
+set; that is #78.)
+
+Outside a set nothing of this applies: nobody is marked away, Leave frees
+the seat at once, and the idle timeout above is the only one.
 
 The server can't learn about a disconnect from the websocket: Reverb doesn't
 call back into Laravel when a connection drops, so the heartbeat — not a
@@ -545,7 +633,7 @@ page refresh or a reconnect. No body. Built by
   "data": {
     "phase": "auction",
     "playing_id": 42,
-    "set": {"id": 5, "number": 1, "board": 2, "of": 4, "finished": false, "ended": null},
+    "set": {"id": 5, "number": 1, "board": 2, "of": 4, "finished": false, "ended": null, "forfeited_by": null},
     "board": {"id": 7, "number": 7, "dealer": "S", "vulnerable": "N-S E-W"},
     "players": {
       "N": {"id": 1, "name": "Ann", "username": "ann", "description": null, "is_robot": false},
@@ -582,7 +670,7 @@ page refresh or a reconnect. No body. Built by
 |---|---|
 | `phase` | `waiting` — the table has no board (`tables.board_id` null, fewer than four players); `auction` — `board_table.auction_ended_at` is null; `play` — the auction ended with a contract (`finished_at` still null); `finished` — `finished_at` is set: after the 13th trick, when a claim is accepted, or straight away on a **passed out** board. |
 | `playing_id` | the `board_table.id` |
-| `set` | the [set](#sets) this board was dealt in: `id` (for [`GET /sets/{set}`](#get-setsset)), `number` (1, 2, 3… at this table), `board` (this board's place in it, 1–`of`), `of` (how many boards the set has, 4), `finished` (true once the set is over: after its last board is finished, or earlier if one of its four left) and `ended` (`null` while it goes on, then `completed` or `abandoned`; `forfeit` is planned, #76). After the last board `finished` is true while that board is still on show: time for the set's results and everyone's Start |
+| `set` | the [set](#sets) this board was dealt in: `id` (for [`GET /sets/{set}`](#get-setsset)), `number` (1, 2, 3… at this table), `board` (this board's place in it, 1–`of`), `of` (how many boards the set has, 4), `finished` (true once the set is over: after its last board is finished, or earlier if one of its four left or a side forfeited it), `ended` (`null` while it goes on, then `completed`, `abandoned` or `forfeit`) and `forfeited_by` (`NS`/`EW` on a forfeit, else `null`; see [Away mid-set](#away-mid-set-and-the-forfeit)). After the last board `finished` is true while that board is still on show: time for the set's results and everyone's Start |
 | `board` | `id`, `number`, `dealer` (`N/E/S/W`) and `vulnerable` (a `Vulnerability` value) from `boards` |
 | `players` | seat → public profile (`UserResource`, no email; `is_robot` marks a robot), from the playing's `board_table_seats` snapshot, not from `table_seats` |
 | `turn` | the seat expected to act. During the `auction`: the dealer first, then clockwise after the last call. During the `play`: the **hand** the next card comes from — declarer's left-hand opponent leads the first trick, then clockwise, and each trick's winner leads the next. When it is dummy's seat, declarer plays it (see `acting_user_id`). `null` while `waiting` and once `finished` |
@@ -944,12 +1032,17 @@ Play at a table goes in **sets** of four boards (`bridge.set_size`, env
    the players read the set's results, and everybody's Start opens the next
    set (`number` 2, `board` 1).
 
-A set also ends early, as `abandoned`, when one of its four leaves the table
-(quits, moves, is kicked or released as idle) before its last board is
-finished — even between boards. The board in play goes as before (detached),
-the set has no winner, and the refilled table's Start opens a new set.
-Losing a set by forfeit (`ended: "forfeit"`, `forfeited_by`) is **planned**
-(#76): the fields exist and are read, but nothing ends a set that way yet.
+A set also ends early, even between boards:
+- as `forfeit`, lost by one side (`forfeited_by: "NS" | "EW"`), when a
+  player of that side is away too long, moves to another table, or is
+  kicked while away — see [Away mid-set](#away-mid-set-and-the-forfeit). A
+  Leave mid-set only holds the seat for three minutes;
+- as `abandoned`, with no winner, when one of its four is taken out of the
+  table otherwise (kicked while there, or leaving while an admin there is
+  away, or an admin leaving).
+
+Either way the board in play goes as before (detached, unscored), and the
+refilled table's Start opens a new set.
 
 The game state, `PlayingUpdated` and every table payload carry `set`; the
 history rows carry it too. Sets outlive their table (`table_id` goes
@@ -993,7 +1086,7 @@ boards finished so far) and after its table is deleted.
 
 | Field | Meaning |
 |---|---|
-| `number`, `of`, `finished`, `ended` | as the game state's `set`; `forfeited_by` is `NS`/`EW` on a forfeit (planned, #76), else `null` |
+| `number`, `of`, `finished`, `ended` | as the game state's `set`; `forfeited_by` is `NS`/`EW` on a forfeit, else `null` |
 | `table_id` | `null` once the table has been deleted |
 | `boards_dealt` | how many of its boards were dealt, including one abandoned mid-play (not listed in `boards`) |
 | `players` | seat → public profile (`UserResource`), the four who played the whole set |
@@ -1176,12 +1269,17 @@ Event name on the wire: `App\Events\TableUpdated` (Echo:
   one for the table they joined;
 - a player presses Start or takes it back (`POST`/`DELETE
   /tables/{table}/start`), changing their seat's `ready`;
+- mid-set, a player is marked **away** (`tables:check-away`, or their
+  Leave) or comes **back** (a heartbeat or playing request), changing their
+  seat's `away_since`/`forfeit_at`; and their side **forfeits** the set
+  (`set.ended: "forfeit"`, `set.forfeited_by`, their seat free) — see
+  [Away mid-set](#away-mid-set-and-the-forfeit);
 - a board is dealt — by the last Start, by a robot taking the fourth seat
   after every human has pressed it, or by the last `playing/next`: that
   event is the first with a non-null `board_id` (and the humans' `ready`
   cleared); a player leaving mid-board sends it back to null. Its `set`
   moves with it: a new set on a Start, the next `board` on a Next, and
-  `finished` when a player leaving abandons the set.
+  `finished` when a player leaving abandons the set or a side forfeits it.
 
 **Not sent** when the change deleted the table (the last player left, or
 `tables:delete-unattended` removed an unattended one) — nobody is left to
@@ -1212,14 +1310,14 @@ the request (the one who did gets it in their HTTP response).
     "seats": [
       {
         "id": 21, "table_id": 7, "user_id": 12, "seat": "N",
-        "last_seen_at": "...", "ready_at": "2026-09-22T10:16:40.000000Z",
-        "created_at": "...", "updated_at": "...", "ready": true,
+        "last_seen_at": "...", "ready_at": "2026-09-22T10:16:40.000000Z", "away_since": null,
+        "created_at": "...", "updated_at": "...", "ready": true, "forfeit_at": null,
         "user": {"id": 12, "name": "Alice", "username": "alice", "description": null, "is_robot": false}
       },
       {
         "id": 22, "table_id": 7, "user_id": 13, "seat": "E",
-        "last_seen_at": "...", "ready_at": null,
-        "created_at": "...", "updated_at": "...", "ready": false,
+        "last_seen_at": "...", "ready_at": null, "away_since": null,
+        "created_at": "...", "updated_at": "...", "ready": false, "forfeit_at": null,
         "user": {"id": 13, "name": "Bob", "username": "bob", "description": null, "is_robot": false}
       }
     ],
@@ -1274,7 +1372,7 @@ once the board is finished the whole deal.
   "playing": {
     "phase": "auction",
     "playing_id": 42,
-    "set": {"id": 5, "number": 1, "board": 2, "of": 4, "finished": false, "ended": null},
+    "set": {"id": 5, "number": 1, "board": 2, "of": 4, "finished": false, "ended": null, "forfeited_by": null},
     "board": {"id": 7, "number": 7, "dealer": "S", "vulnerable": "N-S E-W"},
     "players": {"N": {"id": 1, "name": "Ann", "username": "ann", "description": null}, "E": {...}, "S": {...}, "W": {...}},
     "turn": "S",
@@ -1336,9 +1434,6 @@ hand, which that player's client can drop itself (or re-read from
   event sends it yet.
 - No presence channel ("who is online"): idle players are detected by the
   heartbeat only.
-- A set can't be forfeited yet (#76): a player leaving mid-set abandons it
-  with no winner; `ended: "forfeit"` and `forfeited_by` are read but never
-  written.
 
 ## Practical implication for a frontend right now
 
@@ -1396,6 +1491,7 @@ You can currently only:
 So a full lobby flow (browse, create, sit down, stand up, kick) works end to
 end, through the auction, the play, the score and the next board — with
 robots filling any seats nobody else takes — and a
-player who disappears doesn't block the table for long; afterwards the
+player who disappears doesn't block the table for long (mid-set it costs
+their side the set after three minutes away); afterwards the
 results can be compared across tables by matchpoints and each playing
 reviewed. IMPs aren't built.

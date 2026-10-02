@@ -37,7 +37,8 @@ use RuntimeException;
  * Start opens a set with its first board, Next deals the rest, and after the
  * last one Next is refused and it takes everyone's Start again to open the
  * next set. A set one of its four players leaves is over too
- * (`abandonSet()`).
+ * (`abandonSet()`), and one a player is away from too long is lost by their
+ * side (`forfeitSet()`).
  */
 class BoardSelectionService
 {
@@ -216,6 +217,37 @@ class BoardSelectionService
       ->each(fn (TableSet $set) => $set->end(TableSet::ENDED_ABANDONED));
 
     $table->unsetRelation('latestSet');
+  }
+
+  /**
+   * End the table's set as lost by `$side` (`NS` or `EW`): one of its
+   * players was away too long, or walked out on it for another table
+   * (`TableSeatService::remove()`). The board on the table goes as on any
+   * leave (`abandonPlaying()`), unscored.
+   *
+   * Does nothing once the set is over.
+   */
+  public function forfeitSet(Table $table, string $side): void
+  {
+    TableSet::query()
+      ->where('table_id', $table->id)
+      ->whereNull('finished_at')
+      ->each(fn (TableSet $set) => $set->forfeit($side));
+
+    $table->unsetRelation('latestSet');
+  }
+
+  /**
+   * The table's set while it is going on — a board of it in progress, or
+   * between its boards — or null outside a set. Its four players are the
+   * four seated: anyone leaving ends it.
+   */
+  public function currentSet(Table $table): ?TableSet
+  {
+    return TableSet::query()
+      ->where('table_id', $table->id)
+      ->whereNull('finished_at')
+      ->first();
   }
 
   /**

@@ -28,8 +28,9 @@ Local stack is XAMPP (MySQL on 3306, DB `bridge`, user `root`, no password).
 php artisan serve --host=localhost  # API on http://localhost:8000 (see RUNNING.md "Local speed")
 php artisan reverb:start          # websocket server on :8080 (live table updates)
 php artisan queue:work --sleep=0.1  # sends queued broadcasts to Reverb, and moves the robots
-php artisan schedule:work         # runs tables:release-idle-seats and tables:delete-unattended every minute
+php artisan schedule:work         # runs tables:release-idle-seats and tables:delete-unattended every minute, tables:check-away every 10 s
 php artisan tables:release-idle-seats  # free idle players' seats once, by hand
+php artisan tables:check-away     # mark quiet players away mid-set and forfeit overdue sets, once, by hand
 php artisan tables:delete-unattended   # delete tables only robots have kept, once, by hand
 php artisan migrate:fresh --seed  # rebuild DB with sample data
 php artisan route:list            # actual registered routes
@@ -170,11 +171,26 @@ vendor/bin/pint --test            # check formatting without changing files
   `App\Console\Commands\ReleaseIdleSeats`) calls `releaseIdleSeats()`,
   which frees stale **human** seats (robots are never idle) through
   `remove()` — so it is exactly a leave —
-  after `config('bridge.idle_seat_minutes')` (5), or
-  `bridge.idle_playing_seat_minutes` (15) while the table has an unfinished
-  playing, re-checking each seat under its table lock. Reverb can't report
-  disconnects back to Laravel, which is why this is a heartbeat and not a
-  presence channel.
+  after `config('bridge.idle_seat_minutes')` (5), only at tables **not**
+  mid-set (`BoardSelectionService::currentSet()` null), re-checking each
+  seat under its table lock. Reverb can't report disconnects back to
+  Laravel, which is why this is a heartbeat and not a presence channel.
+- **Away mid-set / set forfeit**: in the middle of a set a player's going
+  costs their side the set, after 3 minutes. `table_seats.away_since` marks
+  a held seat: `TableSeatService::leave()` (every player's own Leave, both
+  `DELETE` seat routes, answering 202) sets it to now mid-set instead of
+  freeing the seat, `touch()` clears it (with a `TableUpdated`), and
+  `checkAway()` (`tables:check-away`, `CheckAwayPlayers`, scheduled
+  `everyTenSeconds()`) sets it to `last_seen_at` after
+  `bridge.away_seconds` (60) of silence and, `bridge.set_forfeit_minutes`
+  (3) after it, takes the player out through `remove()`; once a set is over
+  it frees anyone still away. `remove()` forfeits
+  (`BoardSelectionService::forfeitSet()`, `ended: forfeit`, `forfeited_by`
+  the side from `Seats::side()`) instead of abandoning when the player is
+  away (a sweep or a kick) or `$walkOut` (a move from `seat()`), as decided
+  by `costsTheSet()`: never a robot or an admin, and nobody while an admin
+  at the table is away. `TableSeatResource` adds `forfeit_at` (null for
+  those); build seats with `TableSeatResource::forTable()`.
 - **Boards**: `App\Services\BoardSelectionService` owns which board a table
   plays and when. Filling the table deals nothing by itself: each human
   presses **Start** (`start()`, `POST /tables/{table}/start`, sets
@@ -200,9 +216,9 @@ vendor/bin/pint --test            # check formatting without changing files
   `moveOn()` 409s ("The set is over: press Start for a new one.") and
   `start()` accepts a Start with the same four seated; robots don't ask
   then. `remove()` ends an unfinished set as `abandoned` (`abandonSet()`),
-  even between boards; `ended: forfeit`/`forfeited_by` exist for #76 but
-  nothing writes them yet. Sets outlive their table; `PlayingResource` and
-  `TableResource` show `set: {id, number, board, of, finished, ended}`.
+  even between boards, or `forfeit` (see Away mid-set). Sets outlive their
+  table; `PlayingResource` and `TableResource` show
+  `set: {id, number, board, of, finished, ended, forfeited_by}`.
   After a board finishes it stays on the table (the state then shows the
   whole `deal` and `ready`) until `moveOn()`
   (`POST /tables/{table}/playing/next`, `Game\PlayingController@next`)

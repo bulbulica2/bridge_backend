@@ -39,10 +39,11 @@ php artisan queue:work --sleep=0.1  # sends the queued broadcasts to Reverb
 The API works without them: seat changes still succeed, the broadcasts just
 wait in the `jobs` table until a worker runs.
 
-To free the seats of players who closed the tab, also run the scheduler (see
+To free the seats of players who closed the tab, and mark players away (and
+forfeit their side's set) mid-set, also run the scheduler (see
 [Scheduler](#scheduler-idle-seats) below):
 ```bash
-php artisan schedule:work           # runs tables:release-idle-seats every minute
+php artisan schedule:work           # tables:release-idle-seats every minute, tables:check-away every 10 s
 ```
 
 **After pulling migration changes, rebuild the DB:**
@@ -50,8 +51,7 @@ php artisan schedule:work           # runs tables:release-idle-seats every minut
 php artisan migrate:fresh --seed
 ```
 Migrations are still edited in place rather than added as new files (most
-recently `33-claims`, which added the pending-claim columns to
-`board_table`). A plain `php artisan migrate`
+recently `43-set-forfeit`, which added `table_seats.away_since`). A plain `php artisan migrate`
 sees nothing new and leaves the old schema. `migrate:fresh` drops every
 table, so local data is lost.
 
@@ -159,27 +159,39 @@ from `.env.example`) or broadcasts fail in the queue worker.
 
 ## Scheduler (idle seats)
 
-`routes/console.php` schedules two commands every minute:
+`routes/console.php` schedules two commands every minute and one every ten
+seconds:
 
-- `tables:release-idle-seats` frees the seat of every human player who has
-  sent no heartbeat or playing request for too long, exactly as if they had
-  left (see [`API.md`](API.md#post-tablestableheartbeat)). Robots are never
-  idle.
+- `tables:release-idle-seats` (every minute) frees the seat of every human
+  player who has sent no heartbeat or playing request for too long, exactly
+  as if they had left (see [`API.md`](API.md#post-tablestableheartbeat)) —
+  only at tables that aren't in the middle of a set. Robots are never idle.
+- `tables:check-away` (every **ten seconds**) handles the middle of a set
+  (see [`API.md`](API.md#away-mid-set-and-the-forfeit)): it marks a human
+  with no sign of life for `BRIDGE_AWAY_SECONDS` as away, and once they have
+  been away `BRIDGE_SET_FORFEIT_MINUTES` their side forfeits the set and
+  their seat is freed. It also frees the seats of players still away when a
+  set ends. A minute would be too coarse for a three-minute deadline, so it
+  runs every few seconds; `schedule:work` (and `schedule:run`, which keeps
+  running through the minute) runs such sub-minute tasks.
 - `tables:delete-unattended` deletes every table that only robots have kept
   for longer than `BRIDGE_UNATTENDED_TABLE_MINUTES` since its last human
   left (see [`API.md`](API.md#tables)).
 
 Locally run `php artisan schedule:work` in its own terminal; in production
 use one cron entry, `* * * * * php /path/to/artisan schedule:run`. Run either
-once by hand with `php artisan tables:release-idle-seats` or
-`php artisan tables:delete-unattended`. Without the scheduler nothing is
-freed: a player who vanished keeps their seat until somebody kicks them, and
-an unattended table stays until somebody kicks its robots.
+once by hand with `php artisan tables:release-idle-seats`,
+`php artisan tables:check-away` or `php artisan tables:delete-unattended`.
+Without the scheduler nothing is freed: a player who vanished keeps their
+seat until somebody kicks them, nobody is ever marked away or forfeits a
+set (a Leave mid-set holds the seat for good), and an unattended table
+stays until somebody kicks its robots.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `BRIDGE_IDLE_SEAT_MINUTES` | `5` | minutes without a sign of life before a seat is freed (`config/bridge.php`) |
-| `BRIDGE_IDLE_PLAYING_SEAT_MINUTES` | `15` | the same while the table is in the middle of a board, where freeing the seat abandons it for the other three |
+| `BRIDGE_IDLE_SEAT_MINUTES` | `5` | minutes without a sign of life before a seat is freed, at a table not in the middle of a set (`config/bridge.php`) |
+| `BRIDGE_AWAY_SECONDS` | `60` | mid-set, seconds without a sign of life before a player is marked away and their seat held |
+| `BRIDGE_SET_FORFEIT_MINUTES` | `3` | mid-set, minutes away (since the last sign of life, or the Leave) before the player's side forfeits the set |
 | `BRIDGE_UNATTENDED_TABLE_MINUTES` | `10` | minutes a table with only robots left is kept before it is deleted |
 
 ### Sets

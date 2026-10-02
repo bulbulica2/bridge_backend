@@ -18,6 +18,7 @@ class TableSeat extends Model
     'seat',
     'last_seen_at',
     'ready_at',
+    'away_since',
   ];
 
   protected function casts(): array
@@ -25,6 +26,7 @@ class TableSeat extends Model
     return [
       'last_seen_at' => 'datetime',
       'ready_at' => 'datetime',
+      'away_since' => 'datetime',
     ];
   }
 

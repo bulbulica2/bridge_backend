@@ -115,9 +115,10 @@ class PlayingReviewTest extends TestCase
     $this->playCards(52);
     $before = $this->review('S')->assertOk()->json('data');
 
-    // everyone leaves: the last one deletes the table
+    // everyone goes for good (a Leave mid-set would only hold the seat): the
+    // last one deletes the table
     foreach (Seats::SEATS as $seat) {
-      $this->actingAs($this->players[$seat])->deleteJson("/tables/{$this->table->id}/seats")->assertOk();
+      app(TableSeatService::class)->remove($this->table, $this->players[$seat]);
     }
 
     $this->assertModelMissing($this->table);

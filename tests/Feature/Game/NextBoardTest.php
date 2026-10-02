@@ -247,9 +247,8 @@ class NextBoardTest extends TestCase
     $this->finish();
     $this->next('N');
 
-    $this->actingAs($this->players['E'])
-      ->deleteJson("/tables/{$this->table->id}/seats")
-      ->assertSuccessful();
+    // gone for good (kicked; a Leave mid-set would only hold the seat)
+    $this->seats->remove($this->table, $this->players['E']);
 
     $this->assertDatabaseHas('board_table', ['id' => $this->playing->id, 'table_id' => $this->table->id, 'score' => 0]);
     $this->assertSame($this->playing->board_id, $this->table->fresh()->board_id);

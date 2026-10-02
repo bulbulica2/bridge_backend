@@ -118,9 +118,10 @@ class PlayingResource extends JsonResource
    * Where a table is in a set: its id (for `GET /sets/{set}`), its number at
    * the table, `board`, the board's place in it, `of`, how many boards it
    * has, and `finished`, true once it is over — after its last board, or as
-   * `ended` says, earlier (`abandoned` when one of its four left).
+   * `ended` says, earlier (`abandoned` when one of its four left,
+   * `forfeit` when a player of `forfeited_by`'s side was away too long).
    *
-   * @return array{id: int, number: int, board: int, of: int, finished: bool, ended: string|null}
+   * @return array{id: int, number: int, board: int, of: int, finished: bool, ended: string|null, forfeited_by: string|null}
    */
   public static function set(TableSet $set, int $board): array
   {
@@ -131,6 +132,7 @@ class PlayingResource extends JsonResource
       'of' => $set->size,
       'finished' => $set->isFinished(),
       'ended' => $set->ended,
+      'forfeited_by' => $set->forfeited_by,
     ];
   }
 
