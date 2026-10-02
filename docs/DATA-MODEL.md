@@ -149,7 +149,10 @@ Relations: `creator`, `moderator` (both belongsTo User), `board` (belongsTo),
 `seats` (hasMany TableSeat), `auctions` / `cardPlays` (hasManyThrough
 BoardTable — the calls and cards of the playings still attached to this
 table), `boardPlays` (hasMany BoardTable — boards this table has played),
-`players` (hasManyThrough User via TableSeat — marked "not tested yet" in
+`sets` (hasMany TableSet, by `number`), `latestSet` (hasOne TableSet, the
+highest `number`: the set it is on or finished last, which `TableResource`
+shows as `set`; `Table::latestSetWithBoards()` eager-loads it with how many
+boards it has dealt), `players` (hasManyThrough User via TableSeat — marked "not tested yet" in
 code).
 `board_id` is the board being played **now** — null until the table has all
 four players and they have all pressed Start, and null again once one of
@@ -163,7 +166,9 @@ still attached. In practice there is none by then — the last player leaves
 through `TableSeatService::remove()`, which has already detached the
 unfinished playing and discarded its logs (`abandonPlaying()`) — so the hook
 is a guard for a table deleted some other way. Playings finished before
-branch `34-board-review` lost their logs with their table.
+branch `34-board-review` lost their logs with their table. The same hook
+ends any unfinished set still attached as `abandoned` (likewise normally
+done already by `remove()`); sets themselves outlive the table.
 `TableFactory` sets a fake company `name` and gives `created_by` and
 `moderated_by` two different users by default.
 
@@ -355,14 +360,20 @@ Fields:
   (`clearClaim()`), and an accepted one is **kept** alongside `finished_at`,
   so the result can say the board ended by claim (`result.claimed`). A
   playing detached with a claim pending keeps its columns as they were.
+- `table_set_id` (FK table_sets, nullable) and `set_position` (tinyint,
+  nullable): the [set](#tableset-table_sets) the board was dealt in and its
+  place there, 1 to the set's `size`. Set on every playing the services
+  deal; null only for rows made outside them (factories). A detached
+  playing keeps both.
 - `started_at` (defaults to now), `auction_ended_at`, `finished_at`
   (nullable), timestamps.
 
 Lifecycle (`App\Services\BoardSelectionService`):
 - **Opened** when a full table's last Start is pressed (or a robot fills
-  the fourth seat after every human pressed it): the row is created with
-  `started_at`, and the four `table_seats` are copied into
-  `board_table_seats`.
+  the fourth seat after every human pressed it) — as the first board of a
+  new set — or by the last Next, as the set's next board: the row is created
+  with `started_at`, `table_set_id` and `set_position`, and the four
+  `table_seats` are copied into `board_table_seats`.
 - **Abandoned** when any player leaves before `finished_at` is set. The row is
   **not** deleted — `table_id` is set to `null`, exactly as when a table is
   deleted. The seat snapshot has to survive, because those four players were
@@ -377,11 +388,12 @@ Lifecycle (`App\Services\BoardSelectionService`):
 An unfinished playing is therefore the one row with this `table_id` and a null
 `finished_at`; there is at most one at a time.
 
-Relations: `board`, `table`, `contractBid` (Bid), `declarer` (User) (all
-belongsTo), `seats` (hasMany BoardTableSeat), `auctions` / `cardPlays`
+Relations: `board`, `table`, `tableSet`, `contractBid` (Bid), `declarer`
+(User) (all belongsTo), `seats` (hasMany BoardTableSeat), `auctions` / `cardPlays`
 (hasMany on `board_table_id`; eager-loadable). `discardLogs()` deletes both.
 `BoardTableFactory` has `auctionEnded()` (needs bids seeded) and `finished()`
-states. Rows are written by `BoardSelectionService` (a full table's Start or
+states, and makes playings with no set. `finish()` also completes the set
+when the board is its last (`set_position` reaches the set's `size`). Rows are written by `BoardSelectionService` (a full table's Start or
 moving on), `AuctionService`, `CardPlayService`, `ClaimService` and
 `BoardTable::finish()`; the seeders go through the same services.
 
@@ -401,6 +413,44 @@ Unique `(board_table_id, seat)` and `(board_table_id, user_id)`; index
 [`GAME-RULES.md` §8](GAME-RULES.md#8-game-flow-checklist-for-implementers)).
 Relations: `boardTable`, `user` (both belongsTo).
 
+### TableSet (`table_sets`, model class `TableSet`)
+A **set** of boards the same four players play in a row at one table
+([`GAME-RULES.md` §8](GAME-RULES.md#sets-of-boards)): everyone's Start opens
+it with its first board, Next deals the others, and it is over after its last.
+Migration `2025_01_30_140000_create_table_sets_table.php` (also creates
+`table_set_seats`; it runs before `board_table`, which points at it).
+Fields (all fillable):
+- `table_id` (FK tables, **nullable**, `nullOnDelete`): a set outlives its
+  table, like its playings. `number` (unsigned int): 1, 2, 3… at that table,
+  **unique `(table_id, number)`**.
+- `size` (tinyint): how many boards it has, `bridge.set_size` (4,
+  `BRIDGE_SET_SIZE`) when it was opened — a set keeps it if the config
+  changes.
+- `started_at` (defaults to now), `finished_at` (nullable): set once the set
+  is over, however it ended.
+- `ended` (enum `TableSet::ENDINGS`, nullable): null while it goes on, then
+  `completed` (`BoardTable::finish()` on its last board), `abandoned` (one of
+  its four left before that: `BoardSelectionService::abandonSet()`, from
+  `TableSeatService::remove()`) or `forfeit` — **planned** (#76), nothing
+  writes it yet.
+- `forfeited_by` (enum `TableSet::SIDES`: `NS`, `EW`, nullable): the side that
+  lost by forfeit — planned with it, always null today.
+- timestamps.
+A table has at most one unfinished set at a time. Relations: `table`
+(belongsTo), `seats` (hasMany TableSetSeat), `playings` (hasMany BoardTable,
+by `set_position`). `end($ended)` closes it (a no-op once closed),
+`hasPlayer($userId)`. No factory: sets are opened by
+`BoardSelectionService` only.
+
+### TableSetSeat (`table_set_seats`)
+The set's four players by seat, copied from `table_seats` when it opened —
+the same four as every playing in it, since a change of player ends the set.
+Fields: `table_set_id` (FK, cascade delete), `user_id` (FK users), `seat`
+(enum `Seats::SEATS`), all fillable, timestamps. Unique
+`(table_set_id, seat)` and `(table_set_id, user_id)`, index `user_id`.
+Relations: `tableSet`, `user` (both belongsTo). `GET /sets/{set}` lets these
+four see the set's results (`TableSetPolicy::view`).
+
 ## Relationship summary
 
 ```
@@ -412,6 +462,8 @@ Board ──< board_card (pivot, +seat) >── Card
 
 Board ──< BoardTable >── Table        (history: one row per playing,
              │   │                     unique board+table; contract, result)
+             │   ├── table_set_id ──> TableSet >── Table   (+set_position)
+             │   │                      └──< TableSetSeat >── User
              │   ├── contract_bid_id ──> Bid, declarer_id ──> User
              │   ├──< Auction >── Bid, User       (one row per call)
              │   └──< Cardplay >── Card, User     (+seat, +won_trick)

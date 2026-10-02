@@ -265,10 +265,16 @@ class RobotService
   }
 
   /**
-   * The first robot that hasn't asked for the next board asks for it.
+   * The first robot that hasn't asked for the next board asks for it. After
+   * the last board of a set there is no Next: a robot's Start is pressed
+   * already, so the humans' Start opens the next set.
    */
   private function ready(Table $table, BoardTable $playing): bool
   {
+    if ($playing->tableSet === null || $playing->tableSet->isFinished()) {
+      return false;
+    }
+
     foreach ($playing->seats->sortBy(fn ($seat) => array_search($seat->seat, Seats::SEATS, true)) as $seat) {
       if ($seat->ready_at === null && $seat->user?->is_robot) {
         $this->boards->moveOn($table, $seat->user);

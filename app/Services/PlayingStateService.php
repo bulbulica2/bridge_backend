@@ -36,7 +36,7 @@ class PlayingStateService
   /**
    * What `PlayingResource` reads from a playing, loaded up front.
    */
-  public const RELATIONS = ['board', 'seats.user', 'auctions.bid', 'contractBid', 'cardPlays.card'];
+  public const RELATIONS = ['board', 'tableSet', 'seats.user', 'auctions.bid', 'contractBid', 'cardPlays.card'];
 
   /**
    * The playing of the board the table is on now, or null while it has none

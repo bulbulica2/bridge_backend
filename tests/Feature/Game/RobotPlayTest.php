@@ -48,6 +48,9 @@ class RobotPlayTest extends TestCase
 
   public function test_one_human_plays_a_full_board_with_robots_and_moves_on(): void
   {
+    // a set long enough that passed out boards can't use it up
+    config(['bridge.set_size' => 20]);
+
     $table = $this->robotTable();
 
     // a passed out board has no play: deal again until one is played out
@@ -86,6 +89,44 @@ class RobotPlayTest extends TestCase
       ->assertJsonPath('data.phase', 'auction');
 
     $this->assertNotSame($playing->board_id, $table->fresh()->board_id);
+  }
+
+  public function test_one_human_plays_a_whole_set_with_robots_pressing_only_their_own_buttons(): void
+  {
+    $table = $this->robotTable();
+
+    for ($board = 1; $board <= 4; $board++) {
+      $this->actingAs($this->human)->getJson("/tables/$table->id/playing")
+        ->assertJsonPath('data.set.number', 1)
+        ->assertJsonPath('data.set.board', $board);
+
+      $this->playOut($table);
+
+      if ($board < 4) {
+        // the robots asked as soon as the board ended
+        $this->actingAs($this->human)->postJson("/tables/$table->id/playing/next")
+          ->assertOk()
+          ->assertJsonPath('message', 'Next board dealt.');
+      }
+    }
+
+    // the set is over: the robots don't ask for a fifth board, nor can the human
+    $this->actingAs($this->human)->getJson("/tables/$table->id/playing")
+      ->assertJsonPath('data.phase', 'finished')
+      ->assertJsonPath('data.ready', [])
+      ->assertJsonPath('data.set.finished', true)
+      ->assertJsonPath('data.set.ended', 'completed');
+
+    $this->actingAs($this->human)->postJson("/tables/$table->id/playing/next")
+      ->assertStatus(409)
+      ->assertJsonPath('message', 'The set is over: press Start for a new one.');
+
+    // the robots' Start stands, so the human's opens set 2
+    $this->actingAs($this->human)->postJson("/tables/$table->id/start")
+      ->assertOk()
+      ->assertJsonPath('message', 'Board dealt.')
+      ->assertJsonPath('data.playing.set.number', 2)
+      ->assertJsonPath('data.playing.set.board', 1);
   }
 
   public function test_robots_accept_a_claim_they_cannot_beat(): void

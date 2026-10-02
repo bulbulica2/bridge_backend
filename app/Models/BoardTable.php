@@ -23,6 +23,8 @@ class BoardTable extends Model
   protected $fillable = [
     'board_id',
     'table_id',
+    'table_set_id',
+    'set_position',
     'contract_bid_id',
     'doubled',
     'declarer_seat',
@@ -40,6 +42,7 @@ class BoardTable extends Model
   protected function casts(): array
   {
     return [
+      'set_position' => 'integer',
       'doubled' => 'integer',
       'tricks_won' => 'integer',
       'score' => 'integer',
@@ -59,6 +62,14 @@ class BoardTable extends Model
   public function table(): BelongsTo
   {
     return $this->belongsTo(Table::class);
+  }
+
+  /**
+   * The set this board was dealt in (`set_position` is its place there).
+   */
+  public function tableSet(): BelongsTo
+  {
+    return $this->belongsTo(TableSet::class);
   }
 
   public function contractBid(): BelongsTo
@@ -111,9 +122,20 @@ class BoardTable extends Model
    * `score` is stored from N-S's point of view, so it is turned round when
    * E-W declared. A passed out board scores 0 and has no `tricks_won`.
    *
+   * The last board of a set completes the set.
+   *
    * @param  int|null  $tricksWon  tricks taken by declarer's side; null when passed out
    */
   public function finish(?int $tricksWon): void
+  {
+    $this->writeResult($tricksWon);
+
+    if ($this->tableSet !== null && $this->set_position >= $this->tableSet->size) {
+      $this->tableSet->end(TableSet::ENDED_COMPLETED);
+    }
+  }
+
+  private function writeResult(?int $tricksWon): void
   {
     if ($this->contractBid === null) {
       $this->update(['tricks_won' => null, 'score' => 0, 'finished_at' => now()]);

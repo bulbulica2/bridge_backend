@@ -5,6 +5,7 @@ namespace Tests\Feature\Database;
 use App\auxiliary\Seats;
 use App\Models\BoardTable;
 use App\Models\Table;
+use App\Models\TableSet;
 use App\Models\User;
 use App\Services\AuctionService;
 use App\Services\CardPlayService;
@@ -43,6 +44,23 @@ class DatabaseSeederTest extends TestCase
 
     $inPlay = Table::all()->first(fn (Table $table) => $this->state->phase($this->state->currentPlaying($table)) === PlayingStateService::PHASE_PLAY);
     $this->assertNotNull($this->state->dummyHand($this->state->currentPlaying($inPlay)), 'the table in play has no opening lead');
+  }
+
+  public function test_seeded_sets_include_a_finished_one_and_one_in_progress(): void
+  {
+    $finished = TableSet::where('ended', TableSet::ENDED_COMPLETED)->with('playings')->get();
+    $this->assertNotEmpty($finished, 'no finished set');
+
+    foreach ($finished as $set) {
+      $this->assertSame(range(1, $set->size), $set->playings->pluck('set_position')->all());
+      $this->assertTrue($set->playings->every(fn ($playing) => $playing->finished_at !== null));
+    }
+
+    $this->assertTrue(TableSet::whereNull('finished_at')->exists(), 'no set in progress');
+    $this->assertTrue(BoardTable::where('set_position', 2)->whereNull('finished_at')->exists(), 'no set past its first board');
+
+    // every playing the services dealt is in a set, in its place
+    $this->assertFalse(BoardTable::whereNull('table_set_id')->orWhereNull('set_position')->exists());
   }
 
   public function test_the_admin_is_to_call_at_a_full_table(): void

@@ -14,6 +14,7 @@ use App\Services\TableSeatService;
 use Database\Seeders\game\BidSeeder;
 use Database\Seeders\game\CardSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Arr;
 use Illuminate\Testing\TestResponse;
 use Tests\TestCase;
 
@@ -124,7 +125,10 @@ class PlayingReviewTest extends TestCase
     $this->assertSame(count(self::CALLS), $this->playing->auctions()->count());
     $this->assertSame(52, $this->playing->cardPlays()->count());
 
-    $this->assertSame($before, $this->review('S')->assertOk()->json('data'));
+    // only the set has moved on: its players left before its last board
+    $after = $this->review('S')->assertOk()->json('data');
+    $this->assertSame(['finished' => true, 'ended' => 'abandoned'], Arr::only($after['set'], ['finished', 'ended']));
+    $this->assertSame(Arr::except($before, 'set'), Arr::except($after, 'set'));
   }
 
   public function test_a_board_ended_by_a_claim_shows_the_tricks_up_to_the_claim(): void

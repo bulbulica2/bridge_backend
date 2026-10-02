@@ -51,7 +51,7 @@ robot makes **one** move if it is a robot's turn:
 | auction | the robot whose turn it is | one call ([Bidding](#bidding)) |
 | play, no claim pending | the robot acting for `turn` — declarer's robot also plays dummy's cards | one card ([Card play](#card-play)), or a claim of the rest ([Claims](#claims)) |
 | play, claim pending | the first robot (N, E, S, W order) that still has to answer | accept or reject ([Claims](#claims)) |
-| finished | the first robot not yet ready for the next board | ready ([The next board](#the-next-board)) |
+| finished, mid-set | the first robot not yet ready for the next board | ready ([The next board](#the-next-board)); nothing after a set's last board |
 
 That move changes the game, which sends the next `PlayingUpdated`, so the
 robots take their turns one after another until it is a human's turn. A
@@ -786,6 +786,11 @@ human at the table presses Next too, which deals the next board with the same
 players in the same seats. If a human left and somebody else took the seat,
 Next is refused (the robot's attempt is dropped and logged) and the humans'
 Start deals the next board instead; the robots are ready already.
+
+After the **last board of a set** there is no Next to ask for: the robots
+don't ask (`ready` stays `[]`), and their Start (`table_seats.ready_at`,
+set when they sat down) still stands, so the humans' Start opens the next
+set — a human alone with three robots presses it once.
 
 ## What robots don't do
 

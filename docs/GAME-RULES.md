@@ -393,7 +393,8 @@ and served by `GET /boards/{board}/results` (§8 step 7); IMPs aren't built.
 6. After 13 tricks (or an accepted claim), count declarer's tricks, score
    them (section 6) and store `tricks_won`, `score` and `finished_at` on
    `board_table`. Once all four
-   players have seen the result, pick the table's next board.
+   players have seen the result, pick the table's next board — unless it
+   was the last board of the set (below), which waits for everyone's Start.
 7. Compare across tables that played the same board (matchpoints/IMPs).
 
 ### Board-selection rule
@@ -430,6 +431,47 @@ abandoned board has no result to review. A **finished** playing keeps its
 calls and cards even after its table is deleted, so any player who has
 finished the board can replay it call by call and trick by trick
 (`GET /playings/{playing}`); playings finished before that change lost them.
+
+### Sets of boards
+
+Play at a table goes in **sets** of `bridge.set_size` boards (4, env
+`BRIDGE_SET_SIZE`), the same four players in the same seats throughout:
+
+1. Everybody at a full table presses **Start** → the first board of a new
+   set is dealt.
+2. After each board, everybody asks for the next (`playing/next`; robots
+   always do) → the set's next board, by the selection rule above.
+3. After the set's last board the set is **over** (`ended: completed`):
+   Next is refused with `"The set is over: press Start for a new one."`,
+   the finished board stays on show, and the players see the set's result.
+   Playing on takes everybody's Start again, which opens the next set
+   (numbered on at the table, 1, 2, 3…).
+
+A set's **result** adds up its boards' scores from N-S's side; the side
+with the higher total wins it, a tie has no winner. Each board also carries
+its matchpoints against every other table that has played it, and the set
+totals them, but matchpoints don't decide the set: a board only this table
+has played has nothing to be compared with.
+
+A set also ends **early**, with no winner, when one of its four players
+leaves the table before its last board is finished (`ended: abandoned`) —
+by quitting, moving, a kick or an idle release, even between boards. The
+board in play is abandoned as before (detached); the next board waits for
+everyone's Start and opens a new set. A side losing the set by going away
+too long (`ended: forfeit`, `forfeited_by`) is **planned** (#76): the
+columns exist and the results read them, but nothing ends a set that way
+yet, so for now leaving abandons the set.
+
+**In code:** `table_sets` (+ `table_set_seats`, the four players) and
+`board_table.table_set_id`/`set_position`. `BoardSelectionService::deal()`
+opens a set on a Start (`openSet()`) and continues it on Next;
+`BoardTable::finish()` completes the set when its last board ends;
+`TableSeatService::remove()` calls `BoardSelectionService::abandonSet()`.
+`moveOn()` refuses after the last board, and `start()` accepts a Start once
+the set is over even with the same four seated. A set outlives its table,
+like the playings in it. Its results are `GET /sets/{set}`
+(`BoardResultsService::set()`); the game state and table payloads carry
+`set: {id, number, board, of, finished, ended}`.
 
 Status today: the data layer for steps 1–6 exists (migrations, models,
 seed data played through the game services, the seating unique indexes, board dealer and vulnerability
@@ -497,7 +539,8 @@ Over HTTP:
   (`BoardSelectionService::moveOn()`). Leaving between boards detaches
   nothing; once the empty seat is filled, the four are no longer the board's
   four, so Next is refused and everyone's Start deals the next board, as with
-  the first one.
+  the first one. **Sets of boards are built** (above): Next only deals within
+  a set, and after its last board everyone's Start opens the next set.
 - **Step 7 is built for matchpoints**: `GET /boards/{board}/results`
   (`BoardResultsService::results()`) lists every finished playing of a board
   — the four players, contract, declarer, tricks, N-S score — with each

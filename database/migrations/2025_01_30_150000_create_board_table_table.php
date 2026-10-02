@@ -19,6 +19,10 @@ return new class extends Migration
       // null once the table has been deleted: the playing outlives the table,
       // so a user's board history survives (see board_table_seats below)
       $table->foreignId('table_id')->nullable()->constrained('tables')->nullOnDelete();
+      // the set this board was dealt in, and its place there (1 to the set's
+      // size); null only for playings made outside the game services
+      $table->foreignId('table_set_id')->nullable()->constrained('table_sets');
+      $table->unsignedTinyInteger('set_position')->nullable();
 
       // auction result, null until the auction ends (passed out = ended with no contract)
       $table->foreignId('contract_bid_id')->nullable()->constrained('bids');

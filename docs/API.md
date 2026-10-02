@@ -33,20 +33,20 @@ and policy failures get Laravel's default `403 {"message": "..."}`.
 | GET | `/cards` | `Game\CardController@index` | none | all `Card` rows |
 | GET | `/cards/{card}` | `Game\CardController@show` | none | one `Card` by id |
 | GET | `/bids` | `Game\BidController@index` | none | the 38 calls with their ids (`bid_id` for `POST /tables/{table}/calls`), P, X, XX, then by rank |
-| GET | `/tables` | `Game\TableController@index` | `auth` | all tables, newest first, with `seats.user`, `free_seats` and `can_manage` |
+| GET | `/tables` | `Game\TableController@index` | `auth` | all tables, newest first, with `seats.user`, `free_seats`, `set` and `can_manage` |
 | POST | `/tables` | `Game\TableController@store` | `auth` | creates a table and seats the creator, with `robots` in the other three seats if asked (201) |
-| GET | `/tables/{table}` | `Game\TableController@show` | `auth` | one table with `seats.user`, `free_seats` and `can_manage` |
+| GET | `/tables/{table}` | `Game\TableController@show` | `auth` | one table with `seats.user`, `free_seats`, `set` and `can_manage` |
 | POST | `/tables/{table}/seats` | `Game\TableSeatController@store` | `auth` | take a free seat at an existing table, moving off your old one if you had one (201) |
 | DELETE | `/tables/{table}/seats` | `Game\TableSeatController@destroy` | `auth` | give up your seat; deletes the table if you were the last player |
 | POST | `/tables/{table}/seats/users` | `Game\TableSeatController@storeUser` | `auth` + `TablePolicy::manage` | a table manager seats another user (201) |
 | POST | `/tables/{table}/seats/robots` | `Game\TableSeatController@storeRobot` | `auth` + `TablePolicy::manage` | a table manager puts a robot in a free seat (201) |
 | DELETE | `/tables/{table}/seats/{user}` | `Game\TableSeatController@destroyUser` | `auth` (+ `TablePolicy::kick`: a manager, to remove anyone but yourself; anyone, to remove a robot from an unattended table) | quit your seat, or kick that player out |
-| POST | `/tables/{table}/start` | `Game\TableStartController@store` | `auth` + seated at the table (`TablePolicy::play`) | press Start; the board is dealt once the table is full and every human there has pressed it (200, the table plus `playing`) |
+| POST | `/tables/{table}/start` | `Game\TableStartController@store` | `auth` + seated at the table (`TablePolicy::play`) | press Start; the first board of a new set is dealt once the table is full and every human there has pressed it (200, the table plus `playing`) |
 | DELETE | `/tables/{table}/start` | `Game\TableStartController@destroy` | `auth` + seated at the table (`TablePolicy::play`) | take your Start back while no board is dealt (200, the table) |
 | POST | `/tables/{table}/heartbeat` | `Game\TableSeatController@heartbeat` | `auth` + seated at the table (`TablePolicy::play`) | "still here": keeps the caller's seat from being freed as idle (200, `{last_seen_at}`) |
 | GET | `/tables/{table}/playing` | `Game\PlayingController@show` | `auth` + seated at the table (`TablePolicy::play`) | the game state of the table's current board, with the caller's own hand |
 | POST | `/tables/{table}/calls` | `Game\CallController@store` | `auth` + seated at the table (`TablePolicy::play`) | make your call in the auction (201, the updated game state) |
-| POST | `/tables/{table}/playing/next` | `Game\PlayingController@next` | `auth` + seated at the table (`TablePolicy::play`) | once the board is finished, ask for the next one; the last of the four deals it (200, the game state) |
+| POST | `/tables/{table}/playing/next` | `Game\PlayingController@next` | `auth` + seated at the table (`TablePolicy::play`) | once the board is finished, ask for the set's next one; the last of the four deals it (200, the game state; 409 after the set's last board) |
 | POST | `/tables/{table}/cards` | `Game\CardPlayController@store` | `auth` + seated at the table (`TablePolicy::play`) | play the next card of the trick — yours, or dummy's as declarer (201, the updated game state) |
 | POST | `/tables/{table}/claim` | `Game\ClaimController@store` | `auth` + seated at the table (`TablePolicy::play`) | claim some of the remaining tricks for your side, 0 to concede (201, the updated game state) |
 | POST | `/tables/{table}/claim/response` | `Game\ClaimController@respond` | `auth` + seated at the table (`TablePolicy::play`) | accept or reject the pending claim (200, the updated game state) |
@@ -57,6 +57,7 @@ and policy failures get Laravel's default `403 {"message": "..."}`.
 | GET | `/boards/{board}` | `Game\BoardController@show` | `auth` + finished that board (`BoardPolicy::view`) | the board with all four hands as dealt |
 | GET | `/boards/{board}/results` | `Game\BoardController@results` | `auth` + finished that board (`BoardPolicy::view`) | every finished playing of the board, with matchpoints |
 | GET | `/playings/{playing}` | `Game\PlayingController@review` | `auth` + finished that playing's board (`BoardPolicy::view`) | one finished playing with its auction and tricks, to review it |
+| GET | `/sets/{set}` | `Game\TableSetController@show` | `auth` + one of the set's players, or finished all its boards (`TableSetPolicy::view`) | a set of boards' results: each board's result and matchpoints, totals per side, the winner |
 | GET | `/api/user` | closure | `auth:sanctum` | current authenticated `User` (the caller's own record, email and `is_admin` included) |
 | PATCH | `/api/user` | `UserController@update` | `auth:sanctum` | edit your own `name` / `description` |
 | GET | `/api/user/playings` | `UserController@ownPlayings` | `auth:sanctum` | your own finished playings, as `GET /users/{user}/playings` |
@@ -113,7 +114,12 @@ Every table payload — from index, store, show or leave — is built by
 timestamps), plus
 `seats` (`TableSeat` rows — `id`, `table_id`, `user_id`, `seat`,
 `last_seen_at`, `ready_at`, timestamps — each with its `user` and `ready`),
-`free_seats` (the unoccupied seats in `N, E, S, W` order) and `can_manage`.
+`free_seats` (the unoccupied seats in `N, E, S, W` order), `set` and
+`can_manage`.
+`set` is where the table is in its [set of boards](#sets): the set it is on
+now, or the one it finished last — `{id, number, board, of, finished,
+ended}` as in the game state, `board` being how many of its boards have been
+dealt — and `null` before the table's first Start.
 A seat's `ready` (boolean, from `ready_at`) is whether its player has pressed
 **Start** (see [`POST /tables/{table}/start`](#post-tablestablestart)); a
 robot's is always true. It is public: everyone at the table sees who is
@@ -168,7 +174,9 @@ is never ready). The request that deals is the first to carry a non-null
 if a player leaves before the board is finished, and the refilled table needs
 everyone's Start again. Once a board is finished, the **same four** go on with
 [`POST /tables/{table}/playing/next`](#post-tablestableplayingnext); if one of
-them was replaced meanwhile, it is Start again.
+them was replaced meanwhile, it is Start again. Boards come in
+[sets](#sets) of four: Start deals a set's first board, Next the other
+three, and after the fourth it is everyone's Start again for the next set.
 
 Start belongs to the seat: leaving, moving (to another table or another seat
 at this one), being kicked or being released as idle all drop it, and
@@ -469,7 +477,8 @@ which takes the table row lock like seat changes do.
     short or somebody has still to press — the caller's seat now `ready`,
     `board_id` unchanged, `playing` `null` (or the finished board still on
     the table, as in `POST /tables/{table}/seats`);
-  - message `"Board dealt."` when this Start deals — `board_id` set and
+  - message `"Board dealt."` when this Start deals — the first board of a
+    new [set](#sets) (`playing.set.board` is 1) — `board_id` set and
     `playing` the caller's game state of the new board, exactly what
     [`GET /tables/{table}/playing`](#get-tablestableplaying) would answer,
     so no request is needed after it.
@@ -487,10 +496,10 @@ which takes the table row lock like seat changes do.
   - `"A board is already in progress at this table."` — in its auction or
     play;
   - `"The board is finished: the same four players go on with the next board
-    (POST /tables/{table}/playing/next)."` — a finished board is on the table
-    and the four who played it are all still in their seats. If one of them
-    has been replaced, Start is what deals the next board, and this 409 goes
-    away;
+    (POST /tables/{table}/playing/next)."` — a finished board is on the table,
+    its set isn't over, and the four who played it are all still in their
+    seats. If one of them has been replaced, or the board was the set's last,
+    Start is what deals the next board, and this 409 goes away;
   - `"You are not seated at this table."` — you left between the policy
     check and the lock.
 - **403** for a caller who doesn't sit at this table (`TablePolicy::play`,
@@ -536,6 +545,7 @@ page refresh or a reconnect. No body. Built by
   "data": {
     "phase": "auction",
     "playing_id": 42,
+    "set": {"id": 5, "number": 1, "board": 2, "of": 4, "finished": false, "ended": null},
     "board": {"id": 7, "number": 7, "dealer": "S", "vulnerable": "N-S E-W"},
     "players": {
       "N": {"id": 1, "name": "Ann", "username": "ann", "description": null, "is_robot": false},
@@ -572,6 +582,7 @@ page refresh or a reconnect. No body. Built by
 |---|---|
 | `phase` | `waiting` — the table has no board (`tables.board_id` null, fewer than four players); `auction` — `board_table.auction_ended_at` is null; `play` — the auction ended with a contract (`finished_at` still null); `finished` — `finished_at` is set: after the 13th trick, when a claim is accepted, or straight away on a **passed out** board. |
 | `playing_id` | the `board_table.id` |
+| `set` | the [set](#sets) this board was dealt in: `id` (for [`GET /sets/{set}`](#get-setsset)), `number` (1, 2, 3… at this table), `board` (this board's place in it, 1–`of`), `of` (how many boards the set has, 4), `finished` (true once the set is over: after its last board is finished, or earlier if one of its four left) and `ended` (`null` while it goes on, then `completed` or `abandoned`; `forfeit` is planned, #76). After the last board `finished` is true while that board is still on show: time for the set's results and everyone's Start |
 | `board` | `id`, `number`, `dealer` (`N/E/S/W`) and `vulnerable` (a `Vulnerability` value) from `boards` |
 | `players` | seat → public profile (`UserResource`, no email; `is_robot` marks a robot), from the playing's `board_table_seats` snapshot, not from `table_seats` |
 | `turn` | the seat expected to act. During the `auction`: the dealer first, then clockwise after the last call. During the `play`: the **hand** the next card comes from — declarer's left-hand opponent leads the first trick, then clockwise, and each trick's winner leads the next. When it is dummy's seat, declarer plays it (see `acting_user_id`). `null` while `waiting` and once `finished` |
@@ -596,7 +607,7 @@ While `phase` is `waiting`, **every other field is null** (including `hand`,
 
 ### `POST /tables/{table}/playing/next`
 Once the board is `finished` (13 tricks played, or passed out), ask for the
-next one. The finished board stays on the table — `result` and the whole
+next board of the [set](#sets). The finished board stays on the table — `result` and the whole
 `deal` on show — until **every** player has asked; the last one to ask deals
 the next board. Built by `App\Services\BoardSelectionService::moveOn()`.
 
@@ -620,7 +631,11 @@ only asks for the caller, like any other request.
     next board is dealt by everyone's Start (as for the first board);
   - `"The players have changed since this board: ..."` — the table is full
     again, but not with the four who played the board: everyone presses
-    Start ([`POST /tables/{table}/start`](#post-tablestablestart)) instead.
+    Start ([`POST /tables/{table}/start`](#post-tablestablestart)) instead;
+  - `"The set is over: press Start for a new one."` — the board was the set's
+    last (`set.finished` is true): no fifth board is dealt this way, the
+    finished board stays on show, and everyone's Start opens the next set.
+    Robots don't ask then, so `ready` stays `[]`.
 - **403** `"Only the players seated at this table can ask for the next
   board."` for anyone not seated at this table, admins included; **401** for
   guests, **404** for an unknown table id.
@@ -914,6 +929,78 @@ lost their calls and cards when their table was deleted: they come back with
 `auction: []` and, when there was a contract, `tricks: []` — the contract,
 result and deal are still there.
 
+## Sets
+
+Play at a table goes in **sets** of four boards (`bridge.set_size`, env
+`BRIDGE_SET_SIZE`), the same four players in the same seats throughout
+(`GAME-RULES.md` §8, "Sets of boards"):
+
+1. everybody presses Start ([`POST /tables/{table}/start`](#post-tablestablestart))
+   → the set's first board;
+2. after each board everybody asks for the next
+   ([`POST /tables/{table}/playing/next`](#post-tablestableplayingnext); robots
+   always do) → boards 2, 3 and 4;
+3. after the fourth the set is over: Next 409s, the board stays on show,
+   the players read the set's results, and everybody's Start opens the next
+   set (`number` 2, `board` 1).
+
+A set also ends early, as `abandoned`, when one of its four leaves the table
+(quits, moves, is kicked or released as idle) before its last board is
+finished — even between boards. The board in play goes as before (detached),
+the set has no winner, and the refilled table's Start opens a new set.
+Losing a set by forfeit (`ended: "forfeit"`, `forfeited_by`) is **planned**
+(#76): the fields exist and are read, but nothing ends a set that way yet.
+
+The game state, `PlayingUpdated` and every table payload carry `set`; the
+history rows carry it too. Sets outlive their table (`table_id` goes
+`null`), like the playings in them.
+
+### `GET /sets/{set}`
+A set's results. No body. Built by `Game\TableSetController@show` over
+`BoardResultsService::set()`. Works while the set is going on (with the
+boards finished so far) and after its table is deleted.
+
+- **200**, message `"Set retrieved successfully."`, for one of the set's
+  four players (left since or not), or anyone who has finished **every**
+  board the set finished, at any table (`TableSetPolicy::view`).
+- **403** (Laravel's default `{message}` shape) for anyone else, admins
+  included: they may still be dealt one of its boards.
+- **401** for guests, **404** for an unknown set id.
+
+```json
+{
+  "status": 200,
+  "message": "Set retrieved successfully.",
+  "data": {
+    "id": 5, "number": 1, "table_id": 3, "of": 4, "boards_dealt": 4,
+    "started_at": "...", "finished_at": "...", "finished": true,
+    "ended": "completed", "forfeited_by": null,
+    "players": {"N": {"id": 1, "name": "Ann", ...}, "E": {...}, "S": {...}, "W": {...}},
+    "boards": [
+      {
+        "position": 1, "playing_id": 42,
+        "board": {"id": 7, "number": 7, "dealer": "S", "vulnerable": "N-S E-W"},
+        "contract": {"id": 22, "call": "4S", ...}, "doubled": 0, "declarer": "N",
+        "tricks_won": 10, "score_ns": 620, "made_by": 0, "claimed": false,
+        "top": 2, "matchpoints": {"ns": 2, "ew": 0}
+      }
+    ],
+    "totals": {"score": {"ns": 1150, "ew": -1150}, "matchpoints": {"ns": 2, "ew": 0}, "top": 2},
+    "winner": "NS"
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `number`, `of`, `finished`, `ended` | as the game state's `set`; `forfeited_by` is `NS`/`EW` on a forfeit (planned, #76), else `null` |
+| `table_id` | `null` once the table has been deleted |
+| `boards_dealt` | how many of its boards were dealt, including one abandoned mid-play (not listed in `boards`) |
+| `players` | seat → public profile (`UserResource`), the four who played the whole set |
+| `boards` | the set's **finished** boards, in order: `position` (1–`of`), `playing_id` (reviewable with `GET /playings/{playing}`), `board`, the game state's `result` fields, and `top` and `matchpoints` against **every** finished playing of that board at any table, worked out now as in `GET /boards/{board}/results` (a board only this table has played has `top: 0`) |
+| `totals` | `score`: the boards' `score_ns` added up, and the same from E-W's side; `matchpoints`: each side's matchpoints added up, out of `top` |
+| `winner` | `NS` or `EW`, the side with the higher total **score**; `null` while the set goes on, on a tie, and for an `abandoned` set. A forfeit gives it to the other side. Matchpoints don't decide it |
+
 ## Users
 
 A user's profile has two views:
@@ -997,6 +1084,7 @@ and each row's auction and play behind `GET /playings/{playing_id}`.
       {
         "playing_id": 42,
         "table_id": null,
+        "set": {"id": 5, "number": 1, "board": 2, "of": 4},
         "board": {"id": 7, "number": 7, "dealer": "S", "vulnerable": "N-S E-W"},
         "seat": "E",
         "partner": {"id": 4, "name": "Di", "username": "di", "description": null},
@@ -1021,6 +1109,7 @@ and each row's auction and play behind `GET /playings/{playing_id}`.
 | Field | Meaning |
 |---|---|
 | `table_id` | `null` once the table has been deleted |
+| `set` | the [set](#sets) the board was dealt in — `id`, `number`, `board` (its place in the set), `of` — to group the history by set; its results are `GET /sets/{id}`. `null` only for a playing made outside the game services |
 | `board` | `id`, `number`, `dealer`, `vulnerable` |
 | `seat` | the seat the user held, from the snapshot |
 | `partner` | the player in the opposite seat (`UserResource`) |
@@ -1090,7 +1179,9 @@ Event name on the wire: `App\Events\TableUpdated` (Echo:
 - a board is dealt — by the last Start, by a robot taking the fourth seat
   after every human has pressed it, or by the last `playing/next`: that
   event is the first with a non-null `board_id` (and the humans' `ready`
-  cleared); a player leaving mid-board sends it back to null.
+  cleared); a player leaving mid-board sends it back to null. Its `set`
+  moves with it: a new set on a Start, the next `board` on a Next, and
+  `finished` when a player leaving abandons the set.
 
 **Not sent** when the change deleted the table (the last player left, or
 `tables:delete-unattended` removed an unattended one) — nobody is left to
@@ -1132,7 +1223,8 @@ the request (the one who did gets it in their HTTP response).
         "user": {"id": 13, "name": "Bob", "username": "bob", "description": null, "is_robot": false}
       }
     ],
-    "free_seats": ["S", "W"]
+    "free_seats": ["S", "W"],
+    "set": null
   }
 }
 ```
@@ -1169,7 +1261,7 @@ It is **not** sent when a player leaving abandons the board; that shows up as
 `TableUpdated` with `board_id` back to null.
 
 **Payload** — `{playing}`, the **public** part of
-`GET /tables/{table}/playing`: `phase`, `playing_id`, `board`, `players`,
+`GET /tables/{table}/playing`: `phase`, `playing_id`, `set`, `board`, `players`,
 `turn`, `acting_user_id`, `auction`, `contract`, `tricks`, `current_trick`,
 `tricks_won`, `dummy_hand`, `claim`, `result`, `deal`, `ready`. It never carries `hand` or `my_seat`: the table
 channel is only authorised at subscribe time, so a player who has left may
@@ -1182,6 +1274,7 @@ once the board is finished the whole deal.
   "playing": {
     "phase": "auction",
     "playing_id": 42,
+    "set": {"id": 5, "number": 1, "board": 2, "of": 4, "finished": false, "ended": null},
     "board": {"id": 7, "number": 7, "dealer": "S", "vulnerable": "N-S E-W"},
     "players": {"N": {"id": 1, "name": "Ann", "username": "ann", "description": null}, "E": {...}, "S": {...}, "W": {...}},
     "turn": "S",
@@ -1243,6 +1336,9 @@ hand, which that player's client can drop itself (or re-read from
   event sends it yet.
 - No presence channel ("who is online"): idle players are detected by the
   heartbeat only.
+- A set can't be forfeited yet (#76): a player leaving mid-set abandons it
+  with no winner; `ended: "forfeit"` and `forfeited_by` are read but never
+  written.
 
 ## Practical implication for a frontend right now
 
@@ -1278,7 +1374,10 @@ You can currently only:
     (`POST /tables/{table}/claim`), which the other non-dummy players accept
     or reject (`POST /tables/{table}/claim/response`); an accepted claim
     scores the board the same way.
-11. Move on to the next board with `POST /tables/{table}/playing/next`.
+11. Move on to the next board with `POST /tables/{table}/playing/next`,
+    in sets of four: after a set's fourth board read its results
+    (`GET /sets/{set}`, the state's `set.id`) and press Start again for the
+    next set.
 12. Keep your seat with `POST /tables/{table}/heartbeat` every ~30 s: a
     player who goes quiet (closed tab, lost connection) has their seat freed
     after 5 minutes, or 15 during a board.

@@ -9,6 +9,7 @@ use App\Http\Controllers\Game\ClaimController;
 use App\Http\Controllers\Game\PlayingController;
 use App\Http\Controllers\Game\TableController;
 use App\Http\Controllers\Game\TableSeatController;
+use App\Http\Controllers\Game\TableSetController;
 use App\Http\Controllers\Game\TableStartController;
 use App\Http\Controllers\UserController;
 use Illuminate\Support\Facades\Route;
@@ -89,6 +90,9 @@ Route::middleware('auth')->group(function () {
   Route::get('boards/{board}', [BoardController::class, 'show'])->name('boards.show');
   Route::get('boards/{board}/results', [BoardController::class, 'results'])->name('boards.results');
   Route::get('playings/{playing}', [PlayingController::class, 'review'])->name('playings.show');
+
+  // a set of boards' results, for its players and anyone who has finished its boards
+  Route::get('sets/{set}', [TableSetController::class, 'show'])->name('sets.show');
 });
 
 require __DIR__.'/auth.php';
