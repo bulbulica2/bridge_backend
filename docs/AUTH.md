@@ -146,19 +146,21 @@ game state.
 Policies live in `app/Policies/` and are auto-discovered by name
 (`TablePolicy` ↔ `App\Models\Table`).
 
-- **`TablePolicy::manage(User, Table)`** decides who runs a table. Exactly one
-  player manages a table at a time. It allows:
+- **`TablePolicy::manage(User, Table)`** decides who runs a table:
+  `is_admin || moderated_by === user`. A table has one role, its moderator,
+  so it allows:
   - its current `moderated_by` user. This starts as the creator and moves on
-    when that manager leaves — to the creator if they are still seated,
-    otherwise to the earliest-joined remaining **human** (a robot never
-    manages a table). With only robots left the table is *unattended* and
-    `moderated_by` is null, so only admins manage it until a human sits
-    down and takes the role;
-  - its `created_by` user **only while they still hold a seat at that table**.
-    A creator who has left keeps `created_by` (it is what the 3-active-tables
-    limit counts) but no longer manages the table they walked away from;
+    when that moderator leaves, to the **human** seated there longest (a
+    robot never manages a table; the creator gets no preference). With only
+    robots left the table is *unattended* and `moderated_by` is null, so
+    only admins manage it until a human sits down and takes the role;
   - any user with `is_admin` (cast to boolean), even an admin who isn't
-    seated there.
+    seated there. Admins may also kick the moderator: the override exists to
+    stop cheating (one person on several accounts, collusion).
+
+  `created_by` grants nothing. It is kept as a record (it is what the
+  3-active-tables limit counts), and a creator who left and came back is a
+  plain player.
 
   It gates `POST /tables/{table}/seats/users` (seat another user) through
   `AddUserToSeatRequest::authorize()`, `POST /tables/{table}/seats/robots`

@@ -143,8 +143,8 @@ vendor/bin/pint --test            # check formatting without changing files
   still 409s a seated creator rather than moving them.
   `remove()` frees a seat whether the player quit or was kicked: it deletes
   the table if that was the last player, and otherwise passes `moderated_by`
-  to the creator if they are still seated, else the earliest-joined remaining
-  **human** (never a robot). With only robots left it keeps the table
+  to the remaining **human** seated there longest (never a robot; the
+  creator gets no preference). With only robots left it keeps the table
   **unattended** (`tables.unattended_since` set, `moderated_by` null): its
   robots stop, anyone may kick them, the first human to `seat()` there
   becomes moderator, and `tables:delete-unattended` (scheduled,
@@ -196,7 +196,8 @@ vendor/bin/pint --test            # check formatting without changing files
   whole `deal` and `ready`) until `moveOn()`
   (`POST /tables/{table}/playing/next`, `Game\PlayingController@next`)
   has marked all four snapshot seats' `board_table_seats.ready_at` — each
-  player for themselves, or a manager with `everyone` — and then deals
+  player for themselves only (a stale client's `everyone` is ignored) — and
+  then deals
   for the same four; it takes the table row lock
   like seat changes do, and 409s (`NextBoardException`) unless the board is
   finished and the same four sit in the same seats. Leaving between boards
@@ -313,9 +314,9 @@ vendor/bin/pint --test            # check formatting without changing files
   hold robots back while setting a table up. What they bid and play is in
   `docs/ROBOTS.md` — update it with any change to `app/Robots/`.
 - **Authorization**: `App\Policies\TablePolicy::manage` (auto-discovered) is
-  true for a table's `moderated_by`, any `is_admin` user, or its `created_by`
-  **while that creator still holds a seat there** — a table has at most one
-  manager, and a creator who left has already handed the role on. Check it in
+  `is_admin || moderated_by === user`: a table has one role, its moderator,
+  and `created_by` grants nothing (a creator who left and came back is a
+  plain player). Admins, seated or not, may also kick the moderator. Check it in
   the form request's `authorize()` so non-managers get 403 before validation
   (`AddUserToSeatRequest`, `AddRobotToSeatRequest`). `TablePolicy::kick`
   (`RemoveUserFromSeatRequest`) allows yourself, a manager, or anyone

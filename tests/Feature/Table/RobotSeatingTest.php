@@ -146,7 +146,7 @@ class RobotSeatingTest extends TestCase
 
     $this->actingAs($player)->postJson("/tables/$table->id/seats/robots", ['seat' => 'E'])
       ->assertForbidden()
-      ->assertJsonPath('message', 'Only the table creator, its moderator or an admin can seat a robot.');
+      ->assertJsonPath('message', 'Only the table moderator or an admin can seat a robot.');
 
     $this->assertSame(2, $table->seats()->count());
   }

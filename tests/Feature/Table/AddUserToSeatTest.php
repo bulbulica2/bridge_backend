@@ -92,7 +92,7 @@ class AddUserToSeatTest extends TestCase
     $this->actingAs($player)
       ->postJson("/tables/$table->id/seats/users", ['user_id' => $target->id, 'seat' => 'S'])
       ->assertForbidden()
-      ->assertJsonPath('message', 'Only the table creator, its moderator or an admin can seat other players.');
+      ->assertJsonPath('message', 'Only the table moderator or an admin can seat other players.');
 
     $this->assertDatabaseMissing('table_seats', ['user_id' => $target->id]);
   }

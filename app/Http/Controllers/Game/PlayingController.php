@@ -46,9 +46,8 @@ class PlayingController extends BaseController
   }
 
   /**
-   * Ask for the next board once the current one is finished — for the
-   * caller, or with `everyone` (a manager) for all four. The last player to
-   * ask deals it. Answers with the game state: still the finished board
+   * Ask for the next board once the current one is finished, for the caller
+   * only. The last player to ask deals it. Answers with the game state: still the finished board
    * while somebody has to ask, the new one once it is dealt.
    */
   public function next(
@@ -58,7 +57,7 @@ class PlayingController extends BaseController
     PlayingStateService $state
   ): JsonResponse {
     try {
-      $dealt = $boards->moveOn($table, $request->user(), $request->boolean('everyone'));
+      $dealt = $boards->moveOn($table, $request->user());
     } catch (NextBoardException $e) {
       return $this->sendError($e->getMessage(), 409);
     }

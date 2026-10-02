@@ -106,8 +106,8 @@ Things worth knowing before you change them:
   seats or kicks somebody else.
 - **Leaving** is the same code whether the player quit, was kicked or timed
   out: `remove()` deletes the table if that was the last player, otherwise
-  hands `moderated_by` on (to the creator if still seated, else the
-  earliest-joined **human**), and detaches an unfinished playing. With only
+  hands `moderated_by` on (to the **human** seated there longest, never
+  the creator by preference), and detaches an unfinished playing. With only
   robots left it keeps the table *unattended* (`unattended_since`,
   `moderated_by` null); the first human to `seat()` there takes it over.
   Both reread the table under its row lock (`refresh()`), since who runs it
@@ -121,7 +121,8 @@ Things worth knowing before you change them:
   needs all four players' history. `startIfReady()` runs on every Start and
   every `seat()` (a robot can be the one that completes the table); dealing
   clears the humans' Start. A finished board is followed by `moveOn()` while
-  the same four sit there, by everyone's Start once one was replaced.
+  the same four sit there (each player asks for themselves; nobody can ask
+  for the others), by everyone's Start once one was replaced.
   Start, like Next, takes the table row lock that seat changes take. A playing abandoned mid-board is
   *detached* (`table_id` set to null), never deleted, so the seat snapshot
   still records that those four saw the deal.
@@ -194,8 +195,8 @@ history, and `HandDealt` isn't sent to them.
 
 Policies in `app/Policies/` are auto-discovered.
 
-- `TablePolicy::manage` is true for a table's `moderated_by`, any `is_admin`
-  user, or its `created_by` while that creator still holds a seat there.
+- `TablePolicy::manage` is true for a table's `moderated_by` and any
+  `is_admin` user; `created_by` grants nothing.
   Every HTTP table payload carries it as `can_manage`, so clients don't
   re-implement it.
 - `TablePolicy::play` limits the game state to players seated at the table.

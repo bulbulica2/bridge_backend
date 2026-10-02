@@ -218,8 +218,9 @@ class BoardSelectionService
    * finished. The result stays up until every player has asked, so nobody
    * has it pulled away before they have read it; the last one to ask deals
    * the next board, picked by the same rule as the first (`deal()`).
-   * `$everyone` (a manager's call, checked by the caller) asks for all four
-   * at once. Only the four who played the board go on this way: once one of
+   * Each player asks for themselves (a robot as soon as the board ends);
+   * nobody asks for anyone else. Only the four who played the board go on
+   * this way: once one of
    * them has been replaced, the table needs every human's Start again.
    *
    * Asking twice changes nothing. Returns the new playing once it is dealt,
@@ -233,9 +234,9 @@ class BoardSelectionService
    *
    * @throws NextBoardException
    */
-  public function moveOn(Table $table, User $user, bool $everyone = false): ?BoardTable
+  public function moveOn(Table $table, User $user): ?BoardTable
   {
-    return DB::transaction(function () use ($table, $user, $everyone) {
+    return DB::transaction(function () use ($table, $user) {
       // the lock seat changes take, so a player leaving and the last player
       // asking queue rather than race; then reread the board, which whoever
       // held the lock before may have moved on
@@ -264,11 +265,7 @@ class BoardSelectionService
         throw new NextBoardException('The players have changed since this board: the next one is dealt once every player has pressed Start.');
       }
 
-      $asking = $playing->seats()->whereNull('ready_at');
-
-      if (! $everyone) {
-        $asking->where('user_id', $user->id);
-      }
+      $asking = $playing->seats()->whereNull('ready_at')->where('user_id', $user->id);
 
       if ($asking->update(['ready_at' => now()]) === 0) {
         return null;

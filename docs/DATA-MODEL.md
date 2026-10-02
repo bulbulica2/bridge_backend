@@ -119,11 +119,13 @@ player to leave deletes the row (`TableSeatService::remove()`).
 attended tables one user may have as `created_by`; `POST /tables` returns
 409 past that.
 `created_by` is fixed for the life of the table, which is what that limit
-counts. `moderated_by` starts equal to `created_by` and moves whenever the
-current moderator leaves: to the creator if they still hold a seat, otherwise
-to the earliest-joined remaining **human** — never a robot. A table therefore
-has at most one manager at a time, and a creator who has left stops being
-one — see `TablePolicy::manage` in [`AUTH.md`](AUTH.md#authorization).
+counts — a record only: it grants no rights over the table. `moderated_by` is
+the table's one role. It starts equal to `created_by` and moves whenever the
+current moderator leaves, to the remaining **human** seated there longest
+(earliest `table_seats.created_at`, then `id`) — never a robot, and the
+creator gets no preference: one who left and came back is a plain player.
+Only the moderator and admins manage a table — see `TablePolicy::manage` in
+[`AUTH.md`](AUTH.md#authorization).
 **Unattended table**: when the last human leaves and robots remain, the row
 is kept with `unattended_since` set to that moment and `moderated_by` null.
 Its robots stop acting and anyone may kick them (`TablePolicy::kick`). The
@@ -218,9 +220,9 @@ Seats are managed through `App\Services\TableSeatService`:
 - `remove(Table, User, ?User $by = null)` deletes the user's seat row and
   returns whether the table was deleted. It serves both quitting and being
   kicked. If no seats remain the table is deleted; otherwise, if the removed
-  player was `moderated_by`, the role passes to the creator when they are
-  still seated, and failing that to the earliest remaining seat (ordered by
-  `created_at`, then `id`). Throws `SeatUnavailableException` if the user
+  player was `moderated_by`, the role passes to the earliest remaining
+  **human** seat (ordered by `created_at`, then `id`), whoever made the
+  table. Throws `SeatUnavailableException` if the user
   holds no seat there; `$by` (the acting user, when it isn't the user being
   removed) only switches the message between "You are not seated at this
   table." and "That user is not seated at this table."

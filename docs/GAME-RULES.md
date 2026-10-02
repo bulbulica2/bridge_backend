@@ -452,8 +452,8 @@ Over HTTP:
   `POST /tables`, others join with `POST /tables/{table}/seats`, and anyone
   leaves with `DELETE /tables/{table}/seats` — all through `TableSeatService`,
   which enforces a valid free seat and one table per user. Leaving hands
-  `moderated_by` to the creator if still seated, else the earliest-joined
-  remaining human, and the last player out deletes the table. A table manager
+  `moderated_by` (if the leaver had it) to the remaining human seated there
+  longest, and the last player out deletes the table. A table manager
   can seat another user (`POST /tables/{table}/seats/users`) or a robot
   (`POST /tables/{table}/seats/robots`, §9), or kick a player
   (`DELETE /tables/{table}/seats/{user}`); a kick is not recorded, so the
@@ -491,8 +491,8 @@ Over HTTP:
   the state gains `result`.
 - **Step 6's "pick the table's next board" is built**: a finished board
   (played out, claimed or passed out) stays on the table, whole deal shown, until each
-  of the four sends `POST /tables/{table}/playing/next` (or a manager sends it
-  with `everyone`); the last one deals the next board with the same selection
+  of the four sends `POST /tables/{table}/playing/next` for themselves
+  (nobody, not even a manager, asks for the others); the last one deals the next board with the same selection
   rule and the same four players in the same seats
   (`BoardSelectionService::moveOn()`). Leaving between boards detaches
   nothing; once the empty seat is filled, the four are no longer the board's
