@@ -18,7 +18,7 @@
  * The floor only goes up: a change that would drop under it adds tests.
  */
 
-const FLOOR = 95.0;
+const FLOOR = 99.9;
 
 // how many of the least covered files the summary lists
 const WORST_FILES = 15;
