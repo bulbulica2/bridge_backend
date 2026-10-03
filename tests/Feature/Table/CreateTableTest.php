@@ -6,6 +6,7 @@ use App\Models\Table;
 use App\Models\TableSeat;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class CreateTableTest extends TestCase
@@ -119,6 +120,25 @@ class CreateTableTest extends TestCase
     $this->actingAs($user)->postJson('/tables')->assertStatus(409);
 
     $this->assertDatabaseCount('tables', 1);
+  }
+
+  public function test_a_seat_taken_by_a_concurrent_request_is_a_409_and_no_table(): void
+  {
+    $user = User::factory()->create();
+    $rival = User::factory()->create();
+
+    // another request takes the creator's seat just before their insert
+    TableSeat::creating(function (TableSeat $seat) use ($rival) {
+      if ($seat->user_id !== $rival->id) {
+        DB::table('table_seats')->insert(['table_id' => $seat->table_id, 'user_id' => $rival->id, 'seat' => $seat->seat]);
+      }
+    });
+
+    $this->actingAs($user)->postJson('/tables')
+      ->assertStatus(409)
+      ->assertJsonPath('message', 'The seat or user was taken by another request.');
+
+    $this->assertDatabaseCount('tables', 0);
   }
 
   public function test_a_creator_may_keep_three_active_tables_but_not_a_fourth(): void

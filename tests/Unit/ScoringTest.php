@@ -100,6 +100,25 @@ class ScoringTest extends TestCase
     ScoringService::score($this->bid('P'), 0, 'N', Vulnerability::NONE, 7);
   }
 
+  public static function badArguments(): array
+  {
+    return [
+      'doubled below 0' => [-1, 7, 'doubled must be 0, 1 or 2, got -1.'],
+      'doubled above 2' => [3, 7, 'doubled must be 0, 1 or 2, got 3.'],
+      'tricks below 0' => [0, -1, 'tricksWon must be 0–13, got -1.'],
+      'tricks above 13' => [0, 14, 'tricksWon must be 0–13, got 14.'],
+    ];
+  }
+
+  #[DataProvider('badArguments')]
+  public function test_out_of_range_doubled_or_tricks_are_refused(int $doubled, int $tricksWon, string $message): void
+  {
+    $this->expectException(InvalidArgumentException::class);
+    $this->expectExceptionMessage($message);
+
+    ScoringService::score($this->bid('2H'), $doubled, 'N', Vulnerability::NONE, $tricksWon);
+  }
+
   /**
    * N-S scores, expected N-S matchpoints, top
    */

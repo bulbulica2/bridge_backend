@@ -5,12 +5,14 @@ namespace Tests\Feature\Table;
 use App\auxiliary\Seats;
 use App\Models\Board;
 use App\Models\BoardTable;
+use App\Models\Card;
 use App\Models\Table;
 use App\Models\User;
 use App\Services\BoardSelectionService;
 use App\Services\TableSeatService;
 use Database\Seeders\game\CardSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use RuntimeException;
 use Tests\TestCase;
 
 class AssignBoardTest extends TestCase
@@ -103,6 +105,39 @@ class AssignBoardTest extends TestCase
     $this->startBoard($table);
 
     $this->assertNotSame($stale->id, $table->fresh()->board_id);
+  }
+
+  public function test_a_board_a_player_saw_from_another_seat_is_dealt_before_a_new_one(): void
+  {
+    $seen = $this->boards->dealBoard();
+    $north = User::factory()->create();
+
+    // north has played the only stored board, but sitting east
+    $earlier = BoardTable::factory()->create(['board_id' => $seen->id]);
+    $earlier->seats()->create(['user_id' => $north->id, 'seat' => 'E']);
+
+    $before = Board::count();
+
+    $table = Table::factory()->create(['board_id' => null]);
+    $this->seats->seat($table, $north, 'N');
+    $this->seats->seat($table, User::factory()->create(), 'E');
+    $this->seats->seat($table, User::factory()->create(), 'S');
+    $this->seats->seat($table, User::factory()->create(), 'W');
+    $this->startBoard($table);
+
+    // §8's second choice: nobody holds a seat they held on it, so no new deal
+    $this->assertSame($seen->id, $table->fresh()->board_id);
+    $this->assertSame($before, Board::count());
+  }
+
+  public function test_dealing_a_board_needs_all_52_cards(): void
+  {
+    Card::query()->firstOrFail()->delete();
+
+    $this->expectException(RuntimeException::class);
+    $this->expectExceptionMessage('the cards table holds 51 rows, expected 52');
+
+    $this->boards->dealBoard();
   }
 
   public function test_a_table_never_replays_a_board(): void

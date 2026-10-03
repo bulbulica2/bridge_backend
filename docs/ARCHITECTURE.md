@@ -334,6 +334,26 @@ test a channel callback switch to the `reverb` driver inside the test (see
 move inside the request that made them due; faking `PlayingUpdated` holds
 them back while a test sets a table up (`RobotPlayTest::claimTable`).
 
+CI (`.github/workflows/tests.yml`) runs three checks on every PR and push to
+`main`: `pint` (`pint --test`), `tests` (the suite, no coverage driver) and
+`coverage` (the suite again with pcov). `coverage` hands the Clover report to
+`scripts/coverage.php`, which writes line and method coverage of `app/` per
+directory, and the files with lines no test runs, to the job summary, and
+**fails under 95% of lines** — the whole suite's number, not the unit
+tests'. The floor only goes up: a change that would drop under it comes with
+the tests that keep it there. The HTML report, browsable per file, is the
+run's `coverage-html` artifact; `composer coverage` makes the same report
+locally ([`RUNNING.md`](RUNNING.md#coverage)).
+
+Services that lock rows and run transactions are tested through HTTP
+feature tests on sqlite, so `tests/Unit` alone covers only about half of
+`app/`: the pure rules (auction, card play, claims, scoring) and the robots.
+A race the sweeps or `seat()` recheck under a lock can't happen on one
+connection, so tests stage it from a model event or query listener fired at
+the right moment (`TableSeatServiceTest`, `SweepRaceTest`). `RobotService`'s
+`chooseCall()`/`chooseCard()` exist so a test can hand a robot a move the
+rules refuse (`RobotFallbackTest`).
+
 ## Gotchas
 
 - **Migrations are edited in place**, since nothing has shipped. After

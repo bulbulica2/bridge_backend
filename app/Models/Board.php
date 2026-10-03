@@ -18,11 +18,6 @@ class Board extends Model
     'vulnerable',
   ];
 
-  public function tables(): HasMany
-  {
-    return $this->hasMany(Table::class);
-  }
-
   public function cards(): BelongsToMany
   {
     return $this->belongsToMany(Card::class)->withPivot('seat');
@@ -32,11 +27,6 @@ class Board extends Model
   public function auctions(): HasManyThrough
   {
     return $this->hasManyThrough(Auction::class, BoardTable::class);
-  }
-
-  public function cardPlays(): HasManyThrough
-  {
-    return $this->hasManyThrough(Cardplay::class, BoardTable::class);
   }
 
   // every table that has played this board

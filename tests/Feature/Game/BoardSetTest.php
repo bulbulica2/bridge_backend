@@ -315,6 +315,26 @@ class BoardSetTest extends TestCase
       ->assertJsonPath('data.winner', 'EW');
   }
 
+  public function test_a_set_that_is_over_keeps_how_it_ended(): void
+  {
+    $this->startAll();
+    $set = TableSet::sole();
+
+    $set->forfeit('EW');
+    $finishedAt = $set->fresh()->finished_at;
+
+    $this->travel(1)->minutes();
+
+    // a later abandon or forfeit changes nothing
+    $set->end(TableSet::ENDED_ABANDONED);
+    $set->forfeit('NS');
+
+    $set->refresh();
+    $this->assertSame(TableSet::ENDED_FORFEIT, $set->ended);
+    $this->assertSame('EW', $set->forfeited_by);
+    $this->assertEquals($finishedAt, $set->finished_at);
+  }
+
   public function test_only_the_sets_players_and_those_who_finished_its_boards_see_its_results(): void
   {
     config(['bridge.set_size' => 2]);

@@ -88,16 +88,6 @@ class Table extends Model
     return $this->belongsTo(User::class, 'created_by');
   }
 
-  public function moderator(): BelongsTo
-  {
-    return $this->belongsTo(User::class, 'moderated_by');
-  }
-
-  public function board(): BelongsTo
-  {
-    return $this->belongsTo(Board::class);
-  }
-
   public function seats(): HasMany
   {
     return $this->hasMany(TableSeat::class);
@@ -108,11 +98,6 @@ class Table extends Model
   public function auctions(): HasManyThrough
   {
     return $this->hasManyThrough(Auction::class, BoardTable::class);
-  }
-
-  public function cardPlays(): HasManyThrough
-  {
-    return $this->hasManyThrough(Cardplay::class, BoardTable::class);
   }
 
   // boards this table has played
@@ -142,11 +127,5 @@ class Table extends Model
   public static function latestSetWithBoards(): array
   {
     return ['latestSet' => fn ($set) => $set->withMax('playings', 'set_position')];
-  }
-
-  // not tested yet
-  public function players(): HasManyThrough
-  {
-    return $this->hasManyThrough(User::class, TableSeat::class, 'table_id', 'id', 'id', 'user_id');
   }
 }

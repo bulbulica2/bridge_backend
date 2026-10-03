@@ -11,12 +11,19 @@ MySQL. GitHub repo: https://github.com/bulbulica2/bridge_backend. Branches
 are named `<issue-title-prefix>-<topic>` (e.g. `7-fix-database`, tracked by
 the GitHub issue whose title starts with it) and merged to `main` via PR;
 commit messages are prefixed with the branch name. When the work on an issue
-is done (tests and `pint --test` pass, docs updated), commit, push and open
-the PR against `main` straight away — don't stop to ask first. The PR title
-is the commit subject, and the body says `Closes #<issue>`. GitHub Actions
-(`.github/workflows/tests.yml`) runs the `pint` and `tests` checks on every
-PR and push; still run both locally first, and fix a red check before
-merging — `main` requires them.
+is done (tests and `pint --test` pass, line coverage of `app/` is at least
+95%, docs updated), commit, push and open the PR against `main` straight
+away — don't stop to ask first. The PR title is the commit subject, and the
+body says `Closes #<issue>`. GitHub Actions (`.github/workflows/tests.yml`)
+runs the `pint`, `tests` and `coverage` checks on every PR and push; still
+run them locally first, and fix a red check before merging — `main` requires
+them.
+
+**Every issue and PR must keep line coverage of `app/` at or above 95%**
+(the whole suite's number, as `composer coverage` and the `coverage` check
+report it). A new feature comes with the tests that keep it there; a change
+that would drop below 95% adds tests — it never lowers the floor
+(`FLOOR` in `scripts/coverage.php`), which only goes up.
 
 If you don't know bridge rules (auction legality, declarer/dummy, trick
 winner, scoring), read `docs/GAME-RULES.md` before touching game
@@ -40,6 +47,7 @@ php artisan route:list            # actual registered routes
 php artisan test                  # all tests (PHPUnit 11)
 php artisan test --filter=RegistrationTest            # one class
 php artisan test --filter=test_new_users_can_register # one method
+composer coverage                 # suite + coverage/html report, fails under 95% of app/ lines (~2 min with pcov, far slower with Xdebug)
 vendor/bin/pint                   # format (Laravel Pint, pint.json)
 vendor/bin/pint --test            # check formatting without changing files
 ```
@@ -417,8 +425,10 @@ vendor/bin/pint --test            # check formatting without changing files
     trick), both keyed by `board_table_id` (the playing) + `user_id`; reach
     the board/table through `boardTable`. A card is played once per playing,
     and each round+order once. `BoardTable::auctions()`/`cardPlays()` are
-    plain `hasMany`, so they eager-load; `Table`/`Board` reach them
-    `hasManyThrough` `board_table`.
+    plain `hasMany`, so they eager-load; `Table`/`Board` reach the calls
+    `hasManyThrough` `board_table` (`auctions()`). Models define only the
+    relations something uses: one nothing calls is deleted, not kept
+    untested.
   - `board_table` (model `BoardTable`) = one playing of a board at a table:
     board history (`unique(board_id, table_id)` — a table never replays a
     board), the saved auction result (`contract_bid_id`, `doubled`,

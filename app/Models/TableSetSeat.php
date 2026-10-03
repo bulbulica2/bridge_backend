@@ -13,11 +13,6 @@ class TableSetSeat extends Model
     'seat',
   ];
 
-  public function tableSet(): BelongsTo
-  {
-    return $this->belongsTo(TableSet::class);
-  }
-
   public function user(): BelongsTo
   {
     return $this->belongsTo(User::class);

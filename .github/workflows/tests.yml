@@ -74,3 +74,44 @@ jobs:
       # Plain phpunit: with no .env, `php artisan test` prints a harmless
       # Dotenv warning per test.
       - run: vendor/bin/phpunit
+
+  # The suite again, with pcov (much faster than Xdebug) collecting line
+  # coverage of app/. scripts/coverage.php puts the per-directory summary in
+  # the job summary and fails the job under the floor (95% of lines); the
+  # HTML report is uploaded as the `coverage-html` artifact, per file.
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: pdo_sqlite, sqlite3, mbstring, dom, xml, xmlwriter, curl, fileinfo, openssl, tokenizer, ctype
+          coverage: pcov
+          ini-values: pcov.directory=app
+          tools: composer:v2
+
+      - name: Get Composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v6
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: composer-${{ runner.os }}-${{ hashFiles('composer.lock') }}
+          restore-keys: composer-${{ runner.os }}-
+
+      - run: composer install --no-interaction --prefer-dist --no-progress
+
+      - run: vendor/bin/phpunit --coverage-clover coverage/clover.xml --coverage-html coverage/html
+
+      - name: Check the coverage floor
+        run: php scripts/coverage.php coverage/clover.xml
+
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: coverage-html
+          path: coverage/html
+          if-no-files-found: ignore

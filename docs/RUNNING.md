@@ -373,21 +373,58 @@ If you see that, do what it says. On a checkout with no `.env`,
 test; that is Dotenv probing for the file and is harmless (plain
 `vendor/bin/phpunit` doesn't show it).
 
+### Coverage
+
+```bash
+composer coverage
+```
+
+(`php scripts/coverage.php run`) runs the suite with line coverage of
+`app/` and writes:
+- `coverage/html/index.html` — the browsable report, per directory and file,
+  with each line marked run or not;
+- `coverage/clover.xml` — the same as XML, which `scripts/coverage.php` then
+  sums up per directory (Markdown on the console) before failing if line
+  coverage is under the **95% floor**, as CI does.
+
+`coverage/` is gitignored. It needs a coverage driver, and picks one by
+itself:
+- **pcov** (recommended): about 2 minutes for the whole suite. On XAMPP
+  (PHP 8.2, thread safe, x64) get `php_pcov.dll` from
+  `https://downloads.php.net/~windows/pecl/releases/pcov/` (the
+  `8.2-ts-vs16-x64` zip), copy it to `C:\xampp\php\ext` and add
+  `extension=pcov` to `php.ini`. When pcov is loaded the script runs PHPUnit
+  with Xdebug off, so the two don't add up.
+- **Xdebug**, which XAMPP's PHP ships, otherwise (run in coverage mode
+  whatever `xdebug.mode` says): much slower — well over ten minutes, and
+  gigabytes of memory.
+
+Without either, PHPUnit warns "No code coverage driver available" and the
+script finds no report. `php scripts/coverage.php coverage/clover.xml` only
+summarises a report that is already there.
+
+Every issue and PR keeps line coverage at or above 95%. A change that would
+drop it adds tests; the floor never goes down.
+
 ### CI
 
-GitHub Actions (`.github/workflows/tests.yml`) runs two checks on every PR
+GitHub Actions (`.github/workflows/tests.yml`) runs three checks on every PR
 against `main`, on every push to one, and on every push to `main`: **`pint`**
-(`vendor/bin/pint --test`) and **`tests`** (the full suite through
-`vendor/bin/phpunit`). Both run on Ubuntu with PHP 8.2 and no Xdebug
-(`coverage: none`), install from `composer.lock`, and use exactly the
-`phpunit.xml` setup above — no MySQL, no `.env`, no Reverb. The workflow must
-never set `DB_*` or `APP_ENV`, or the `TestCase` guard fails every test. A new
-push cancels the PR's older run; the Actions tab can also re-run it by hand.
-Results show as checks on the PR and under the repo's
+(`vendor/bin/pint --test`), **`tests`** (the full suite through
+`vendor/bin/phpunit`) and **`coverage`** (the suite again, with pcov,
+through `scripts/coverage.php` as above). All run on Ubuntu with PHP 8.2,
+`pint` and `tests` with no coverage driver at all (`coverage: none`), install
+from `composer.lock`, and use exactly the `phpunit.xml` setup above — no
+MySQL, no `.env`, no Reverb. The workflow must never set `DB_*` or
+`APP_ENV`, or the `TestCase` guard fails every test. A new push cancels the
+PR's older run; the Actions tab can also re-run it by hand. Results show as
+checks on the PR and under the repo's
 [Actions](https://github.com/bulbulica2/bridge_backend/actions/workflows/tests.yml)
-tab, and `main`'s branch protection requires both to pass before a PR can be
-merged. Linux is case-sensitive where Windows isn't, so a class or file name
-whose case doesn't match can pass locally and fail there.
+tab. `coverage` puts its per-directory table in the run's summary page and
+uploads the HTML report as the **`coverage-html`** artifact (download it
+from the run page and open `index.html`); it fails when line coverage of
+`app/` is under 95%. Linux is case-sensitive where Windows isn't, so a class
+or file name whose case doesn't match can pass locally and fail there.
 
 It also sets `QUEUE_CONNECTION=sync`, so the robots' queued moves run inside
 the request that made them due (one after another, not nested) and a test

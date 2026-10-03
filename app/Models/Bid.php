@@ -5,7 +5,6 @@ namespace App\Models;
 use App\auxiliary\Suits;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 use LogicException;
 
 /**
@@ -104,10 +103,5 @@ class Bid extends Model
   public function isContract(): bool
   {
     return ! $this->special;
-  }
-
-  public function auctions(): HasMany
-  {
-    return $this->hasMany(Auction::class);
   }
 }
