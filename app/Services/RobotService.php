@@ -186,10 +186,7 @@ class RobotService
     }
 
     $state = $this->state->stateFor($table, $robot);
-    $calls = array_map(fn ($call) => ['seat' => $call['seat'], 'call' => $call['bid']['call']], $state['auction']);
-    $choice = RobotBidder::choose(new RobotHand($state['hand']), $calls, $state['my_seat']);
-
-    $bid = Bid::where('suit', $choice)->first();
+    $bid = Bid::where('suit', $this->chooseCall($state))->first();
 
     // the bidder only makes legal calls; should one ever slip through, pass
     if ($bid === null || AuctionService::illegalReason($this->state->calls($playing), $state['my_seat'], $bid) !== null) {
@@ -222,7 +219,7 @@ class RobotService
       return true;
     }
 
-    $card = Card::find(RobotCardPlayer::choose($state));
+    $card = Card::find($this->chooseCard($state));
 
     $turn = $this->state->turn($playing);
     $hand = $this->state->hand($playing, $turn);
@@ -239,6 +236,30 @@ class RobotService
     $this->cards->play($table, $robot, $card);
 
     return true;
+  }
+
+  /**
+   * The call the robot in `$state['my_seat']` makes, as `bids.suit`.
+   * Overridden only by tests, to check the fallback to a pass.
+   *
+   * @param  array<string, mixed>  $state  `PlayingStateService::stateFor()`
+   */
+  protected function chooseCall(array $state): string
+  {
+    $calls = array_map(fn ($call) => ['seat' => $call['seat'], 'call' => $call['bid']['call']], $state['auction']);
+
+    return RobotBidder::choose(new RobotHand($state['hand']), $calls, $state['my_seat']);
+  }
+
+  /**
+   * The id of the card the robot acting for `$state['turn']` plays.
+   * Overridden only by tests, to check the fallback to the first legal card.
+   *
+   * @param  array<string, mixed>  $state  `PlayingStateService::stateFor()`
+   */
+  protected function chooseCard(array $state): int
+  {
+    return RobotCardPlayer::choose($state);
   }
 
   /**

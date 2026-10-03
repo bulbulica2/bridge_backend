@@ -53,12 +53,8 @@ writable by its owner through `PATCH /api/user` (max 1000 chars), along with
 needs it — so any payload showing a user to *other* players must go through
 `App\Http\Resources\UserResource` (`id`, `name`, `username`, `description`,
 `is_robot`, `is_admin`) rather than the raw model.
-Relations: `createdTables` (hasMany Table via `created_by`), `moderatedTables`
-(hasMany Table via `moderated_by` — a user can moderate several tables: the
-ones they made, plus any they inherit when a moderator leaves), `seats`
-(hasMany TableSeat), `tables`
-(hasManyThrough Table via TableSeat), `auctions`, `cardPlays`,
-`playedSeats` (hasMany BoardTableSeat — boards the user played and from which
+Relations: `createdTables` (hasMany Table via `created_by`), `seats`
+(hasMany TableSeat), `playedSeats` (hasMany BoardTableSeat — boards the user played and from which
 seat), `bans` (hasMany UserBan, latest first). `activeBan()` is the ban in
 force now, or null — read fresh every time, since it runs out by itself.
 `toOwnArray()` (the user's own record, `GET`/`PATCH /api/user`) adds
@@ -84,18 +80,17 @@ The three timestamps are cast to datetime. Index `(user_id, until)`.
   <reason>"`); `toOwnArray()` is `{reason, until, banned_at}`, what the
   banned user is shown — never which admin. `UserBan::MAX_DAYS` (365) caps a
   ban's length.
-- Relations: `user`, `bannedBy`, `liftedBy` (all belongsTo User).
+- Relations: `bannedBy`, `liftedBy` (both belongsTo User).
 
 ### Board (`boards`)
 Fields: `number` (unsigned int, not unique), `dealer` (enum `Seats::SEATS`),
 `vulnerable` (enum, `Vulnerability::VULNERABILITY_SEATS`). All three are
 fillable.
-Relations: `tables` (hasMany), `cards` (belongsToMany Card via `board_card`
+Relations: `cards` (belongsToMany Card via `board_card`
 pivot, pivot has `seat` — this is how a board's 52-card deal is assigned to
-N/E/S/W), `auctions` / `cardPlays` (hasManyThrough BoardTable — every
-table's calls and cards on this board), `plays`
-(hasMany BoardTable — every table that played this board). `tables` means the
-tables whose **current** board this is.
+N/E/S/W), `auctions` (hasManyThrough BoardTable — every table's calls on
+this board), `plays` (hasMany BoardTable — every table that played this
+board).
 `BoardFactory` numbers each new board one past the highest `number` stored and
 derives `dealer` and `vulnerable` from it with the helpers above. Overriding
 `number` in a factory state keeps them consistent. The DB doesn't check that
@@ -125,7 +120,7 @@ once per deal. Nothing checks that each seat gets exactly 13 cards.
 ### Card (`cards`)
 Fields: `suit` (enum `Suits::SUIT_NAME` keys), `rank` (integer), `rank_name`
 (nullable string, e.g. "Ace", "King").
-Relations: `boards` (belongsToMany via `board_card`), `cardPlays` (hasMany).
+Relations: none (a board's cards are `Board::cards`).
 Global static: all 52 cards live once in this table; a specific board's deal
 is expressed via the `board_card` pivot, not by duplicating card rows.
 Rank encoding (`CardSeeder`): `2`–`10` = pip value, `11` **skipped**,
@@ -172,15 +167,14 @@ playing. It goes back to null when a player leaves an unfinished playing.
 `freeSeats()` returns the unoccupied seats (from the `seats` relation) in
 `N, E, S, W` order; `App\Http\Resources\TableResource` appends it to every
 table payload as `free_seats`.
-Relations: `creator`, `moderator` (both belongsTo User), `board` (belongsTo),
-`seats` (hasMany TableSeat), `auctions` / `cardPlays` (hasManyThrough
-BoardTable — the calls and cards of the playings still attached to this
+Relations: `creator` (belongsTo User),
+`seats` (hasMany TableSeat), `auctions` (hasManyThrough
+BoardTable — the calls of the playings still attached to this
 table), `boardPlays` (hasMany BoardTable — boards this table has played),
 `sets` (hasMany TableSet, by `number`), `latestSet` (hasOne TableSet, the
 highest `number`: the set it is on or finished last, which `TableResource`
 shows as `set`; `Table::latestSetWithBoards()` eager-loads it with how many
-boards it has dealt), `players` (hasManyThrough User via TableSeat — marked "not tested yet" in
-code).
+boards it has dealt).
 `board_id` is the board being played **now** — null until the table has all
 four players and they have all pressed Start, and null again once one of
 them leaves before the board is finished. Past boards are in `board_table`.
@@ -305,7 +299,7 @@ human label), `special` (boolean, default false — true for Pass/Double/
 Redouble), `level` (unsigned tinyint, nullable — 1–7), `strain` (enum
 `array_keys(Suits::ALL_SUIT_NAMES)`, nullable — `C`, `D`, `H`, `S`, `NT`).
 All five are fillable; `special` casts to boolean and `level` to integer.
-Relations: `auctions` (hasMany).
+Relations: none.
 Note: this is a static reference table of possible calls (seeded via
 `BidSeeder`), not a per-game record — the per-game record is `Auction`.
 The 38 seeded rows:
@@ -349,14 +343,14 @@ deleted, so the log is removed explicitly instead: with the table
 (`Table::deleting`), or when its playing is abandoned
 (`BoardSelectionService::abandonPlaying`). The contract it produced survives
 on `board_table`.
-Relations: `boardTable`, `user`, `bid` (all belongsTo).
+Relations: `bid` (belongsTo).
 
 ### Cardplay (`cardplays`, model class `Cardplay`)
 Fields: `user_id`, `board_table_id`, `card_id` (all FK), `seat` (enum
 `Seats::SEATS` — the hand the card came from), `round` (integer — trick
 number), `order` (integer — play order within the trick, 1-4), `won_trick`
 (boolean, default false, cast to bool — true on the card that won its trick).
-Relations: `user`, `boardTable`, `card` (all belongsTo).
+Relations: `card` (belongsTo).
 `user_id` is who played the card, `seat` is whose hand it came from; they
 differ when declarer plays from dummy. The winning row's `seat` leads the next
 trick.
@@ -486,9 +480,10 @@ Fields (all fillable):
 - `forfeited_by` (enum `TableSet::SIDES`: `NS`, `EW`, nullable): the side that
   lost by forfeit, null for any other ending.
 - timestamps.
-A table has at most one unfinished set at a time. Relations: `table`
-(belongsTo), `seats` (hasMany TableSetSeat), `playings` (hasMany BoardTable,
-by `set_position`). `end($ended)` closes it (a no-op once closed),
+A table has at most one unfinished set at a time. Relations: `seats`
+(hasMany TableSetSeat), `playings` (hasMany BoardTable,
+by `set_position`). `end($ended)` and `forfeit($side)` close it (a no-op
+once closed),
 `hasPlayer($userId)`. No factory: sets are opened by
 `BoardSelectionService` only.
 
@@ -498,10 +493,13 @@ the same four as every playing in it, since a change of player ends the set.
 Fields: `table_set_id` (FK, cascade delete), `user_id` (FK users), `seat`
 (enum `Seats::SEATS`), all fillable, timestamps. Unique
 `(table_set_id, seat)` and `(table_set_id, user_id)`, index `user_id`.
-Relations: `tableSet`, `user` (both belongsTo). `GET /sets/{set}` lets these
+Relations: `user` (belongsTo). `GET /sets/{set}` lets these
 four see the set's results (`TableSetPolicy::view`).
 
 ## Relationship summary
+
+The foreign keys between the tables. Each model defines only the relations
+the code uses (listed under it above), so not every arrow here has one.
 
 ```
 User ──< TableSeat >── Table           (a User may be a robot: is_robot)

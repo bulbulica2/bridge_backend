@@ -43,11 +43,6 @@ class UserBan extends Model
     $query->whereNull('lifted_at')->where('until', '>', now());
   }
 
-  public function user(): BelongsTo
-  {
-    return $this->belongsTo(User::class);
-  }
-
   public function bannedBy(): BelongsTo
   {
     return $this->belongsTo(User::class, 'banned_by');

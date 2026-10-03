@@ -6,7 +6,6 @@ use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Database\Eloquent\Relations\HasManyThrough;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 
@@ -107,31 +106,9 @@ class User extends Authenticatable
     return $this->hasMany(Table::class, 'created_by');
   }
 
-  // a user can moderate several tables: they keep created_by on the tables
-  // they made, and pick up moderated_by when a moderator leaves
-  public function moderatedTables(): HasMany
-  {
-    return $this->hasMany(Table::class, 'moderated_by');
-  }
-
   public function seats(): HasMany
   {
     return $this->hasMany(TableSeat::class);
-  }
-
-  public function tables(): HasManyThrough
-  {
-    return $this->hasManyThrough(Table::class, TableSeat::class, 'user_id', 'id', 'id', 'table_id');
-  }
-
-  public function auctions(): HasMany
-  {
-    return $this->hasMany(Auction::class);
-  }
-
-  public function cardPlays(): HasMany
-  {
-    return $this->hasMany(Cardplay::class);
   }
 
   // which boards the user played, and from which seat

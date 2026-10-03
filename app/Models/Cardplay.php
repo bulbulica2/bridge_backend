@@ -29,17 +29,6 @@ class Cardplay extends Model
     ];
   }
 
-  public function user(): BelongsTo
-  {
-    return $this->belongsTo(User::class);
-  }
-
-  // the playing this card was played in; its board and table hang off it
-  public function boardTable(): BelongsTo
-  {
-    return $this->belongsTo(BoardTable::class);
-  }
-
   public function card(): BelongsTo
   {
     return $this->belongsTo(Card::class);

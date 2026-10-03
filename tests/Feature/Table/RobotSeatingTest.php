@@ -196,6 +196,21 @@ class RobotSeatingTest extends TestCase
     $this->assertSame(2, User::robots()->count());
   }
 
+  public function test_a_new_robot_skips_a_name_already_taken(): void
+  {
+    // two busy robots, robot-1 and robot-3: the count says robot-3 is next,
+    // which is taken (as if a concurrent request had just made it)
+    foreach ([1, 3] as $number) {
+      $robot = User::factory()->robot()->create(['username' => "robot-$number", 'email' => "robot-$number@robots.invalid"]);
+      TableSeat::factory()->create(['user_id' => $robot->id]);
+    }
+
+    $table = $this->tableOf($this->owner);
+    $this->actingAs($this->owner)->postJson("/tables/$table->id/seats/robots", ['seat' => 'E'])->assertCreated();
+
+    $this->assertSame('robot-4', $table->seats()->where('seat', 'E')->firstOrFail()->user->username);
+  }
+
   public function test_with_a_human_at_the_table_only_a_manager_kicks_a_robot(): void
   {
     $table = $this->robotTable();

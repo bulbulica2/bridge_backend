@@ -7,7 +7,9 @@ use App\Models\Table;
 use App\Models\TableSeat;
 use App\Models\User;
 use App\Services\TableSeatService;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class TableSeatServiceTest extends TestCase
@@ -51,6 +53,34 @@ class TableSeatServiceTest extends TestCase
     $this->expectException(SeatUnavailableException::class);
 
     $this->service->seat($table, User::factory()->create(), 'E');
+  }
+
+  public function test_a_seat_taken_by_a_concurrent_request_is_rejected(): void
+  {
+    $table = Table::factory()->create(['board_id' => null]);
+    $rival = User::factory()->create();
+
+    // another request takes the seat after this one checked it was free,
+    // just before its insert: unique(table_id, seat) refuses the insert (on
+    // one connection the rival's row rolls back with it; that's fine here)
+    TableSeat::creating(function (TableSeat $seat) use ($rival) {
+      if ($seat->user_id !== $rival->id) {
+        DB::table('table_seats')->insert([
+          'table_id' => $seat->table_id,
+          'user_id' => $rival->id,
+          'seat' => $seat->seat,
+          'last_seen_at' => now(),
+        ]);
+      }
+    });
+
+    try {
+      $this->service->seat($table, User::factory()->create(), 'E');
+      $this->fail('The seat should have been refused.');
+    } catch (SeatUnavailableException $e) {
+      $this->assertSame('The seat or user was taken by another request.', $e->getMessage());
+      $this->assertInstanceOf(QueryException::class, $e->getPrevious());
+    }
   }
 
   public function test_a_user_seated_elsewhere_is_moved(): void

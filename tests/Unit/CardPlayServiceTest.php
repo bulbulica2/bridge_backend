@@ -56,6 +56,7 @@ class CardPlayServiceTest extends TestCase
     $plays = array_fill(0, 52, ['seat' => 'N', 'card' => $this->card('S2')]);
 
     $this->assertNull(CardPlayService::nextToPlay($plays, 'N', 'H'));
+    $this->assertSame('All 13 tricks have been played.', CardPlayService::illegalReason($plays, $this->hand('SA'), $this->card('SA')));
   }
 
   public function test_declarer_acts_for_dummy(): void

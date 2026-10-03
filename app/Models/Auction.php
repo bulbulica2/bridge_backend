@@ -19,17 +19,6 @@ class Auction extends Model
     'seat',
   ];
 
-  // the playing this call was made in; its board and table hang off it
-  public function boardTable(): BelongsTo
-  {
-    return $this->belongsTo(BoardTable::class);
-  }
-
-  public function user(): BelongsTo
-  {
-    return $this->belongsTo(User::class);
-  }
-
   public function bid(): BelongsTo
   {
     return $this->belongsTo(Bid::class);

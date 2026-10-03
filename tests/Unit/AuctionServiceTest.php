@@ -71,6 +71,13 @@ class AuctionServiceTest extends TestCase
     $this->assertSame($reason, AuctionService::illegalReason($calls, $seat, $this->bid($next)));
   }
 
+  public function test_a_special_call_other_than_p_x_xx_is_unknown(): void
+  {
+    $odd = new Bid(['suit' => 'Z', 'special' => true, 'level' => null, 'strain' => null]);
+
+    $this->assertSame("Unknown call 'Z'.", AuctionService::illegalReason([], 'N', $odd));
+  }
+
   public function test_the_end_of_the_auction(): void
   {
     $this->assertFalse(AuctionService::isOver($this->calls('N', [])));
