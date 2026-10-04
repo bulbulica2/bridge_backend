@@ -68,9 +68,12 @@ An admin keeping a user away from the game until `until`
 (`POST /users/{user}/ban`, see [`API.md`](API.md#bans) and
 [`AUTH.md`](AUTH.md#bans)). Fillable: `user_id` (FK users, cascade on
 delete), `banned_by` (FK users, the admin; nullable, null on delete),
-`reason` (text, shown to the banned user; at most `UserBan::REASON_MAX`, 500 characters, since `UserBanned` broadcasts it), `banned_at`, `until`,
-`lifted_at` (nullable), `lifted_by` (FK users, nullable, null on delete).
-The three timestamps are cast to datetime. Index `(user_id, until)`.
+`reason` (text, shown to the banned user; at most `UserBan::REASON_MAX`, 500 characters, since `UserBanned` broadcasts it), `banned_at`
+(timestamp, defaults to now), `until` (a `datetime` column, not a
+timestamp: XAMPP's MariaDB, with `explicit_defaults_for_timestamp` off,
+gives a second bare NOT NULL timestamp a zero-date default that strict
+mode rejects), `lifted_at` (nullable), `lifted_by` (FK users, nullable,
+null on delete). The three are cast to datetime. Index `(user_id, until)`.
 - A ban is **in force** while `lifted_at` is null and `until` is in the
   future (scope `UserBan::active()`). It ends by itself: nothing writes
   anything at `until`, every check compares with `now()`.
