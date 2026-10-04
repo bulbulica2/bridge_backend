@@ -102,6 +102,15 @@ class BoardTable extends Model
   }
 
   /**
+   * The board's chat (`BoardChatService`), kept with the playing: unlike
+   * the call and card logs, `discardLogs()` leaves it.
+   */
+  public function messages(): HasMany
+  {
+    return $this->hasMany(BoardMessage::class);
+  }
+
+  /**
    * Whether a claim is waiting for its answers: made, and the board not yet
    * finished by it.
    */

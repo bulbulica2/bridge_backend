@@ -357,6 +357,19 @@ vendor/bin/pint --test            # check formatting without changing files
   `question` to each `auction` entry in `stateFor()` only (null for
   partner's calls) — never in `PlayingResource`'s public part, so never in
   `PlayingUpdated`; the review (`forReview()`) shows every `alert`.
+- **Chat**: `App\Services\BoardChatService` keeps a chat per board
+  (`board_messages`, `BoardMessage`, `GET`/`POST /tables/{table}/messages`,
+  `Game\BoardMessageController`, POST behind `throttle:board-messages`, 10
+  per 30 s, defined in `AppServiceProvider`). Mid-board a message goes only
+  `to: opponents` (`BoardMessage::visibleTo()`: never the sender's
+  partner); `table` 409s until the board is finished, after which every
+  message is public and in the review (`forReview()`'s `messages`).
+  `BoardChatService::post()` writes one and sends `BoardMessageSent` on the
+  readers' own channels — **never the table channel**. A message with
+  `call_index` about the other side's robot's call gets the robot's answer
+  (`robotReading()`); `AuctionService::ask()`/`explain()` write their
+  question and answer into the chat through `post()` too. Messages are
+  kept: `discardLogs()` leaves them.
 - **Card play**: `App\Services\CardPlayService::play()`
   (`POST /tables/{table}/cards`, `Game\CardPlayController`) follows the same
   pattern: one transaction with the `board_table` row locked, static rules

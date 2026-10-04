@@ -4,6 +4,7 @@ namespace Tests\Feature\Game;
 
 use App\auxiliary\Seats;
 use App\Broadcasting\PusherBody;
+use App\Events\BoardMessageSent;
 use App\Events\CallAlerted;
 use App\Events\CallQuestioned;
 use App\Events\DeclarerHandShown;
@@ -14,6 +15,7 @@ use App\Events\UserBanned;
 use App\Http\Resources\PlayingResource;
 use App\Models\Auction;
 use App\Models\Bid;
+use App\Models\BoardMessage;
 use App\Models\BoardTable;
 use App\Models\Card;
 use App\Models\Table;
@@ -173,6 +175,20 @@ class BroadcastSizeTest extends TestCase
 
     $this->assertFits(new CallAlerted($this->players['E']->id, $this->table->id, $this->playing->id, 318, $explanation));
     $this->assertFits(new CallQuestioned($this->players['N']->id, $this->table->id, $this->playing->id, 318, 'E'));
+  }
+
+  public function test_a_chat_message_fits(): void
+  {
+    $message = BoardMessage::create([
+      'board_table_id' => $this->playing->id,
+      'user_id' => $this->players['N']->id,
+      'seat' => 'N',
+      'to' => BoardMessage::TO_OPPONENTS,
+      'call_index' => 318,
+      'body' => str_repeat(self::EMOJI['N'], BoardMessage::BODY_MAX),
+    ]);
+
+    $this->assertFits(new BoardMessageSent($this->players['E']->id, $this->table->id, $this->playing->id, $message));
   }
 
   public function test_a_ban_fits(): void
