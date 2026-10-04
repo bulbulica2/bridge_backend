@@ -41,13 +41,20 @@ return [
   |--------------------------------------------------------------------------
   |
   | How many boards a set has. Everyone's Start deals a set's first board,
-  | Next its others, and after its last one the table stops for the set's
-  | result until everyone presses Start again. A set keeps the size it was
-  | opened with, so changing this only affects sets opened afterwards.
+  | and after its last one the table stops for the set's result until
+  | everyone presses Start again. A set keeps the size it was opened with,
+  | so changing this only affects sets opened afterwards.
+  |
+  | In between, a finished board stays on show for this many seconds and
+  | then the set's next board is dealt by itself (the queued `DealNextBoard`
+  | job, so it needs `queue:work`), or at once when every human at the
+  | table has asked for it with Next.
   |
   */
 
   'set_size' => (int) env('BRIDGE_SET_SIZE', 4),
+
+  'next_board_seconds' => (int) env('BRIDGE_NEXT_BOARD_SECONDS', 10),
 
   /*
   |--------------------------------------------------------------------------

@@ -40,7 +40,7 @@ Local stack is XAMPP (MySQL on 3306, DB `bridge`, user `root`, no password).
 ```bash
 php artisan serve --host=localhost  # API on http://localhost:8000 (see RUNNING.md "Local speed")
 php artisan reverb:start          # websocket server on :8080 (live table updates)
-php artisan queue:work --sleep=0.1  # sends queued broadcasts to Reverb, moves the robots, expires unanswered claims
+php artisan queue:work --sleep=0.1  # sends queued broadcasts to Reverb, moves the robots, expires unanswered claims, deals a set's next board
 php artisan schedule:work         # runs tables:release-idle-seats and tables:delete-unattended every minute, tables:check-away every 10 s
 php artisan tables:release-idle-seats  # free idle players' seats once, by hand
 php artisan tables:check-away     # mark quiet players away mid-set and forfeit overdue sets, once, by hand
@@ -245,8 +245,13 @@ vendor/bin/pint --test            # check formatting without changing files
   one — over the humans' history only, robots are ignored), sets
   `tables.board_id` and opens the `board_table` playing.
   Boards come in **sets** (`TableSet`, `table_sets` + `table_set_seats`,
-  `bridge.set_size` = 4): a Start's deal opens a set (`openSet()`), Next
-  deals its next board (`board_table.table_set_id`/`set_position`),
+  `bridge.set_size` = 4): a Start's deal opens a set (`openSet()`), and its
+  next boards (`board_table.table_set_id`/`set_position`) come by themselves:
+  `BoardTable::finish()` queues `App\Jobs\DealNextBoard` with a delay of
+  `bridge.next_board_seconds` (10), whose `dealNext()` deals for the same
+  four under the table lock unless the table moved on, the four changed or
+  the set ended (`PlayingStateService::nextBoardAt()`, the state's
+  `next_board_at`, says when; tests travel and run it, as for claims),
   `BoardTable::finish()` completes it on its last board, after which
   `moveOn()` 409s ("The set is over: press Start for a new one.") and
   `start()` accepts a Start with the same four seated; robots don't ask
@@ -255,9 +260,10 @@ vendor/bin/pint --test            # check formatting without changing files
   table; `PlayingResource` and `TableResource` show
   `set: {id, number, board, of, finished, ended, forfeited_by}`.
   After a board finishes it stays on the table (the state then shows the
-  whole `deal` and `ready`) until `moveOn()`
-  (`POST /tables/{table}/playing/next`, `Game\PlayingController@next`)
-  has marked all four snapshot seats' `board_table_seats.ready_at` — each
+  whole `deal` and `ready`) until that timer, or until `moveOn()`
+  (`POST /tables/{table}/playing/next`, `Game\PlayingController@next`, an
+  optional "deal now") has marked every **human** snapshot seat's
+  `board_table_seats.ready_at` (robots count as ready) — each
   player for themselves only (a stale client's `everyone` is ignored) — and
   then deals
   for the same four; it takes the table row lock

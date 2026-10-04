@@ -31,12 +31,13 @@ use RuntimeException;
  * press Start too (`start()`, `table_seats.ready_at`), so nobody is thrown
  * into an auction before they have reached the table. Robots are ready from
  * the moment they sit down. After that, a finished board is followed by the
- * next one once the same four players ask for it (`moveOn()`).
+ * next one by itself, `bridge.next_board_seconds` later (`dealNext()`), or
+ * at once when every human of the same four asks for it (`moveOn()`).
  *
  * Boards come in sets (`TableSet`, `bridge.set_size` boards): everyone's
- * Start opens a set with its first board, Next deals the rest, and after the
- * last one Next is refused and it takes everyone's Start again to open the
- * next set. A set one of its four players leaves is over too
+ * Start opens a set with its first board, the rest follow as above, and
+ * after the last one Next is refused and it takes everyone's Start again to
+ * open the next set. A set one of its four players leaves is over too
  * (`abandonSet()`), and one a player is away from too long is lost by their
  * side (`forfeitSet()`).
  */
@@ -286,8 +287,8 @@ class BoardSelectionService
 
     $refusal = match ($this->state->phase($playing)) {
       PlayingStateService::PHASE_WAITING => null,
-      PlayingStateService::PHASE_FINISHED => $this->seatedAsIn($table, $playing) && ! $this->setOver($playing)
-        ? 'The board is finished: the same four players go on with the next board (POST /tables/{table}/playing/next).'
+      PlayingStateService::PHASE_FINISHED => $this->state->seatedAsIn($playing) && ! $this->setOver($playing)
+        ? 'The board is finished: the next board of the set is dealt by itself shortly (POST /tables/{table}/playing/next deals it at once).'
         : null,
       default => 'A board is already in progress at this table.',
     };
@@ -300,31 +301,21 @@ class BoardSelectionService
   }
 
   /**
-   * Whether the four seated at the table now are the four who played
-   * `$playing`, each in the same seat.
-   */
-  private function seatedAsIn(Table $table, BoardTable $playing): bool
-  {
-    $now = $table->seats()->pluck('user_id', 'seat')->sortKeys()->all();
-    $then = $playing->seats()->pluck('user_id', 'seat')->sortKeys()->all();
-
-    return count($now) === count(Seats::SEATS) && $now == $then;
-  }
-
-  /**
    * `$user` asks for the table's next board once the current one is
-   * finished. The result stays up until every player has asked, so nobody
-   * has it pulled away before they have read it; the last one to ask deals
-   * the next board, picked by the same rule as the first (`deal()`).
-   * Each player asks for themselves (a robot as soon as the board ends);
-   * nobody asks for anyone else. Only the four who played the board go on
-   * this way: once one of
-   * them has been replaced, the table needs every human's Start again.
+   * finished, rather than wait for it to come by itself (`dealNext()`).
+   * The result stays up until every human has asked, so nobody has it
+   * pulled away before they have read it; robots count as having asked
+   * (they ask anyway, as soon as the board ends). The last human to ask
+   * deals the next board, picked by the same rule as the first (`deal()`),
+   * so a human alone with three robots skips the wait.
+   * Each player asks for themselves; nobody asks for anyone else. Only the
+   * four who played the board go on this way: once one of them has been
+   * replaced, the table needs every human's Start again.
    * Next only deals within a set: after its last board it is refused, and
    * the next set takes everyone's Start.
    *
    * Asking twice changes nothing. Returns the new playing once it is dealt,
-   * or null while somebody has still to ask.
+   * or null while a human has still to ask.
    *
    * Broadcasts `PlayingUpdated` when a player is newly ready and, once the
    * board is dealt, `TableUpdated` along with `deal()`'s own events — what
@@ -361,7 +352,7 @@ class BoardSelectionService
 
       // a player who left was replaced: the newcomer never saw this board,
       // so it is everyone's Start that deals the next one
-      if (! $this->seatedAsIn($table, $playing)) {
+      if (! $this->state->seatedAsIn($playing)) {
         throw new NextBoardException('The players have changed since this board: the next one is dealt once every player has pressed Start.');
       }
 
@@ -377,9 +368,54 @@ class BoardSelectionService
         return null;
       }
 
-      if ($playing->seats()->whereNull('ready_at')->exists()) {
+      if ($playing->seats()->whereNull('ready_at')->whereHas('user', fn ($user) => $user->humans())->exists()) {
         PlayingUpdated::dispatch($table);
 
+        return null;
+      }
+
+      $next = $this->deal($table, $table->seats()->with('user')->get(), $playing->tableSet);
+
+      TableUpdated::dispatch($table);
+
+      return $next;
+    });
+  }
+
+  /**
+   * Deal the set's next board by itself once finished playing `$playingId`
+   * has been on show for `bridge.next_board_seconds` (`nextBoardAt()`), for
+   * the same four, as the last human's Next would (`moveOn()`), with the
+   * same events. Away players are dealt to as well: their turn waits, and
+   * the away clock runs on.
+   *
+   * Deals nothing when, by now, the table has moved on (everyone asked, or
+   * this ran twice), the playing has left its table, a seat is empty or has
+   * changed hands, or the set is over (its last board, or a forfeit) —
+   * or the time hasn't come yet. Run by `DealNextBoard`.
+   *
+   * Returns the new playing, or null when nothing was dealt. Mutates
+   * nothing passed in.
+   */
+  public function dealNext(int $playingId): ?BoardTable
+  {
+    return DB::transaction(function () use ($playingId) {
+      // the lock moveOn() and seat changes take, so the last Next, a
+      // player leaving and this queue rather than race
+      $table = Table::query()
+        ->whereIn('id', BoardTable::query()->whereKey($playingId)->select('table_id'))
+        ->lockForUpdate()
+        ->first();
+
+      $playing = $table === null ? null : $this->state->currentPlaying($table, lock: true);
+
+      if ($playing?->id !== $playingId) {
+        return null;
+      }
+
+      $at = $this->state->nextBoardAt($playing);
+
+      if ($at === null || now()->isBefore($at)) {
         return null;
       }
 

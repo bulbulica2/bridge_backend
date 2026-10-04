@@ -46,9 +46,10 @@ class PlayingController extends BaseController
   }
 
   /**
-   * Ask for the next board once the current one is finished, for the caller
-   * only. The last player to ask deals it. Answers with the game state: still the finished board
-   * while somebody has to ask, the new one once it is dealt.
+   * Ask for the next board of the set now, rather than wait for
+   * `next_board_at`, for the caller only. The last human to ask deals it
+   * (robots count as asking). Answers with the game state: still the
+   * finished board while a human has to ask, the new one once it is dealt.
    */
   public function next(
     NextBoardRequest $request,

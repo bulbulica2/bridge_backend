@@ -300,7 +300,7 @@ class NextBoardTest extends TestCase
     $this->actingAs($this->players['N'])
       ->postJson("/tables/{$this->table->id}/start")
       ->assertStatus(409)
-      ->assertJsonPath('message', 'The board is finished: the same four players go on with the next board (POST /tables/{table}/playing/next).');
+      ->assertJsonPath('message', 'The board is finished: the next board of the set is dealt by itself shortly (POST /tables/{table}/playing/next deals it at once).');
   }
 
   /**

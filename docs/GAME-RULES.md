@@ -403,9 +403,9 @@ and served by `GET /boards/{board}/results` (§8 step 7); IMPs aren't built.
    other non-dummy players all accept, the board ends with the claimed tricks.
 6. After 13 tricks (or an accepted claim), count declarer's tricks, score
    them (section 6) and store `tricks_won`, `score` and `finished_at` on
-   `board_table`. Once all four
-   players have seen the result, pick the table's next board — unless it
-   was the last board of the set (below), which waits for everyone's Start.
+   `board_table`. Once the players have had a few seconds to see the
+   result, pick the table's next board — unless it was the last board of
+   the set (below), which waits for everyone's Start.
 7. Compare across tables that played the same board (matchpoints/IMPs).
 
 ### Board-selection rule
@@ -450,11 +450,15 @@ Play at a table goes in **sets** of `bridge.set_size` boards (4, env
 
 1. Everybody at a full table presses **Start** → the first board of a new
    set is dealt.
-2. After each board, everybody asks for the next (`playing/next`; robots
-   always do) → the set's next board, by the selection rule above.
+2. After each board, its result stays on show for
+   `bridge.next_board_seconds` (10, env `BRIDGE_NEXT_BOARD_SECONDS`) → then
+   the set's next board is dealt by itself, by the selection rule above.
+   Every human asking for it (`playing/next`; robots count as asking) deals
+   it at once instead.
 3. After the set's last board the set is **over** (`ended: completed`):
-   Next is refused with `"The set is over: press Start for a new one."`,
-   the finished board stays on show, and the players see the set's result.
+   nothing is dealt by itself, Next is refused with
+   `"The set is over: press Start for a new one."`, the finished board stays
+   on show, and the players see the set's result.
    Playing on takes everybody's Start again, which opens the next set
    (numbered on at the table, 1, 2, 3…).
 
@@ -579,14 +583,19 @@ Over HTTP:
   from `ScoringService`) and `finished_at`; the phase becomes `finished` and
   the state gains `result`.
 - **Step 6's "pick the table's next board" is built**: a finished board
-  (played out, claimed or passed out) stays on the table, whole deal shown, until each
-  of the four sends `POST /tables/{table}/playing/next` for themselves
-  (nobody, not even a manager, asks for the others); the last one deals the next board with the same selection
-  rule and the same four players in the same seats
-  (`BoardSelectionService::moveOn()`). Leaving between boards detaches
-  nothing; once the empty seat is filled, the four are no longer the board's
-  four, so Next is refused and everyone's Start deals the next board, as with
-  the first one. **Sets of boards are built** (above): Next only deals within
+  (played out, claimed or passed out) stays on the table, whole deal shown,
+  for `bridge.next_board_seconds` (10; the state's `next_board_at`), and then
+  the queued `App\Jobs\DealNextBoard` (`BoardSelectionService::dealNext()`)
+  deals the next board with the same selection rule and the same four
+  players in the same seats — even while one of them is away. Earlier, once
+  every human has sent `POST /tables/{table}/playing/next` for themselves
+  (nobody, not even a manager, asks for the others; robots count as asking),
+  the last one deals it at once (`BoardSelectionService::moveOn()`). Either
+  way it is dealt once, under the table's row lock. Leaving between boards
+  detaches nothing and stops the timer; once the empty seat is filled, the
+  four are no longer the board's four, so nothing is dealt by itself, Next
+  is refused and everyone's Start deals the next board, as with the first
+  one. **Sets of boards are built** (above): Next only deals within
   a set, and after its last board everyone's Start opens the next set.
 - **Step 7 is built for matchpoints**: `GET /boards/{board}/results`
   (`BoardResultsService::results()`) lists every finished playing of a board
@@ -653,7 +662,7 @@ Rules the robots keep, and that keep them honest:
   only when every trick left is a top winner in the hand on lead (and
   never twice from the same point of the play), answers claims — double
   dummy in endings of six tricks or fewer — and asks for the next board as
-  soon as one ends.
+  soon as one ends (it never holds it up: robots count as asking).
 
 How robots bid (a SAYC-style system — Standard American Yellow Card — with
 Stayman, transfers, a strong 2♣, weak twos, takeout, negative and penalty

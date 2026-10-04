@@ -34,7 +34,7 @@ class PlayingResource extends JsonResource
 
   /**
    * Leave out what only means something at a live table: `ready`, who has
-   * asked for the next board.
+   * asked for the next board, and `next_board_at`, when it is dealt.
    */
   public function forReview(): static
   {
@@ -67,6 +67,7 @@ class PlayingResource extends JsonResource
         'result' => null,
         'deal' => null,
         'ready' => null,
+        'next_board_at' => null,
       ];
     }
 
@@ -108,9 +109,10 @@ class PlayingResource extends JsonResource
       'claim' => self::claim($playing),
       'result' => self::result($playing),
       // once the board is over nothing is hidden any more: all four hands
-      // as dealt, and who has asked for the next board
+      // as dealt, who has asked for the next board, and when it comes anyway
       'deal' => $finished ? $state->deal($playing) : null,
       'ready' => $this->when($this->live, fn () => $finished ? $state->ready($playing) : null),
+      'next_board_at' => $this->when($this->live, fn () => $state->nextBoardAt($playing)),
     ];
   }
 
