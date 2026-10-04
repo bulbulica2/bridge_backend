@@ -10,7 +10,7 @@ use Illuminate\Support\Arr;
 /**
  * A table plus the seats nobody is sitting in, so every table payload has the
  * same shape whether it came from index, store, show or leaving a seat.
- * Seated players go out through UserResource, so their emails never do.
+ * Seated players go out through PlayerResource, so their emails never do.
  *
  * `can_manage` says whether the caller passes TablePolicy::manage, so a client
  * never re-implements the policy. It depends on who asks, so a payload with no

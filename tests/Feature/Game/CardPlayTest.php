@@ -374,8 +374,9 @@ class CardPlayTest extends TestCase
 
     foreach (Event::dispatched(PlayingUpdated::class) as [$event]) {
       $payload = $event->broadcastWith()['playing'];
-      $trick = $payload['current_trick'] === [] ? end($payload['tricks'])['cards'] : $payload['current_trick'];
-      $played[] = end($trick)['card']['id'];
+      // compact: cards are ids
+      $trick = $payload['current_trick']['cards'] === [] ? end($payload['tricks'])['cards'] : $payload['current_trick']['cards'];
+      $played[] = end($trick);
 
       $this->assertArrayNotHasKey('hand', $payload);
       $this->assertArrayNotHasKey('my_seat', $payload);
@@ -491,28 +492,18 @@ class CardPlayTest extends TestCase
   }
 
   /**
-   * Every card id anywhere in a payload.
+   * Every card id anywhere in a broadcast (`PlayingResource::compact()`) payload.
    *
    * @return list<int>
    */
   private function cardIds(array $payload): array
   {
-    $ids = [];
-
-    $walk = function ($node) use (&$walk, &$ids) {
-      if (! is_array($node)) {
-        return;
-      }
-
-      if (isset($node['id'], $node['suit'], $node['rank'])) {
-        $ids[] = $node['id'];
-      }
-
-      array_map($walk, $node);
-    };
-
-    $walk($payload);
-
-    return $ids;
+    return [
+      ...array_merge(...array_column($payload['tricks'] ?? [], 'cards')),
+      ...$payload['current_trick']['cards'] ?? [],
+      ...$payload['dummy_hand'] ?? [],
+      ...$payload['claim']['hand'] ?? [],
+      ...array_merge(...array_values($payload['deal'] ?? [])),
+    ];
   }
 }

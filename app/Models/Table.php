@@ -20,6 +20,12 @@ class Table extends Model
    */
   public const MAX_ACTIVE_PER_CREATOR = 3;
 
+  /**
+   * The longest `name`, in characters: `TableUpdated` carries it, and must
+   * fit in 10 KB (see `User::NAME_MAX`).
+   */
+  public const NAME_MAX = 50;
+
   protected static function booted(): void
   {
     // a finished playing keeps its call-by-call and card-by-card logs, so

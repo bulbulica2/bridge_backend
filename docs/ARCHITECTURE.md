@@ -57,7 +57,9 @@ routes/*.php
   `is_robot`, `is_admin` — public so a client can hide **Remove** on an
   admin's seat), never
   the raw `User` model: `email` isn't in `$hidden`, because the owner needs
-  it on `GET /api/user`.
+  it on `GET /api/user`. A seat's `user` and the game state's `players` use
+  `PlayerResource`, the same less `description`, since those payloads are
+  broadcast four players at a time (see [Message size](#message-size)).
 
 ## Domain types
 
@@ -251,7 +253,7 @@ to run it: [`RUNNING.md`](RUNNING.md#realtime-reverb)).
 | Event | Channel | Carries | Sent when |
 |---|---|---|---|
 | `TableUpdated` | `table.{id}` | the `TableResource` JSON, without `can_manage` | any seat change that didn't delete the table, a Start pressed or taken back, a board dealt |
-| `PlayingUpdated` | `table.{id}` | the public game state (no hand, no `my_seat`) | a board is dealt, and after every accepted call, card or claim action (a robot's too); `DriveRobots` listens to it |
+| `PlayingUpdated` | `table.{id}` | the public game state (no hand, no `my_seat`) in its compact shape (`PlayingResource::compact()`: cards and bids as ids) | a board is dealt, and after every accepted call, card or claim action (a robot's too); `DriveRobots` listens to it |
 | `HandDealt` | `App.Models.User.{id}` | that player's 13 cards | a board is dealt (humans only) |
 | `DeclarerHandShown` | `App.Models.User.{id}` | declarer's 13 cards (`declarer_hand`) | an auction ends with a robot declarer and a human dummy, who plays both hands (to that human only; `AuctionService`) |
 | `UserBanned` | `App.Models.User.{id}` | the ban: `reason`, `until`, `banned_at` | an admin bans that user, so their open client logs out |
@@ -260,13 +262,44 @@ to run it: [`RUNNING.md`](RUNNING.md#realtime-reverb)).
   queued job, not the player's request) and `ShouldDispatchAfterCommit`
   (dispatched inside the transaction, sent only if it commits). The payload
   is snapshotted in the constructor as the same JSON the HTTP endpoints
-  return. `TableUpdated` is the one to copy for a new event.
+  return (`PlayingUpdated`: compacted). `TableUpdated` is the one to copy
+  for a new event — and add it to `BroadcastSizeTest`.
 - Channel auth (`routes/channels.php`) is checked only when a client
   subscribes, so a player who leaves the table stays subscribed. The table
   channel must therefore only carry what any player may see; anything private
   to one player goes on their `App.Models.User.{id}` channel. Dummy's hand
   and a claimer's hand are the exceptions, because they are face up. The
   table channel refuses a banned user.
+
+### Message size
+
+Hosted Pusher refuses an event over 10 KB, and Reverb an HTTP request over
+its `max_request_size`; either way the queued broadcast job fails
+(`Pusher error: Payload too large.`) and the table never sees that state.
+`App\Broadcasting\PusherBody::of()` builds the body exactly as the Pusher
+SDK does (the data JSON-encoded as a string inside the JSON, so escaped
+twice), and every event must stay within `PusherBody::BUDGET` (9,000 bytes,
+the rest of the 10 KB being the HTTP request around it).
+`tests/Feature/Game/BroadcastSizeTest` builds each event's largest payload:
+the longest legal auction (319 calls), 13 tricks and the deal, a pending
+13-card claim, every name at its limit in emoji (14 bytes a character).
+What keeps them there:
+
+- `PlayingUpdated` broadcasts `PlayingResource::compact()` of the public
+  state: cards and bids as ids, the auction as a list of bid ids, tricks as
+  `{leader, cards, winner}` — a client expands it with `GET /cards` and
+  `GET /bids` (the format is in [`API.md`](API.md#event-playingupdated)).
+- `PlayerResource` leaves `description` (up to 1000 characters) out of
+  seats and `players`.
+- The free text a broadcast carries is capped: `User::NAME_MAX` (50),
+  `User::USERNAME_MAX` (30), `Table::NAME_MAX` (50),
+  `UserBan::REASON_MAX` (500). Raise one only with the test still passing.
+
+A broadcast that fails anyway is logged at `error` by
+`App\Listeners\LogFailedBroadcast` (on `JobFailed`, not queued): event,
+channels, table or user id, size and the error. Locally Reverb's
+`max_request_size` is raised to 64 KB (`REVERB_MAX_REQUEST_SIZE`), so a
+payload that outgrows the budget still gets through while it's fixed.
 
 ## Scheduler, queue and commands
 

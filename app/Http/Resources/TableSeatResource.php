@@ -50,7 +50,7 @@ class TableSeatResource extends JsonResource
       'forfeit_at' => $this->away_since === null || $this->forfeitSuspended || $this->user?->is_admin
         ? null
         : $this->away_since->copy()->addMinutes(config('bridge.set_forfeit_minutes')),
-      'user' => new UserResource($this->whenLoaded('user')),
+      'user' => new PlayerResource($this->whenLoaded('user')),
     ];
   }
 }

@@ -11,13 +11,16 @@ MySQL. GitHub repo: https://github.com/bulbulica2/bridge_backend. Branches
 are named `<issue-title-prefix>-<topic>` (e.g. `7-fix-database`, tracked by
 the GitHub issue whose title starts with it) and merged to `main` via PR;
 commit messages are prefixed with the branch name. When the work on an issue
-is done (tests and `pint --test` pass, line coverage of `app/` is at least
-95%, docs updated), commit, push and open the PR against `main` straight
-away — don't stop to ask first. The PR title is the commit subject, and the
-body says `Closes #<issue>`. GitHub Actions (`.github/workflows/tests.yml`)
-runs the `pint`, `tests` and `coverage` checks on every PR and push; still
-run them locally first, and fix a red check before merging — `main` requires
-them.
+is done (code, its tests and docs written), commit, push and open the PR
+against `main` straight away — don't stop to ask first. The PR title is the
+commit subject, and the body says `Closes #<issue>`. **Let CI run the
+checks**: GitHub Actions (`.github/workflows/tests.yml`) runs `pint`,
+`tests` and `coverage` on every PR and push, so don't run the full suite,
+`composer coverage` or `pint --test` locally before opening the PR (locally
+coverage runs on Xdebug and takes many minutes); while working, run only the
+test classes you are changing. Then watch the checks (`gh pr checks`): if one
+is red, reproduce that failure locally, fix it and push again — `main`
+requires all three green.
 
 **Every issue and PR must keep line coverage of `app/` at or above 95%**
 (the whole suite's number, as `composer coverage` and the `coverage` check
@@ -100,9 +103,10 @@ vendor/bin/pint --test            # check formatting without changing files
   so anything showing a user to *other* players goes through
   `App\Http\Resources\UserResource` (`id`, `name`, `username`, `description`,
   `is_robot`, `is_admin`)
-  — never the raw model. `TableResource` does this for seats via
-  `TableSeatResource`; `GET /users/{user}` (`UserController@show`) serves the
-  same public profile. `is_admin` is public so a client can hide **Remove**
+  — never the raw model. Seats (`TableSeatResource`) and a playing's
+  `players` use `PlayerResource`, the same less `description`, to keep
+  broadcasts small; `GET /users/{user}` (`UserController@show`) serves the
+  whole public profile. `is_admin` is public so a client can hide **Remove**
   on an admin's seat. `GET /users?search=`
   (`UserController@index`, `throttle:30,1`) finds up to 10 **human** users by
   `username`/`name` — never by email, never robots — and loads
@@ -287,7 +291,15 @@ vendor/bin/pint --test            # check formatting without changing files
   `DeclarerHandShown` (their own channel, declarer's 13 cards).
   `AuctionService` re-dispatches `PlayingUpdated` after every accepted call,
   `CardPlayService` after every accepted card and `ClaimService` after every
-  accepted claim action.
+  accepted claim action. **Every broadcast must fit in 10 KB** (hosted
+  Pusher's limit; `App\Broadcasting\PusherBody::BUDGET`, checked by
+  `tests/Feature/Game/BroadcastSizeTest` against each event's worst case):
+  `PlayingUpdated` therefore carries `PlayingResource::compact()` of the
+  public state (cards and bids as ids, a client expands them), and
+  broadcast free text is capped (`User::NAME_MAX`/`USERNAME_MAX`,
+  `Table::NAME_MAX`, `UserBan::REASON_MAX`). A new event or field gets a
+  case in that test. `App\Listeners\LogFailedBroadcast` logs a failed
+  broadcast at `error`.
 - **Game state**: `App\Services\PlayingStateService` is the one place that
   works out a playing's phase (`waiting`/`auction`/`play`/`finished`, from
   `tables.board_id`, `auction_ended_at`, `finished_at`), the calls so far

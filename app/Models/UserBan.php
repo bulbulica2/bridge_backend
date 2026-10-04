@@ -16,6 +16,12 @@ class UserBan extends Model
   /** The longest ban an admin may give, in days. */
   public const MAX_DAYS = 365;
 
+  /**
+   * The longest `reason`, in characters: `UserBanned` carries it, and must
+   * fit in 10 KB (see `User::NAME_MAX`).
+   */
+  public const REASON_MAX = 500;
+
   protected $fillable = [
     'user_id',
     'banned_by',

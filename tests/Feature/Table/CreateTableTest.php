@@ -59,11 +59,12 @@ class CreateTableTest extends TestCase
         'id' => $player->id,
         'name' => $player->name,
         'username' => $player->username,
-        'description' => 'Weak twos.',
         'is_robot' => false,
         'is_admin' => false,
       ])
-      ->assertJsonMissingPath('data.seats.0.user.email');
+      ->assertJsonMissingPath('data.seats.0.user.email')
+      // a profile's (GET /users/{user}), kept out of every table payload
+      ->assertJsonMissingPath('data.seats.0.user.description');
 
     $this->actingAs($user)->getJson('/tables')
       ->assertOk()
@@ -93,6 +94,10 @@ class CreateTableTest extends TestCase
     $this->actingAs($user)->postJson('/tables', ['seat' => 'X'])
       ->assertUnprocessable()
       ->assertJsonValidationErrors('seat');
+
+    $this->actingAs($user)->postJson('/tables', ['name' => str_repeat('t', Table::NAME_MAX + 1)])
+      ->assertUnprocessable()
+      ->assertJsonValidationErrors('name');
 
     $this->assertDatabaseCount('tables', 0);
   }

@@ -257,7 +257,8 @@ class AuctionTest extends TestCase
       $payload = $event->broadcastWith()['playing'];
 
       return $event->tableId === $this->table->id
-        && array_column(array_column($payload['auction'], 'bid'), 'call') === ['1H', 'P']
+        // compact: the calls' bid ids, clockwise from the dealer
+        && $payload['auction'] === [Bid::where('suit', '1H')->value('id'), Bid::where('suit', 'P')->value('id')]
         && $payload['turn'] === 'S'
         && ! array_key_exists('hand', $payload);
     });

@@ -15,6 +15,15 @@ class User extends Authenticatable
   use HasFactory, Notifiable;
 
   /**
+   * The longest `name` and `username`, in characters. Every table broadcast
+   * carries four players' names, and a broadcast must fit in 10 KB even when
+   * each character is an emoji JSON-escaped twice (14 bytes).
+   */
+  public const NAME_MAX = 50;
+
+  public const USERNAME_MAX = 30;
+
+  /**
    * The attributes that are mass assignable.
    *
    * @var list<string>

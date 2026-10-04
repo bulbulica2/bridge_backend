@@ -41,7 +41,7 @@ header.
 These are the stock Laravel Breeze auth controllers, with two
 customizations:
 
-- `/register` also takes `username` (required, string, max 255, unique, and
+- `/register` also takes `username` (required, string, max 30 characters, unique, and
   not starting with `robot-`, case-insensitively — that prefix is the robot
   pool's), because `users.username` is NOT NULL. Without it, registration
   failed with a 500 until `7-fix-database`.
@@ -234,7 +234,7 @@ Policies live in `app/Policies/` and are auto-discovered by name
   broadcast leaves `can_manage` out (it has no single viewer); a client keeps
   its last value and refetches `GET /tables/{table}` when `moderated_by`
   changes. `GET /api/user` also returns the caller's own `is_admin`
-  (read-only); every public profile (`UserResource`, so seat payloads and
+  (read-only); every public profile (`UserResource`, and `PlayerResource` in seat payloads and
   `TableUpdated` too) shows it as well, so a client can hide **Remove** on an
   admin's seat. See
   [`API.md`](API.md#tables).
@@ -271,7 +271,7 @@ Policies live in `app/Policies/` and are auto-discovered by name
 - `User.is_admin` has no endpoint to set it; it is only set in the database
   (the seeded `email@abc.com` admin, or `UserFactory::isAdmin()` in tests).
 - Registration rules are in `Auth/RegisteredUserController`: `name` required
-  max 255; `username` required, max 255, unique, not `robot-…`; `email` required, lowercase,
+  max 50 characters (`User::NAME_MAX`); `username` required, max 30 (`User::USERNAME_MAX`), unique, not `robot-…` — both short enough for four players to fit in a [10 KB broadcast](API.md#message-size); `email` required, lowercase,
   valid, max 255, unique; `password` confirmed, Breeze `Password::defaults()`.
   Validation errors come back as Laravel's standard 422 JSON, not the
   `{status, message, data}` shape. Login still uses `email`, not `username`.
