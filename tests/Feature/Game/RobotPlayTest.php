@@ -57,7 +57,8 @@ class RobotPlayTest extends TestCase
     for ($boards = 1; ; $boards++) {
       $this->assertLessThan(20, $boards, 'no board reached a contract');
 
-      $playing = $this->state->currentPlaying($table);
+      // fresh each time: Next moved the table on to a new board
+      $playing = $this->state->currentPlaying($table->refresh());
       $this->playOut($table);
 
       $playing->refresh();
