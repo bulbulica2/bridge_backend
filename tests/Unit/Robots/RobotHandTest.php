@@ -37,6 +37,10 @@ class RobotHandTest extends TestCase
     $this->assertFalse($this->hand('AK432.Q2.J2.5432')->isBalanced()); // two doubletons
     $this->assertFalse($this->hand('AK432.Q.J32.5432')->isBalanced()); // a singleton
     $this->assertFalse($this->hand('AK4325.Q32.J32.5')->isBalanced());
+
+    $this->assertTrue($this->hand('AK432.Q2.J2.5432')->isSemiBalanced());  // 5-2-2-4
+    $this->assertTrue($this->hand('AK2.Q2.J2.765432')->isSemiBalanced());  // 3-2-2-6
+    $this->assertFalse($this->hand('AK432.Q.J32.5432')->isSemiBalanced()); // a singleton
   }
 
   public function test_stoppers(): void

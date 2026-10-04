@@ -158,18 +158,27 @@ class AuctionView
   }
 
   /**
-   * The suits the opponents have shown as theirs.
+   * The suits the opponents have shown as theirs: bid naturally, so not
+   * an artificial call (which shows no suit) nor a cue bid of a suit our
+   * side bid first.
    *
    * @return list<string>
    */
   public function theirSuits(): array
   {
     $suits = [];
+    $ours = [];
 
     foreach ($this->calls as $index => $call) {
       $suit = $this->meanings[$index]->suit;
 
-      if (! $this->isOurs($call['seat']) && $suit !== null && $suit !== 'NT') {
+      if ($suit === null || $suit === 'NT') {
+        continue;
+      }
+
+      if ($this->isOurs($call['seat'])) {
+        $ours[] = $suit;
+      } elseif (! in_array($suit, $ours, true)) {
         $suits[] = $suit;
       }
     }
@@ -200,11 +209,12 @@ class AuctionView
   /**
    * What `$seat` has shown so far: every one of their calls' ranges
    * intersected (a call that contradicts the picture replaces it), the
-   * longest length each suit has been shown, and whether their last call
-   * invites game. `known` is false while none of their calls said
-   * anything the system understands.
+   * longest length each suit has been shown, the suits their no trump
+   * promised stopped, and whether their last call invites game. `known`
+   * is false while none of their calls said anything the system
+   * understands.
    *
-   * @return array{known: bool, min: int, max: int, lengths: array<string, int>, balanced: bool, invite: bool}
+   * @return array{known: bool, min: int, max: int, lengths: array<string, int>, balanced: bool, stopped: list<string>, invite: bool}
    */
   public function shown(string $seat): array
   {
@@ -214,6 +224,7 @@ class AuctionView
       'max' => self::UNKNOWN_MAX,
       'lengths' => array_fill_keys(RobotHand::SUITS, 0),
       'balanced' => false,
+      'stopped' => [],
       'invite' => false,
     ];
 
@@ -249,6 +260,7 @@ class AuctionView
       }
 
       $shown['balanced'] = $shown['balanced'] || $meaning->balanced;
+      $shown['stopped'] = array_values(array_unique([...$shown['stopped'], ...$meaning->stopped]));
     }
 
     return $shown;

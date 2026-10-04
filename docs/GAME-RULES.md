@@ -663,6 +663,15 @@ Rules the robots keep, and that keep them honest:
   never twice from the same point of the play), answers claims — double
   dummy in endings of six tricks or fewer — and asks for the next board as
   soon as one ends (it never holds it up: robots count as asking).
+- **No trump only with their suits held.** A robot bids a natural no trump
+  over the opponents only with a **stopper** (A, K-x, Q-x-x, J-x-x-x) in
+  every suit they have bid naturally — its own, or one partner's no trump
+  already promised — and, on its first no trump, a balanced hand (3NT may
+  instead be semi-balanced with a good long minor). Its partner reads the
+  promise ("♠ stopped") and may raise to 3NT on it; without the stopper it
+  plays a minor fit or a part-score, or passes. **In code:**
+  `RobotHand::hasStopper()`, `AuctionView::theirSuits()` (natural bids,
+  not cue bids) and `BidMeaning::$stopped`.
 
 How robots bid (a SAYC-style system — Standard American Yellow Card — with
 Stayman, transfers, a strong 2♣, weak twos, takeout, negative and penalty
