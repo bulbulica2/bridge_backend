@@ -16,6 +16,10 @@ use Closure;
  * position (`RobotBidder::read()`), so what a robot means and what its
  * partner understands can't drift apart.
  *
+ * A conventional rule says so on its meaning (`alert: true`): a robot
+ * alerts that call to the opponents with its explanation. Natural calls
+ * aren't alerted.
+ *
  * Points are high-card points only.
  */
 class BiddingSystem
@@ -116,7 +120,7 @@ class BiddingSystem
   {
     $fourthSeat = count($this->v->calls) === 3;
 
-    $this->add('2C', new BidMeaning('Strong 2♣', 22, note: 'artificial', force: BidMeaning::ROUND, asks: 'waiting', tag: 'strong'),
+    $this->add('2C', new BidMeaning('Strong 2♣', 22, note: 'artificial', force: BidMeaning::ROUND, asks: 'waiting', tag: 'strong', alert: true),
       fn (RobotHand $h) => $h->hcp() >= 22);
     $this->add('2NT', new BidMeaning('Opening', 20, 21, balanced: true, asks: 'nt', suit: 'NT', tag: 'nt'),
       fn (RobotHand $h) => $h->isBalanced() && $this->between($h, 20, 21));
@@ -167,7 +171,7 @@ class BiddingSystem
     [$kind, $param] = array_pad(explode(':', $ask, 2), 2, null);
 
     match ($kind) {
-      'waiting' => $this->add('2D', new BidMeaning('Waiting', note: 'artificial, any strength', asks: 'strong-rebid'), fn () => true),
+      'waiting' => $this->add('2D', new BidMeaning('Waiting', note: 'artificial, any strength', asks: 'strong-rebid', alert: true), fn () => true),
       'strong-rebid' => $this->strongRebid(),
       'strong-suit' => $this->afterStrongSuit(),
       'nt' => $this->ntResponse(),
@@ -218,13 +222,13 @@ class BiddingSystem
     $z = $this->ntZones($level, $v->meaning($nt)->min, $v->meaning($nt)->max);
     $up = $level + 1;
 
-    $this->add('4C', new BidMeaning('Gerber', $z['slam'], note: 'asks for aces', asks: 'aces:gerber'),
+    $this->add('4C', new BidMeaning('Gerber', $z['slam'], note: 'asks for aces', asks: 'aces:gerber', alert: true),
       fn (RobotHand $h) => $h->hcp() >= $z['slam']);
-    $this->add("{$up}C", new BidMeaning('Stayman', $z['low'], $z['slam'] - 1, note: 'asks for a four-card major', asks: 'stayman'),
+    $this->add("{$up}C", new BidMeaning('Stayman', $z['low'], $z['slam'] - 1, note: 'asks for a four-card major', asks: 'stayman', alert: true),
       fn (RobotHand $h) => $this->between($h, $z['low'], $z['slam'] - 1) && $this->staymanShape($h));
 
     foreach (['S' => 'H', 'H' => 'D'] as $major => $via) {
-      $this->add("$up$via", new BidMeaning('Transfer', 0, $z['slam'] - 1, [$major => 5], note: 'asks partner to bid '.BidMeaning::symbol($major), asks: "transfer:$major", suit: $major),
+      $this->add("$up$via", new BidMeaning('Transfer', 0, $z['slam'] - 1, [$major => 5], note: 'asks partner to bid '.BidMeaning::symbol($major), asks: "transfer:$major", suit: $major, alert: true),
         fn (RobotHand $h) => $h->hcp() < $z['slam'] && $h->longest(RobotHand::MAJORS, 5) === $major);
     }
 
@@ -314,7 +318,7 @@ class BiddingSystem
     $top = $v->shown($v->seat)['max'];
 
     if (AuctionView::level($v->call($v->lastAction($v->partner()))) === 2) {
-      $this->add("3$major", new BidMeaning('Super-accept', $top, $top, [$major => 4], suit: $major),
+      $this->add("3$major", new BidMeaning('Super-accept', $top, $top, [$major => 4], suit: $major, alert: true),
         fn (RobotHand $h) => $h->length($major) >= 4 && $h->hcp() >= $top);
     }
 
@@ -388,7 +392,7 @@ class BiddingSystem
     $steps = $convention === 'gerber' ? ['4D', '4H', '4S', '4NT'] : ['5C', '5D', '5H', '5S'];
 
     foreach ([[0, 4], [1], [2], [3]] as $step => $aces) {
-      $this->add($steps[$step], new BidMeaning('Aces', aces: $aces, asks: 'place-slam'),
+      $this->add($steps[$step], new BidMeaning('Aces', aces: $aces, asks: 'place-slam', alert: true),
         fn (RobotHand $h) => in_array($h->aces(), $aces, true));
     }
   }
@@ -593,7 +597,7 @@ class BiddingSystem
 
     if ($theirNt && $v->lastContract() === $v->opening()) {
       if ($level <= 2) {
-        $this->add('X', new BidMeaning('Penalty double', 15, tag: 'penalty'), fn (RobotHand $h) => $h->hcp() >= 15);
+        $this->add('X', new BidMeaning('Penalty double', 15, tag: 'penalty', alert: true), fn (RobotHand $h) => $h->hcp() >= 15);
       }
     } elseif (! $theirNt) {
       $nt = $v->cheapest('NT');
@@ -1038,7 +1042,7 @@ class BiddingSystem
     $overcall = $v->call($v->lastContract());
 
     if (AuctionView::strain($overcall) === 'NT') {
-      $this->add('X', new BidMeaning('Penalty double', 10, tag: 'penalty'), fn (RobotHand $h) => $h->hcp() >= 10);
+      $this->add('X', new BidMeaning('Penalty double', 10, tag: 'penalty', alert: true), fn (RobotHand $h) => $h->hcp() >= 10);
 
       return;
     }
@@ -1056,7 +1060,7 @@ class BiddingSystem
     $min = AuctionView::level($overcall) === 1 ? 6 : 8;
     $oneLevel = array_values(array_filter($unbid, fn ($suit) => self::levelOf($v->cheapest($suit)) === 1));
 
-    $this->add('X', new BidMeaning('Negative double', $min, lengths: array_fill_keys($unbid, 4), asks: 'negative', tag: 'negative'),
+    $this->add('X', new BidMeaning('Negative double', $min, lengths: array_fill_keys($unbid, 4), asks: 'negative', tag: 'negative', alert: true),
       fn (RobotHand $h) => $h->hcp() >= $min
         && array_filter($unbid, fn ($suit) => $h->length($suit) < 4) === []
         // a five-card major goes in at the one level instead
@@ -1270,7 +1274,7 @@ class BiddingSystem
       $slam = fn (RobotHand $h) => $h->hcp() + $pmin >= self::SLAM;
       $min = self::SLAM - $pmin;
 
-      $this->add($ntPartner ? '4C' : '4NT', new BidMeaning($ntPartner ? 'Gerber' : 'Blackwood', $min, note: 'asks for aces', asks: $ntPartner ? 'aces:gerber' : 'aces:blackwood'), $slam);
+      $this->add($ntPartner ? '4C' : '4NT', new BidMeaning($ntPartner ? 'Gerber' : 'Blackwood', $min, note: 'asks for aces', asks: $ntPartner ? 'aces:gerber' : 'aces:blackwood', alert: true), $slam);
 
       foreach (self::STRAINS as $strain) {
         $this->add("6$strain", new BidMeaning('Small slam', $min, suit: $strain, signoff: true),
@@ -1400,7 +1404,7 @@ class BiddingSystem
 
     $min = self::GAME - $p['min'];
 
-    $this->add($call, new BidMeaning('Fourth suit forcing', $min, note: 'artificial', force: BidMeaning::GAME, asks: 'fourth-suit'),
+    $this->add($call, new BidMeaning('Fourth suit forcing', $min, note: 'artificial', force: BidMeaning::GAME, asks: 'fourth-suit', alert: true),
       fn (RobotHand $h) => $h->hcp() >= $min && $this->gameStrain($h) === 'NT' && ! $h->hasStopper($fourth[0]));
   }
 
@@ -1421,7 +1425,7 @@ class BiddingSystem
 
     if (AuctionView::level($last) <= 2 && ! $v->isDoubled()) {
       if ($theirs === 'NT') {
-        $this->add('X', new BidMeaning('Penalty double', max(8, 23 - $pmin), tag: 'penalty'),
+        $this->add('X', new BidMeaning('Penalty double', max(8, 23 - $pmin), tag: 'penalty', alert: true),
           fn (RobotHand $h) => $h->hcp() >= 8 && $h->hcp() + $pmin >= 23);
       } else {
         $this->add('X', new BidMeaning('Penalty double', max(10, 20 - $pmin), lengths: [$theirs => 4], tag: 'penalty'),

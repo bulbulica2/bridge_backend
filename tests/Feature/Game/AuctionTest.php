@@ -82,7 +82,12 @@ class AuctionTest extends TestCase
       ->assertJsonPath('data.my_seat', 'N')
       ->assertJsonPath('data.contract', null)
       ->assertJsonPath('data.auction', [
-        ['seat' => 'N', 'bid' => ['id' => $bid->id, 'call' => '1H', 'level' => 1, 'strain' => 'H', 'special' => false]],
+        [
+          'seat' => 'N',
+          'bid' => ['id' => $bid->id, 'call' => '1H', 'level' => 1, 'strain' => 'H', 'special' => false],
+          'alert' => null,
+          'question' => null,
+        ],
       ])
       ->assertJsonCount(13, 'data.hand');
 

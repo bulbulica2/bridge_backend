@@ -94,7 +94,7 @@ the same pattern:
 | `TableSeatService` | joining, moving, leaving and kicking (`seat()`, `leave()`, `remove()`), heartbeats (`touch()`), freeing idle seats (`releaseIdleSeats()`), the away rule and set forfeit (`checkAway()`, `costsTheSet()`) and deleting unattended tables (`deleteUnattendedTables()`) | `tests/Feature/Table*` |
 | `BoardSelectionService` | which board a table plays and when: Start (`start()`, `withdrawStart()`), deals once a full table's humans have all pressed it (`startIfReady()`) as the first board of a new set, moves on after a finished board within the set (by itself after `bridge.next_board_seconds`, `dealNext()` from the queued `App\Jobs\DealNextBoard`, or at once once every human asked, `moveOn()`), detaches a board abandoned mid-play (`abandonPlaying()`) and ends a set one of its players left (`abandonSet()`) or a side lost by going away (`forfeitSet()`) | `tests/Feature/Table/StartBoardTest`, `AssignBoardTest`, `SetForfeitTest`, `tests/Feature/Game/NextBoardTest`, `AutoNextBoardTest`, `BoardSetTest` |
 | `PlayingStateService` | the one place that works out a playing's phase, calls, cards, turn, who acts (`actingUserId()`, with `dummyPlaysForDeclarer()`: a human dummy plays a robot declarer's cards), the hands, dummy and a human dummy's `declarer_hand` | feature tests (`HumanDummyPlaysTest` for the human dummy) |
-| `AuctionService` | one call (`call()`); `nextToCall`, `illegalReason`, `isOver`, `result` | `tests/Unit/AuctionServiceTest` |
+| `AuctionService` | one call (`call()`, with its self-alert), a question about a call (`ask()`) and its bidder's answer (`explain()`); `nextToCall`, `illegalReason`, `isOver`, `result` | `tests/Unit/AuctionServiceTest`, `tests/Feature/Game/BidAlertTest` |
 | `CardPlayService` | one card (`play()`); `nextToPlay`, `actingSeat`, `illegalReason`, `trickWinner`, `tricks`, `tricksWon` | `tests/Unit/CardPlayServiceTest` |
 | `ClaimService` | claims and concessions (`claim`, `respond`, `withdraw`, and `expire`, which the queued `App\Jobs\ExpireClaim` runs `bridge.claim_seconds` after a claim: silence rejects it) | `tests/Unit/ClaimServiceTest`, `tests/Feature/Game/ClaimTest` |
 | `ScoringService` | duplicate scoring (`score()`, from declarer's side) and matchpoints (`matchpoints()`), pure static functions | `tests/Unit/ScoringTest` |
@@ -188,7 +188,8 @@ Robot players are `users` rows with `is_robot` (see
   so far. A robot makes the first legal rule its hand fits, and every call
   — its partner's, a human's — is read back through the same rules, so
   what a robot means and what its partner understands can't drift apart;
-  `BidMeaning::explanation()` is the text for future bid alerts. Each reads only the arrays
+  `BidMeaning::explanation()` is the text a robot alerts its conventional
+  calls with (`BidMeaning::$alert`) and answers questions with. Each reads only the arrays
   `PlayingStateService::stateFor()` serves the robot's seat — its own hand,
   dummy once face up, a claimer's hand, the cards played — never another
   hand, so a robot knows no more than a human in its seat. Each returns a
@@ -265,6 +266,8 @@ to run it: [`RUNNING.md`](RUNNING.md#realtime-reverb)).
 | `PlayingUpdated` | `table.{id}` | the public game state (no hand, no `my_seat`) in its compact shape (`PlayingResource::compact()`: cards and bids as ids) | a board is dealt, and after every accepted call, card or claim action (a robot's too); `DriveRobots` listens to it |
 | `HandDealt` | `App.Models.User.{id}` | that player's 13 cards | a board is dealt (humans only) |
 | `DeclarerHandShown` | `App.Models.User.{id}` | declarer's 13 cards (`declarer_hand`) | an auction ends with a robot declarer and a human dummy, who plays both hands (to that human only; `AuctionService`) |
+| `CallAlerted` | `App.Models.User.{id}` | `index` of the call in the auction, its `explanation` | a call is alerted or its bidder explains it (a robot's too): to each human opponent of the bidder, never partner (`AuctionService::alertTo()`) |
+| `CallQuestioned` | `App.Models.User.{id}` | `index` of the call, `asked_by` | an opponent asks about a human's call: to its bidder only (`AuctionService::ask()`) |
 | `UserBanned` | `App.Models.User.{id}` | the ban: `reason`, `until`, `banned_at` | an admin bans that user, so their open client logs out |
 
 - Events implement `ShouldBroadcast` (queued, so a Reverb outage fails a
@@ -277,8 +280,11 @@ to run it: [`RUNNING.md`](RUNNING.md#realtime-reverb)).
   subscribes, so a player who leaves the table stays subscribed. The table
   channel must therefore only carry what any player may see; anything private
   to one player goes on their `App.Models.User.{id}` channel. Dummy's hand
-  and a claimer's hand are the exceptions, because they are face up. The
-  table channel refuses a banned user.
+  and a claimer's hand are the exceptions, because they are face up. Alerts
+  are private too, to the bidder's opponents: they go on the opponents' own
+  channels, and only `stateFor()` (per viewer) shows them — never
+  `PlayingResource`'s public part. The table channel refuses a banned
+  user.
 
 ### Message size
 

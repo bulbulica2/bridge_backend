@@ -205,6 +205,35 @@ class PlayingStateService
   }
 
   /**
+   * What `$seat`'s player may see of each call's alert, in `calls()`'s
+   * order: `alert` (`{explanation}`, null when the call isn't alerted) and
+   * `question` (`{asked_by}`, the opponent whose question about it is still
+   * open) for their own calls and the opponents', but null for partner's:
+   * seeing those would be unauthorised information. Once the board is
+   * finished every alert is public, to anyone (`$seat` null too), and no
+   * question is open any more.
+   *
+   * @return list<array{alert: array{explanation: string|null}|null, question: array{asked_by: string}|null}>
+   */
+  public function alerts(BoardTable $playing, ?string $seat): array
+  {
+    $finished = $playing->finished_at !== null;
+
+    return $playing->auctions
+      ->sortBy('id')
+      ->map(function ($call) use ($seat, $finished) {
+        $sees = $finished || ($seat !== null && $call->seat !== Seats::partner($seat));
+
+        return [
+          'alert' => $sees && $call->alerted ? ['explanation' => $call->explanation] : null,
+          'question' => $sees && ! $finished && $call->question_seat !== null ? ['asked_by' => $call->question_seat] : null,
+        ];
+      })
+      ->values()
+      ->all();
+  }
+
+  /**
    * The seat a user held when this board was dealt, from the snapshot.
    */
   public function seatOf(BoardTable $playing, User $user): ?string
@@ -351,9 +380,11 @@ class PlayingStateService
 
   /**
    * The public state plus what only this user may see: their seat and hand,
-   * and `declarer_hand` for a human dummy who plays a robot declarer's
-   * cards. Dummy's hand isn't private once it is face up, so it is in the
-   * public part (`dummy_hand`), for declarer and everyone else alike.
+   * the alerts made to them and their own (`alerts()`, on each `auction`
+   * entry), and `declarer_hand` for a human dummy who plays a robot
+   * declarer's cards. Dummy's hand isn't private once it is face up, so it
+   * is in the public part (`dummy_hand`), for declarer and everyone else
+   * alike.
    *
    * @return array<string, mixed>
    */
@@ -382,9 +413,18 @@ class PlayingStateService
   private function stateOf(?BoardTable $playing, User $user): array
   {
     $seat = $playing === null ? null : $this->seatOf($playing, $user);
+    $public = json_decode(json_encode(new PlayingResource($playing)), true);
+
+    if ($playing !== null) {
+      $alerts = $this->alerts($playing, $seat);
+
+      foreach ($public['auction'] as $index => $call) {
+        $public['auction'][$index] = [...$call, ...$alerts[$index]];
+      }
+    }
 
     return [
-      ...json_decode(json_encode(new PlayingResource($playing)), true),
+      ...$public,
       'my_seat' => $seat,
       'hand' => $seat === null ? null : $this->hand($playing, $seat),
       'declarer_hand' => $playing === null ? null : $this->declarerHandFor($playing, $seat),

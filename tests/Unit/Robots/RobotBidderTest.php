@@ -313,6 +313,52 @@ class RobotBidderTest extends TestCase
     $this->assertSame($explanation, end($meanings)->explanation());
   }
 
+  /**
+   * calls, whether the last one is alerted
+   */
+  public static function alerts(): array
+  {
+    return [
+      'Stayman' => [['1NT', 'P', '2C'], true],
+      'a transfer' => [['1NT', 'P', '2H'], true],
+      'a super-accept' => [['1NT', 'P', '2D', 'P', '3H'], true],
+      'the strong 2♣' => [['2C'], true],
+      'the waiting 2♦' => [['2C', 'P', '2D'], true],
+      'Gerber' => [['1NT', 'P', '4C'], true],
+      'Blackwood' => [['1H', 'P', '3H', 'P', '4NT'], true],
+      'an answer to Blackwood' => [['1H', 'P', '3H', 'P', '4NT', 'P', '5D'], true],
+      'fourth suit forcing' => [['1C', 'P', '1H', 'P', '1S', 'P', '2D'], true],
+      'a negative double' => [['1C', '1S', 'X'], true],
+      'a penalty double of their 1NT' => [['1NT', 'X'], true],
+      'a natural opening' => [['1NT'], false],
+      'a natural raise' => [['1H', 'P', '2H'], false],
+      'the answer to Stayman' => [['1NT', 'P', '2C', 'P', '2D'], false],
+      'completing a transfer' => [['1NT', 'P', '2D', 'P', '2H'], false],
+      'a takeout double' => [['1H', 'X'], false],
+      'a pass' => [['P'], false],
+      'a call the system doesn\'t make' => [['5C'], false],
+    ];
+  }
+
+  #[DataProvider('alerts')]
+  public function test_only_conventional_calls_are_alerted(array $names, bool $alerted): void
+  {
+    $meanings = RobotBidder::read($this->calls('N', $names));
+
+    $this->assertSame($alerted, end($meanings)->alert);
+  }
+
+  public function test_a_robot_alerts_its_convention_with_its_explanation(): void
+  {
+    $bid = RobotBidder::bid($this->hand('AKQ2.AKQ2.AK2.A2'), [], 'N');
+
+    $this->assertSame('2C', $bid['call']);
+    $this->assertTrue($bid['alert']);
+    $this->assertSame('Strong 2♣: 22+ HCP, artificial, forcing', $bid['explanation']);
+
+    $this->assertFalse(RobotBidder::bid($this->hand('AK2.KQ2.A432.432'), [], 'N')['alert']);
+  }
+
   public function test_a_robot_explains_its_own_call(): void
   {
     $bid = RobotBidder::bid($this->hand('32.KJ432.432.432'), $this->calls('N', ['1NT', 'P']), 'S');

@@ -25,8 +25,12 @@ use Illuminate\Http\Resources\Json\JsonResource;
  * and once the board is finished the whole deal. A player's own cards are
  * added on top by `PlayingStateService::stateFor()`.
  *
+ * Nor does any alert: they are the opponents' only until the board is
+ * over, so `stateFor()` adds them per viewer (`PlayingStateService::alerts()`).
+ *
  * `forReview()` serves a finished playing after the fact
- * (`GET /playings/{playing}`), away from any live table.
+ * (`GET /playings/{playing}`), away from any live table, with every call's
+ * alert.
  */
 class PlayingResource extends JsonResource
 {
@@ -34,7 +38,8 @@ class PlayingResource extends JsonResource
 
   /**
    * Leave out what only means something at a live table: `ready`, who has
-   * asked for the next board, and `next_board_at`, when it is dealt.
+   * asked for the next board, and `next_board_at`, when it is dealt. Add
+   * each call's `alert`, public once the board is over.
    */
   public function forReview(): static
   {
@@ -94,10 +99,7 @@ class PlayingResource extends JsonResource
       'players' => $players,
       'turn' => $state->turn($playing),
       'acting_user_id' => $state->actingUserId($playing),
-      'auction' => array_map(fn ($call) => [
-        'seat' => $call['seat'],
-        'bid' => self::bid($call['bid']),
-      ], $state->calls($playing)),
+      'auction' => $this->auction($playing),
       // null during the auction, and for good on a passed out board
       'contract' => $playing->contractBid === null ? null : [
         'bid' => self::bid($playing->contractBid),
@@ -114,6 +116,28 @@ class PlayingResource extends JsonResource
       'ready' => $this->when($this->live, fn () => $finished ? $state->ready($playing) : null),
       'next_board_at' => $this->when($this->live, fn () => $state->nextBoardAt($playing)),
     ];
+  }
+
+  /**
+   * The calls so far, each with its `alert` in a review.
+   *
+   * @return list<array<string, mixed>>
+   */
+  private function auction(BoardTable $playing): array
+  {
+    $state = app(PlayingStateService::class);
+    $alerts = $this->live ? null : $state->alerts($playing, null);
+    $auction = [];
+
+    foreach ($state->calls($playing) as $index => $call) {
+      $auction[] = [
+        'seat' => $call['seat'],
+        'bid' => self::bid($call['bid']),
+        ...($alerts === null ? [] : ['alert' => $alerts[$index]['alert']]),
+      ];
+    }
+
+    return $auction;
   }
 
   /**

@@ -11,7 +11,8 @@ namespace App\Robots;
  * names it). Every call — the robot's own, its partner's, the opponents' —
  * is read back through the same system (`read()`), so a robot knows what
  * its partner has shown (`shown()`) and can explain its own call
- * (`bid()`), ready for bid alerts. Whatever it picks is legal: it makes the
+ * (`bid()`): it alerts the conventional ones, and answers a question about
+ * any of its calls with `read()`'s explanation. Whatever it picks is legal: it makes the
  * first rule its hand fits whose call is legal now, and passes when none
  * is. Robots never redouble.
  */
@@ -31,11 +32,12 @@ class RobotBidder
 
   /**
    * The call and what it means, as partner (and the opponents) will read
-   * it; `explanation` is its short text. `rule` is false when no rule
-   * fitted and the robot passes by default.
+   * it; `explanation` is its short text, and `alert` whether the robot
+   * alerts it (a conventional call). `rule` is false when no rule fitted
+   * and the robot passes by default.
    *
    * @param  list<array{seat: string, call: string}>  $calls
-   * @return array{call: string, meaning: BidMeaning, explanation: string, rule: bool}
+   * @return array{call: string, meaning: BidMeaning, explanation: string, alert: bool, rule: bool}
    */
   public static function bid(RobotHand $hand, array $calls, string $seat): array
   {
@@ -46,13 +48,13 @@ class RobotBidder
       if ($view->isLegal($rule->call) && $rule->fits($hand)) {
         $meaning = self::meaningIn($rules, $rule->call);
 
-        return ['call' => $rule->call, 'meaning' => $meaning, 'explanation' => $meaning->explanation(), 'rule' => true];
+        return ['call' => $rule->call, 'meaning' => $meaning, 'explanation' => $meaning->explanation(), 'alert' => $meaning->alert, 'rule' => true];
       }
     }
 
     $meaning = self::meaningIn($rules, self::PASS);
 
-    return ['call' => self::PASS, 'meaning' => $meaning, 'explanation' => $meaning->explanation(), 'rule' => false];
+    return ['call' => self::PASS, 'meaning' => $meaning, 'explanation' => $meaning->explanation(), 'alert' => $meaning->alert, 'rule' => false];
   }
 
   /**

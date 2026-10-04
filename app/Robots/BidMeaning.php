@@ -5,7 +5,8 @@ namespace App\Robots;
 /**
  * What one call says in the robots' bidding system (`BiddingSystem`): a
  * range of high-card points, the least length of some suits, and what it
- * asks of partner. `explanation()` is its short text, ready for bid alerts.
+ * asks of partner. `explanation()` is its short text, the one a robot
+ * alerts its conventional calls (`$alert`) with and answers questions with.
  *
  * The same meaning is what a robot means by its call and what it reads
  * into its partner's, so `AuctionView::shown()` can add a seat's calls up.
@@ -43,6 +44,8 @@ final class BidMeaning
    * @param  bool  $known  false for a call the system doesn't describe
    * @param  list<string>  $stopped  the suits a no trump bid promises
    *                                 stopped (the opponents')
+   * @param  bool  $alert  conventional: a robot alerts it, with
+   *                       `explanation()`, to the opponents
    */
   public function __construct(
     public readonly string $label,
@@ -60,6 +63,7 @@ final class BidMeaning
     public readonly ?string $tag = null,
     public readonly bool $known = true,
     public readonly array $stopped = [],
+    public readonly bool $alert = false,
   ) {}
 
   /**
@@ -122,6 +126,7 @@ final class BidMeaning
       $first->tag,
       $first->known,
       array_values(array_intersect($first->stopped, ...array_map(fn ($meaning) => $meaning->stopped, $meanings))),
+      array_filter($meanings, fn ($meaning) => $meaning->alert) !== [],
     );
   }
 

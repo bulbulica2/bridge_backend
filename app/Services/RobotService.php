@@ -187,14 +187,18 @@ class RobotService
     }
 
     $state = $this->state->stateFor($table, $robot);
-    $bid = Bid::where('suit', $this->chooseCall($state))->first();
+    $choice = $this->chooseCall($state);
+    $bid = Bid::where('suit', $choice['call'])->first();
 
     // the bidder only makes legal calls; should one ever slip through, pass
+    // (unalerted)
     if ($bid === null || AuctionService::illegalReason($this->state->calls($playing), $state['my_seat'], $bid) !== null) {
       $bid = Bid::where('suit', Bid::PASS)->firstOrFail();
+      $choice['alert'] = false;
     }
 
-    $this->auction->call($table, $robot, $bid);
+    // a conventional call is alerted to the opponents with its explanation
+    $this->auction->call($table, $robot, $bid, $choice['alert'], $choice['alert'] ? $choice['explanation'] : null);
 
     return true;
   }
@@ -240,16 +244,20 @@ class RobotService
   }
 
   /**
-   * The call the robot in `$state['my_seat']` makes, as `bids.suit`.
-   * Overridden only by tests, to check the fallback to a pass.
+   * The call the robot in `$state['my_seat']` makes (`call`, as
+   * `bids.suit`), whether it alerts it and its explanation
+   * (`RobotBidder::bid()`). Overridden only by tests, to check the fallback
+   * to a pass.
    *
    * @param  array<string, mixed>  $state  `PlayingStateService::stateFor()`
+   * @return array{call: string, alert: bool, explanation: string}
    */
-  protected function chooseCall(array $state): string
+  protected function chooseCall(array $state): array
   {
     $calls = array_map(fn ($call) => ['seat' => $call['seat'], 'call' => $call['bid']['call']], $state['auction']);
+    $bid = RobotBidder::bid(new RobotHand($state['hand']), $calls, $state['my_seat']);
 
-    return RobotBidder::choose(new RobotHand($state['hand']), $calls, $state['my_seat']);
+    return ['call' => $bid['call'], 'alert' => $bid['alert'], 'explanation' => $bid['explanation']];
   }
 
   /**

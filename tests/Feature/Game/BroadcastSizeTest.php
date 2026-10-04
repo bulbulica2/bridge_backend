@@ -4,12 +4,15 @@ namespace Tests\Feature\Game;
 
 use App\auxiliary\Seats;
 use App\Broadcasting\PusherBody;
+use App\Events\CallAlerted;
+use App\Events\CallQuestioned;
 use App\Events\DeclarerHandShown;
 use App\Events\HandDealt;
 use App\Events\PlayingUpdated;
 use App\Events\TableUpdated;
 use App\Events\UserBanned;
 use App\Http\Resources\PlayingResource;
+use App\Models\Auction;
 use App\Models\Bid;
 use App\Models\BoardTable;
 use App\Models\Card;
@@ -164,6 +167,14 @@ class BroadcastSizeTest extends TestCase
     $this->assertFits(new DeclarerHandShown($this->playing, $this->players['N']->id, Seats::partner($this->playing->declarer_seat)));
   }
 
+  public function test_an_alert_and_a_question_fit(): void
+  {
+    $explanation = str_repeat(self::EMOJI['N'], Auction::EXPLANATION_MAX);
+
+    $this->assertFits(new CallAlerted($this->players['E']->id, $this->table->id, $this->playing->id, 318, $explanation));
+    $this->assertFits(new CallQuestioned($this->players['N']->id, $this->table->id, $this->playing->id, 318, 'E'));
+  }
+
   public function test_a_ban_fits(): void
   {
     $ban = UserBan::create([
@@ -273,7 +284,8 @@ class BroadcastSizeTest extends TestCase
    * The broadcast, expanded the way a client does it — every id looked up
    * in `GET /cards` and `GET /bids`, seats filled in clockwise from the
    * dealer or the trick's leader — is exactly the public state of
-   * `GET /tables/{table}/playing`.
+   * `GET /tables/{table}/playing`, less what is the caller's own: their
+   * seat and hands, and the alerts on each call.
    */
   private function assertDecodes(): void
   {
@@ -282,6 +294,7 @@ class BroadcastSizeTest extends TestCase
 
     $public = $this->actingAs($this->players['N'])->getJson("/tables/{$this->table->id}/playing")->json('data');
     unset($public['my_seat'], $public['hand'], $public['declarer_hand']);
+    $public['auction'] = array_map(fn ($call) => ['seat' => $call['seat'], 'bid' => $call['bid']], $public['auction']);
 
     $wire = json_decode(json_encode((new PlayingUpdated($this->table))->broadcastWith()['playing']), true);
 

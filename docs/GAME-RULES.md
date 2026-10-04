@@ -125,6 +125,17 @@ Starting with the dealer and going clockwise, each player makes one **call**:
 **Declarer** = the player on the winning side who **first** named that
 contract's strain. **Dummy** = declarer's partner.
 
+**Alerts.** A partnership may play conventions: calls that mean something
+other than what they say (Stayman's 2♣ asks for a major, a transfer's 2♦
+shows hearts, a strong 2♣ says nothing about clubs). The opponents are
+entitled to know what the calls mean, partner isn't — partner learning it
+from anything but the calls themselves is *unauthorised information*. Online
+bridge therefore uses **self-alerts**: the bidder marks their own call as
+alerted and types its meaning, which goes to the two opponents only. An
+opponent may also **ask** about any call of the other side, alerted or not,
+and its bidder answers them the same way. Once the board is over nothing is
+hidden: every alert is shown to all.
+
 **In code:**
 - `bids` is a static list of the 38 possible calls (`BidSeeder`): `P` Pass,
   `X` Double, `XX` Redouble (`special = true`), then `1C`, `1D`, `1H`, `1S`,
@@ -163,6 +174,24 @@ contract's strain. **Dummy** = declarer's partner.
   the auction ends it saves the result as above; a passed out board also gets
   `score = 0` and `finished_at` (`BoardTable::finish()`). Every
   accepted call dispatches `PlayingUpdated`.
+- **Alerts** (implemented): `POST /tables/{table}/calls` takes `alert` and
+  an `explanation` (up to 200 characters; a non-empty one alerts the call),
+  stored as `auctions.alerted`/`explanation`. `AuctionService::alertTo()`
+  pushes it to the bidder's two opponents (`CallAlerted`, their own
+  channels); `PlayingStateService::alerts()` shows each call's alert in a
+  player's own state for their own and the opponents' calls, never
+  partner's, and to everyone once the board is finished
+  (`GET /playings/{playing}` too). `PlayingUpdated`, on the table channel,
+  carries none. An opponent asks with
+  `POST /tables/{table}/calls/{index}/question` (`AuctionService::ask()`:
+  the other side's calls only, until the board is finished, one open
+  question per call, stored as `auctions.question_seat`); the bidder gets
+  `CallQuestioned` and answers with
+  `PUT /tables/{table}/calls/{index}/explanation` (`explain()`, which also
+  fixes an explanation or alerts late), and a robot answers at once (§9).
+  Not enforced: nothing checks that an alert is made, or that it is true —
+  a missing or wrong explanation is left to the players, as there is no
+  director.
 - `AuctionSeeder` bids through `AuctionService`, picking random calls among
   the legal ones, so seeded auctions are legal and their results saved the
   same way. `AuctionFactory` still makes a **random, non-legal** call: test
@@ -649,6 +678,10 @@ Rules the robots keep, and that keep them honest:
   `CardPlayService::actingSeat($turn, $declarer, $dummyPlays)` and
   `ClaimService::illegalPlayerReason(..., $dummyPlays)`. A human declarer
   with a robot dummy plays both hands as before.
+- **Robots alert.** A robot alerts its conventional calls to the
+  opponents, with its system's explanation, and answers a question about
+  any of its calls at once (`RobotBidder::read()`, "Natural" for a call no
+  rule makes) — the list is in [`ROBOTS.md`](ROBOTS.md#alerts).
 - **No peeking.** A robot decides from what its own seat is served
   (`PlayingStateService::stateFor()`): its hand, dummy once face up, a
   claimer's face-up hand and the cards played — never the other hands.
