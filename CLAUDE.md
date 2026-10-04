@@ -11,13 +11,16 @@ MySQL. GitHub repo: https://github.com/bulbulica2/bridge_backend. Branches
 are named `<issue-title-prefix>-<topic>` (e.g. `7-fix-database`, tracked by
 the GitHub issue whose title starts with it) and merged to `main` via PR;
 commit messages are prefixed with the branch name. When the work on an issue
-is done (tests and `pint --test` pass, line coverage of `app/` is at least
-95%, docs updated), commit, push and open the PR against `main` straight
-away — don't stop to ask first. The PR title is the commit subject, and the
-body says `Closes #<issue>`. GitHub Actions (`.github/workflows/tests.yml`)
-runs the `pint`, `tests` and `coverage` checks on every PR and push; still
-run them locally first, and fix a red check before merging — `main` requires
-them.
+is done (code, its tests and docs written), commit, push and open the PR
+against `main` straight away — don't stop to ask first. The PR title is the
+commit subject, and the body says `Closes #<issue>`. **Let CI run the
+checks**: GitHub Actions (`.github/workflows/tests.yml`) runs `pint`,
+`tests` and `coverage` on every PR and push, so don't run the full suite,
+`composer coverage` or `pint --test` locally before opening the PR (locally
+coverage runs on Xdebug and takes many minutes); while working, run only the
+test classes you are changing. Then watch the checks (`gh pr checks`): if one
+is red, reproduce that failure locally, fix it and push again — `main`
+requires all three green.
 
 **Every issue and PR must keep line coverage of `app/` at or above 95%**
 (the whole suite's number, as `composer coverage` and the `coverage` check
