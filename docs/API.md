@@ -159,12 +159,14 @@ the manager controls from it rather than re-deriving the rule from
 `moderated_by`. In `GET /tables` it is per table, for the
 caller.
 
-A seated player's `user` is their **public profile** only
-(`App\Http\Resources\UserResource`, via `TableSeatResource`): `id`, `name`,
-`username`, `description`, `is_robot`, `is_admin`. It never carries `email`
-(or anything else from the `users` row), so listing tables does not reveal
-who plays under which address. The same profile is served by
-`GET /users/{user}`. `is_admin` marks a seat only another admin may take
+A seated player's `user` is their **public profile** less its
+`description` (`App\Http\Resources\PlayerResource`, via
+`TableSeatResource`): `id`, `name`, `username`, `is_robot`, `is_admin`. It
+never carries `email` (or anything else from the `users` row), so listing
+tables does not reveal who plays under which address. The whole profile,
+`description` included, is `GET /users/{user}`: open it from there, since
+the description (up to 1000 characters) would take four players' worth of a
+broadcast's [10 KB](#message-size). `is_admin` marks a seat only another admin may take
 away (see `DELETE /tables/{table}/seats/{user}`): hide **Remove** on it
 unless the caller is an admin, and show an **Admin** badge — players can
 see an admin is at the table.
@@ -225,7 +227,7 @@ Body (JSON, both optional):
 
 | Field | Rules | Default |
 |---|---|---|
-| `name` | nullable string, max 255 | `null` |
+| `name` | nullable string, max 50 characters (`Table::NAME_MAX`, see [Message size](#message-size)) | `null` |
 | `seat` | one of `N`, `E`, `S`, `W` | `N` |
 | `robots` | boolean | `false` |
 
@@ -274,7 +276,7 @@ Rules:
     "unattended_since": null,
     "seats": [{"id": 12, "table_id": 7, "user_id": 3, "seat": "E", "last_seen_at": "...", "ready_at": null,
                "away_since": null, "created_at": "...", "updated_at": "...", "ready": false, "forfeit_at": null,
-               "user": {"id": 3, "name": "Ann", "username": "ann", "description": "Plays a strong club.", "is_robot": false, "is_admin": false}}],
+               "user": {"id": 3, "name": "Ann", "username": "ann", "is_robot": false, "is_admin": false}}],
     "free_seats": ["N", "S", "W"],
     "can_manage": true,
     "playing": null
@@ -666,10 +668,10 @@ page refresh or a reconnect. No body. Built by
     "set": {"id": 5, "number": 1, "board": 2, "of": 4, "finished": false, "ended": null, "forfeited_by": null},
     "board": {"id": 7, "number": 7, "dealer": "S", "vulnerable": "N-S E-W"},
     "players": {
-      "N": {"id": 1, "name": "Ann", "username": "ann", "description": null, "is_robot": false, "is_admin": false},
-      "E": {"id": 2, "name": "Bob", "username": "bob", "description": null, "is_robot": false, "is_admin": false},
-      "S": {"id": 3, "name": "Cy", "username": "cy", "description": null, "is_robot": false, "is_admin": false},
-      "W": {"id": 9, "name": "Robot 1", "username": "robot-1", "description": "A robot player.", "is_robot": true, "is_admin": false}
+      "N": {"id": 1, "name": "Ann", "username": "ann", "is_robot": false, "is_admin": false},
+      "E": {"id": 2, "name": "Bob", "username": "bob", "is_robot": false, "is_admin": false},
+      "S": {"id": 3, "name": "Cy", "username": "cy", "is_robot": false, "is_admin": false},
+      "W": {"id": 9, "name": "Robot 1", "username": "robot-1", "is_robot": true, "is_admin": false}
     },
     "turn": "N",
     "acting_user_id": 1,
@@ -703,7 +705,7 @@ page refresh or a reconnect. No body. Built by
 | `playing_id` | the `board_table.id` |
 | `set` | the [set](#sets) this board was dealt in: `id` (for [`GET /sets/{set}`](#get-setsset)), `number` (1, 2, 3… at this table), `board` (this board's place in it, 1–`of`), `of` (how many boards the set has, 4), `finished` (true once the set is over: after its last board is finished, or earlier if one of its four left or a side forfeited it), `ended` (`null` while it goes on, then `completed`, `abandoned` or `forfeit`) and `forfeited_by` (`NS`/`EW` on a forfeit, else `null`; see [Away mid-set](#away-mid-set-and-the-forfeit)). After the last board `finished` is true while that board is still on show: time for the set's results and everyone's Start |
 | `board` | `id`, `number`, `dealer` (`N/E/S/W`) and `vulnerable` (a `Vulnerability` value) from `boards` |
-| `players` | seat → public profile (`UserResource`, no email; `is_robot` marks a robot), from the playing's `board_table_seats` snapshot, not from `table_seats` |
+| `players` | seat → public profile less `description` (`PlayerResource`, as a seat's `user`: no email; `is_robot` marks a robot), from the playing's `board_table_seats` snapshot, not from `table_seats` |
 | `turn` | the seat expected to act. During the `auction`: the dealer first, then clockwise after the last call. During the `play`: the **hand** the next card comes from — declarer's left-hand opponent leads the first trick, then clockwise, and each trick's winner leads the next. When it is dummy's seat, declarer plays it (see `acting_user_id`). `null` while `waiting` and once `finished` |
 | `acting_user_id` | the id of the user who must act for `turn`: that seat's player, except that on dummy's turn it is **declarer**. One exception to that: when a **robot declares and dummy is a human**, the human plays both hands, so on declarer's turn **and** on dummy's turn it is the **human dummy's** id, and the robot declarer never acts in the play (see [`declarer_hand`](#get-tablestableplaying) and [`POST /tables/{table}/cards`](#post-tablestablecards)). Declarer and dummy themselves don't change (`contract`). A client compares it with its own user id to know it is its move (and, when `turn` isn't its own seat, that it is playing its partner's cards). `null` whenever `turn` is |
 | `auction` | the calls made so far, in order: `{seat, bid}`, where `bid` is `{id, call, level, strain, special}` — `call` is the short name (`P`, `X`, `XX`, `1C`…`7NT`) and the only field telling pass, double and redouble apart; `level`/`strain` are null for those three. `[]` before the first call |
@@ -1152,7 +1154,10 @@ A user's profile has two views:
   `is_admin` (true for an admin, whose seat only another admin may take
   away — see `DELETE /tables/{table}/seats/{user}`). This is
   what other players see — in `GET /users/{user}`, in `GET /users?search=`
-  (which adds `seated`) and nested in every table payload.
+  (which adds `seated`) and nested in results and history. Table payloads
+  (a seat's `user`) and the game state (`players`) nest it **without
+  `description`** (`PlayerResource`), to keep their broadcasts under
+  [10 KB](#message-size).
 - **Own**: the full serialised `User` (adds `email`, `email_verified_at`,
   timestamps; `password` and `remember_token` stay hidden) plus `is_admin`
   (boolean, read-only) and `ban`: the [ban](#bans) keeping them away from
@@ -1231,7 +1236,7 @@ Admins only.
 | Field | Rules |
 |---|---|
 | `days` | **required**, integer, 1–365: the ban ends this many days from now |
-| `reason` | **required**, string, max 1000: shown to the banned user |
+| `reason` | **required**, string, max 500 characters (`UserBan::REASON_MAX`; `UserBanned` carries it, see [Message size](#message-size)): shown to the banned user |
 
 At once, in one transaction:
 - the user's seat, if they hold one, is freed as if they had walked out
@@ -1348,7 +1353,7 @@ nobody can edit anyone else's profile.
 
 | Field | Rules |
 |---|---|
-| `name` | optional; if present, a non-empty string, max 255 |
+| `name` | optional; if present, a non-empty string, max 50 characters (`User::NAME_MAX`, see [Message size](#message-size)) |
 | `description` | optional; nullable string, max 1000 (`null` clears it) |
 
 - Any other field (`username`, `email`, `is_admin`, `id`, `password`, ...) is
@@ -1377,6 +1382,33 @@ A client should subscribe to its table's channel **after** it has a seat
 (the subscription is refused otherwise), and re-subscribe after moving to
 another table. Leaving doesn't end the subscription server-side; the client
 should unsubscribe (`echo.leave('table.' + id)`).
+
+### Message size
+
+Every event fits in **10 KB**, hosted Pusher's limit on one event, so moving
+from Reverb to Pusher stays a `.env` change. An event that doesn't fit is
+refused (`Pusher error: Payload too large.`), its queued job fails, and
+nobody sees that state until they reload. What is measured is the body the
+app POSTs: event name, channels, and the data as a JSON **string** inside
+the JSON, so every quote in it costs two bytes and a non-ASCII character up
+to 14 (an emoji, `😀`, escaped once more). What keeps each event
+under it, with room left for the HTTP request around it
+(`App\Broadcasting\PusherBody::BUDGET`, 9,000 bytes):
+
+- `PlayingUpdated` sends cards and bids as ids (its [compact
+  shape](#event-playingupdated));
+- a seat's `user` and the game state's `players` leave out `description`
+  (open `GET /users/{user}` for it);
+- the free text broadcasts carry has a length limit, in characters:
+  `name` 50 and `username` 30 (`/register`, `PATCH /api/user`), a table's
+  `name` 50 (`POST /tables`), a ban's `reason` 500.
+
+`tests/Feature/Game/BroadcastSizeTest` builds the largest payload of every
+event — the longest legal auction (319 calls), all 13 tricks and the whole
+deal, a pending 13-card claim, every name at its limit in emoji — and checks
+it against the budget. A broadcast that fails all the same is logged at
+`error` with its event, channels, table, user and size
+(`App\Listeners\LogFailedBroadcast`).
 
 ### Event `TableUpdated`
 
@@ -1441,13 +1473,13 @@ the request (the one who did gets it in their HTTP response).
         "id": 21, "table_id": 7, "user_id": 12, "seat": "N",
         "last_seen_at": "...", "ready_at": "2026-09-22T10:16:40.000000Z", "away_since": null,
         "created_at": "...", "updated_at": "...", "ready": true, "forfeit_at": null,
-        "user": {"id": 12, "name": "Alice", "username": "alice", "description": null, "is_robot": false, "is_admin": false}
+        "user": {"id": 12, "name": "Alice", "username": "alice", "is_robot": false, "is_admin": false}
       },
       {
         "id": 22, "table_id": 7, "user_id": 13, "seat": "E",
         "last_seen_at": "...", "ready_at": null, "away_since": null,
         "created_at": "...", "updated_at": "...", "ready": false, "forfeit_at": null,
-        "user": {"id": 13, "name": "Bob", "username": "bob", "description": null, "is_robot": false, "is_admin": false}
+        "user": {"id": 13, "name": "Bob", "username": "bob", "is_robot": false, "is_admin": false}
       }
     ],
     "free_seats": ["S", "W"],
@@ -1496,22 +1528,66 @@ still be listening. The only cards in it are face up — the ones played,
 after the opening lead dummy's, the claimer's while a claim is pending, and
 once the board is finished the whole deal.
 
+It comes in a **compact shape** (`PlayingResource::compact()`), not the
+HTTP one: a finished board written out card object by card object is ~18 KB,
+well over a broadcast's [10 KB](#message-size). The keys are the same, and
+everything not listed here is exactly as over HTTP; what grows with the
+board is written as ids, which a client looks up in
+[`GET /cards`](#implemented--routed) and [`GET /bids`](#get-bids) (fetch both once):
+
+| Field | Over HTTP | In `PlayingUpdated` |
+|---|---|---|
+| `auction` | `[{seat, bid}]` | `[bid id]`, in order: the first call is `board.dealer`'s, each next one the next seat clockwise |
+| `contract.bid` | bid object | bid id |
+| `tricks` | `[{round, leader, cards: [{seat, card}], winner}]` | `[{leader, cards: [card id], winner}]`: `round` is the trick's place in the list (from 1), and `cards` go clockwise from `leader` |
+| `current_trick` | `[{seat, card}]` | `{leader, cards: [card id]}`, clockwise from `leader`; `{leader: null, cards: []}` when no card of it is played yet |
+| `dummy_hand`, `claim.hand` | `[card]` | `[card id]`, in the same order |
+| `result.contract` | bid object or null | bid id or null |
+| `deal` | `{seat: [card]}` | `{seat: [card id]}`, in the same order |
+
+Each is `null` exactly when it is over HTTP. Expanding them back gives the
+HTTP state exactly (`tests/Feature/Game/BroadcastSizeTest` checks it), so a
+client can expand each event into the shape it already reads and treat it
+as before:
+
+```js
+const expand = (p, cardsById, bidsById) => {
+  const plays = (leader, ids) => ids.map((id, i) => ({ seat: clockwise(leader, i), card: cardsById[id] }));
+  const hand = (ids) => ids && ids.map((id) => cardsById[id]);
+  return {
+    ...p,
+    auction: p.auction && p.auction.map((id, i) => ({ seat: clockwise(p.board.dealer, i), bid: bidsById[id] })),
+    contract: p.contract && { ...p.contract, bid: bidsById[p.contract.bid] },
+    tricks: p.tricks && p.tricks.map((t, i) => ({ round: i + 1, leader: t.leader, cards: plays(t.leader, t.cards), winner: t.winner })),
+    current_trick: p.current_trick && plays(p.current_trick.leader, p.current_trick.cards),
+    dummy_hand: hand(p.dummy_hand),
+    claim: p.claim && { ...p.claim, hand: hand(p.claim.hand) },
+    result: p.result && { ...p.result, contract: p.result.contract === null ? null : bidsById[p.result.contract] },
+    deal: p.deal && Object.fromEntries(Object.entries(p.deal).map(([seat, ids]) => [seat, hand(ids)])),
+  };
+};
+// clockwise('N', 0) === 'N', clockwise('N', 1) === 'E', ..., clockwise('W', 1) === 'N'
+```
+
+A `GET /cards` row is exactly the state's card, `{id, suit, rank,
+rank_name}`, and a `GET /bids` entry exactly its bid.
+
 ```json
 {
   "playing": {
-    "phase": "auction",
+    "phase": "play",
     "playing_id": 42,
     "set": {"id": 5, "number": 1, "board": 2, "of": 4, "finished": false, "ended": null, "forfeited_by": null},
     "board": {"id": 7, "number": 7, "dealer": "S", "vulnerable": "N-S E-W"},
-    "players": {"N": {"id": 1, "name": "Ann", "username": "ann", "description": null}, "E": {...}, "S": {...}, "W": {...}},
-    "turn": "S",
+    "players": {"N": {"id": 1, "name": "Ann", "username": "ann", "is_robot": false, "is_admin": false}, "E": {...}, "S": {...}, "W": {...}},
+    "turn": "N",
     "acting_user_id": 3,
-    "auction": [],
-    "contract": null,
-    "tricks": null,
-    "current_trick": null,
-    "tricks_won": null,
-    "dummy_hand": null,
+    "auction": [21, 1, 1, 1],
+    "contract": {"bid": 21, "doubled": 0, "declarer": "S", "dummy": "N"},
+    "tricks": [{"leader": "W", "cards": [33, 9, 45, 27], "winner": "E"}],
+    "current_trick": {"leader": "E", "cards": [8, 6, 12]},
+    "tricks_won": {"ns": 0, "ew": 1},
+    "dummy_hand": [52, 50, 49, 40, 31, 30, 18, 17, 14, 5, 3, 2],
     "claim": null,
     "result": null,
     "deal": null,

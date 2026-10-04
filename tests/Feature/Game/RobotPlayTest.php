@@ -3,6 +3,7 @@
 namespace Tests\Feature\Game;
 
 use App\auxiliary\Seats;
+use App\Broadcasting\PusherBody;
 use App\Events\PlayingUpdated;
 use App\Models\Bid;
 use App\Models\BoardTable;
@@ -53,6 +54,12 @@ class RobotPlayTest extends TestCase
 
     $table = $this->robotTable();
 
+    // every state the robots' moves broadcast fits in a Pusher event
+    $sizes = [];
+    Event::listen(PlayingUpdated::class, function (PlayingUpdated $event) use (&$sizes) {
+      $sizes[] = strlen(PusherBody::of($event));
+    });
+
     // a passed out board has no play: deal again until one is played out
     for ($boards = 1; ; $boards++) {
       $this->assertLessThan(20, $boards, 'no board reached a contract');
@@ -74,6 +81,8 @@ class RobotPlayTest extends TestCase
     $this->assertNotNull($playing->finished_at);
     $this->assertTrue($playing->cardPlays->count() === 52 || $playing->claim_seat !== null);
     $this->assertReplaysThroughTheRules($playing);
+    $this->assertNotEmpty($sizes);
+    $this->assertLessThanOrEqual(PusherBody::BUDGET, max($sizes));
 
     // the robots asked for the next board as soon as this one ended
     $robotSeats = $playing->seats()->with('user')->get()->filter(fn ($seat) => $seat->user->is_robot)->pluck('seat')->all();

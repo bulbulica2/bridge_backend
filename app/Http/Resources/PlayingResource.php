@@ -77,7 +77,7 @@ class PlayingResource extends JsonResource
     // from the snapshot taken at the deal, not from table_seats
     foreach (Seats::SEATS as $seat) {
       $user = $playing->seats->firstWhere('seat', $seat)?->user;
-      $players[$seat] = $user === null ? null : new UserResource($user);
+      $players[$seat] = $user === null ? null : new PlayerResource($user);
     }
 
     return [
@@ -227,6 +227,50 @@ class PlayingResource extends JsonResource
       'seat' => $play['seat'],
       'card' => PlayingStateService::card($play['card']),
     ], $plays);
+  }
+
+  /**
+   * The public state (`PlayingStateService::publicState()`) in the compact
+   * shape `PlayingUpdated` broadcasts, so that the largest state a board can
+   * reach stays under hosted Pusher's 10 KB per message. The keys are the
+   * same; only the parts that grow with the board change, each to ids a
+   * client looks up in `GET /cards` and `GET /bids`:
+   *
+   * - every card object is its `id`: `dummy_hand`, `claim.hand`, each seat
+   *   of `deal`;
+   * - every bid object is its `id`: `contract.bid`, `result.contract`;
+   * - `auction` is the list of the calls' bid ids, the first by
+   *   `board.dealer`, the rest clockwise from there;
+   * - `tricks` is a list of `{leader, cards, winner}` and `current_trick`
+   *   one `{leader, cards}` (leader null while it is empty), `cards` being
+   *   the card ids clockwise from `leader`; a trick's `round` is its place
+   *   in the list, from 1.
+   *
+   * @param  array<string, mixed>  $state
+   * @return array<string, mixed>
+   */
+  public static function compact(array $state): array
+  {
+    $ids = fn (?array $cards) => $cards === null ? null : array_map(fn ($card) => $card['id'], $cards);
+    $trick = fn (array $plays) => [
+      'leader' => $plays[0]['seat'] ?? null,
+      'cards' => array_map(fn ($play) => $play['card']['id'], $plays),
+    ];
+
+    return [
+      ...$state,
+      'auction' => $state['auction'] === null ? null : array_map(fn ($call) => $call['bid']['id'], $state['auction']),
+      'contract' => $state['contract'] === null ? null : [...$state['contract'], 'bid' => $state['contract']['bid']['id']],
+      'tricks' => $state['tricks'] === null ? null : array_map(fn ($played) => [
+        ...$trick($played['cards']),
+        'winner' => $played['winner'],
+      ], $state['tricks']),
+      'current_trick' => $state['current_trick'] === null ? null : $trick($state['current_trick']),
+      'dummy_hand' => $ids($state['dummy_hand']),
+      'claim' => $state['claim'] === null ? null : [...$state['claim'], 'hand' => $ids($state['claim']['hand'])],
+      'result' => $state['result'] === null ? null : [...$state['result'], 'contract' => $state['result']['contract']['id'] ?? null],
+      'deal' => $state['deal'] === null ? null : array_map($ids, $state['deal']),
+    ];
   }
 
   /**

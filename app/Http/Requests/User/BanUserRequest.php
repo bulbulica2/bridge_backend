@@ -26,7 +26,7 @@ class BanUserRequest extends FormRequest
   {
     return [
       'days' => ['required', 'integer', 'min:1', 'max:'.UserBan::MAX_DAYS],
-      'reason' => ['required', 'string', 'max:1000'],
+      'reason' => ['required', 'string', 'max:'.UserBan::REASON_MAX],
     ];
   }
 }

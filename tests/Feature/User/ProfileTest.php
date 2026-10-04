@@ -123,5 +123,9 @@ class ProfileTest extends TestCase
     $this->actingAs($user)->patchJson('/api/user', ['name' => '', 'description' => str_repeat('a', 1001)])
       ->assertUnprocessable()
       ->assertJsonValidationErrors(['name', 'description']);
+
+    $this->actingAs($user)->patchJson('/api/user', ['name' => str_repeat('a', User::NAME_MAX + 1)])
+      ->assertUnprocessable()
+      ->assertJsonValidationErrors('name');
   }
 }

@@ -153,6 +153,22 @@ long-running and keep the old code loaded.
 | `REVERB_APP_ID` / `REVERB_APP_KEY` / `REVERB_APP_SECRET` | any strings | shared by the app and the Reverb server; the **key** is public (clients connect with it), the **secret** signs channel auth and must stay private. Generate real ones for production (`php artisan reverb:install`) |
 | `REVERB_HOST` / `REVERB_PORT` / `REVERB_SCHEME` | `localhost` / `8080` / `http` | where the app sends broadcasts, and what clients connect to |
 | `REVERB_SERVER_HOST` / `REVERB_SERVER_PORT` | unset (`0.0.0.0` / `8080`) | what `reverb:start` binds to (`config/reverb.php`) |
+| `REVERB_MAX_REQUEST_SIZE` | `64000` (also the default in `config/reverb.php`) | the largest HTTP request, headers included, Reverb accepts from the app — each broadcast is one. Reverb's own default is 10000 |
+
+**Message size.** Every broadcast is kept under 10 KB, hosted Pusher's limit
+per event, so the move to Pusher stays a `.env` change (how, and the test
+that holds it there: [`API.md`](API.md#message-size)). Reverb's request limit
+is raised anyway, so that a payload that outgrows the budget still reaches
+local players while it is fixed, instead of freezing their screens: a
+broadcast over the limit fails in the queue with `Pusher error: Payload too
+large.` and nobody sees that state until they reload. Hosted Pusher's 10 KB
+can't be raised. Note that it is `REVERB_MAX_REQUEST_SIZE` (the server's
+HTTP side, which the app's broadcasts arrive on) that matters here, not
+`REVERB_APP_MAX_MESSAGE_SIZE`, which only limits what a websocket client
+sends. Every failed broadcast is logged at `error` (`storage/logs`) with
+its event, table and size — check there, and `php artisan queue:failed`,
+when a table stops updating. `reverb:start` reads it at start: restart it
+after changing it.
 
 An existing `.env` from before this branch needs those keys added (copy them
 from `.env.example`) or broadcasts fail in the queue worker.

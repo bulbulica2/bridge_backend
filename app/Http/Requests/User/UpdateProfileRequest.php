@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\User;
 
+use App\Models\User;
 use Illuminate\Foundation\Http\FormRequest;
 
 /**
@@ -22,7 +23,7 @@ class UpdateProfileRequest extends FormRequest
   public function rules(): array
   {
     return [
-      'name' => ['sometimes', 'required', 'string', 'max:255'],
+      'name' => ['sometimes', 'required', 'string', 'max:'.User::NAME_MAX],
       'description' => ['sometimes', 'nullable', 'string', 'max:1000'],
     ];
   }

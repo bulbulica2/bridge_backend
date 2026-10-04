@@ -5,6 +5,7 @@ namespace Tests\Feature\Game;
 use App\auxiliary\Seats;
 use App\Events\HandDealt;
 use App\Events\PlayingUpdated;
+use App\Http\Resources\PlayingResource;
 use App\Models\Board;
 use App\Models\BoardTable;
 use App\Models\Table;
@@ -97,7 +98,6 @@ class PlayingStateTest extends TestCase
         'id' => $player->id,
         'name' => $player->name,
         'username' => $player->username,
-        'description' => $player->description,
         'is_robot' => false,
         'is_admin' => false,
       ], $response->json("data.players.$seat"));
@@ -226,7 +226,7 @@ class PlayingStateTest extends TestCase
       unset($public['my_seat'], $public['hand'], $public['declarer_hand']);
 
       return $event->broadcastOn() == [new PrivateChannel("table.$table->id")]
-        && $payload === $public
+        && $payload === PlayingResource::compact($public)
         && $payload['phase'] === 'auction'
         && ! array_key_exists('hand', $payload)
         && ! array_key_exists('my_seat', $payload)

@@ -47,12 +47,15 @@ the password, and registration refuses any username starting `robot-`, so
 the numbering can't collide with a human. Scopes `User::robots()` and
 `User::humans()`; `UserFactory::robot()` makes one in tests.
 `description` (nullable text, fillable) is free-form profile text: readable by
-any logged-in user through `GET /users/{user}` and in every table payload, and
+any logged-in user through `GET /users/{user}`, and
 writable by its owner through `PATCH /api/user` (max 1000 chars), along with
-`name`. `email` is **not** in `$hidden` — the owner's own `GET /api/user`
+`name` (max `User::NAME_MAX`, 50 characters; `username`, set at registration,
+max `User::USERNAME_MAX`, 30 — the columns are wider, the limits keep every
+broadcast under 10 KB, see [`API.md`](API.md#message-size)). `email` is **not** in `$hidden` — the owner's own `GET /api/user`
 needs it — so any payload showing a user to *other* players must go through
 `App\Http\Resources\UserResource` (`id`, `name`, `username`, `description`,
-`is_robot`, `is_admin`) rather than the raw model.
+`is_robot`, `is_admin`) rather than the raw model — or, in table payloads and
+the game state, `PlayerResource`, which leaves `description` out.
 Relations: `createdTables` (hasMany Table via `created_by`), `seats`
 (hasMany TableSeat), `playedSeats` (hasMany BoardTableSeat — boards the user played and from which
 seat), `bans` (hasMany UserBan, latest first). `activeBan()` is the ban in
@@ -65,7 +68,7 @@ An admin keeping a user away from the game until `until`
 (`POST /users/{user}/ban`, see [`API.md`](API.md#bans) and
 [`AUTH.md`](AUTH.md#bans)). Fillable: `user_id` (FK users, cascade on
 delete), `banned_by` (FK users, the admin; nullable, null on delete),
-`reason` (text, shown to the banned user), `banned_at`, `until`,
+`reason` (text, shown to the banned user; at most `UserBan::REASON_MAX`, 500 characters, since `UserBanned` broadcasts it), `banned_at`, `until`,
 `lifted_at` (nullable), `lifted_by` (FK users, nullable, null on delete).
 The three timestamps are cast to datetime. Index `(user_id, until)`.
 - A ban is **in force** while `lifted_at` is null and `until` is in the
@@ -129,7 +132,7 @@ aren't contiguous. `rank_name` is `"2"`…`"10"`, `"Jack"`, `"Queen"`,
 `"King"` or `"Ace"`.
 
 ### Table (`tables`)
-Fields: `name` (string, nullable), `created_by` (FK users, nullable),
+Fields: `name` (string, nullable; at most `Table::NAME_MAX`, 50 characters, since `TableUpdated` broadcasts it), `created_by` (FK users, nullable),
 `moderated_by` (FK users, nullable), `board_id` (FK boards, nullable),
 `unattended_since` (timestamp, nullable, indexed, cast to datetime). All are
 fillable. There is **no** `closed_at` and no closed/archived state.

@@ -76,6 +76,8 @@ class UserBanTest extends TestCase
 
     $this->actingAs($this->admin)->postJson("/users/$user->id/ban", ['days' => 7])
       ->assertJsonValidationErrors('reason');
+    $this->actingAs($this->admin)->postJson("/users/$user->id/ban", ['days' => 7, 'reason' => str_repeat('x', UserBan::REASON_MAX + 1)])
+      ->assertJsonValidationErrors('reason');
     $this->actingAs($this->admin)->postJson("/users/$user->id/ban", ['days' => 0, 'reason' => 'x'])
       ->assertJsonValidationErrors('days');
     $this->actingAs($this->admin)->postJson("/users/$user->id/ban", ['days' => 366, 'reason' => 'x'])

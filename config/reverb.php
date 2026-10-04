@@ -36,7 +36,10 @@ return [
       'options' => [
         'tls' => [],
       ],
-      'max_request_size' => env('REVERB_MAX_REQUEST_SIZE', 10_000),
+      // the largest HTTP request the app may POST an event in (headers included).
+      // Every event is kept under hosted Pusher's 10 KB (App\Broadcasting\PusherBody);
+      // the margin is so a payload that outgrows it still reaches the players
+      'max_request_size' => env('REVERB_MAX_REQUEST_SIZE', 64_000),
       'scaling' => [
         'enabled' => env('REVERB_SCALING_ENABLED', false),
         'channel' => env('REVERB_SCALING_CHANNEL', 'reverb'),
