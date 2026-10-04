@@ -34,6 +34,7 @@ class BoardTable extends Model
     'claim_seat',
     'claim_tricks',
     'claim_accepted',
+    'claim_expires_at',
     'started_at',
     'auction_ended_at',
     'finished_at',
@@ -48,6 +49,7 @@ class BoardTable extends Model
       'score' => 'integer',
       'claim_tricks' => 'integer',
       'claim_accepted' => 'array',
+      'claim_expires_at' => 'datetime',
       'started_at' => 'datetime',
       'auction_ended_at' => 'datetime',
       'finished_at' => 'datetime',
@@ -107,11 +109,20 @@ class BoardTable extends Model
   }
 
   /**
-   * Forget a claim that was rejected or withdrawn.
+   * Whether the pending claim's time to answer is up: silence has rejected
+   * it, and no answer counts any more, even before `ExpireClaim` clears it.
+   */
+  public function claimExpired(): bool
+  {
+    return $this->hasPendingClaim() && $this->claim_expires_at !== null && ! now()->isBefore($this->claim_expires_at);
+  }
+
+  /**
+   * Forget a claim that was rejected, withdrawn or expired.
    */
   public function clearClaim(): void
   {
-    $this->update(['claim_seat' => null, 'claim_tricks' => null, 'claim_accepted' => null]);
+    $this->update(['claim_seat' => null, 'claim_tricks' => null, 'claim_accepted' => null, 'claim_expires_at' => null]);
   }
 
   /**

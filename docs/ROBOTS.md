@@ -763,8 +763,9 @@ hand's own (all masters, so leading them first draws the rest). It claims
 **all** the tricks left. The two other non-dummy players answer as for any
 claim — robots by the rules below, humans themselves. A robot claims only
 once from a given point of the play (`RobotService` remembers it in the
-cache for a day): if the claim is rejected, it plays on, and may claim
-again after more cards.
+cache for a day): if the claim is rejected — or expires, nobody having
+answered within `BRIDGE_CLAIM_SECONDS` — it plays on, and may claim again
+after more cards.
 
 **Answering a claim.** When someone claims, each robot that must answer
 (the other non-dummy players) decides on its own. A defender's claim that
@@ -782,6 +783,14 @@ playing with one; the robot declarer leaves it to them:
    - with more, its side's **sure winners** from the hands it can see.
 3. It **accepts** if the share is at least that, and **rejects** otherwise.
    A rejection clears the claim and play goes on.
+
+**In time or not at all.** A claim expires `BRIDGE_CLAIM_SECONDS` (10 s)
+after it is made. A robot's answer comes after the usual
+`BRIDGE_ROBOT_DELAY_SECONDS`, but never later than a second before the
+claim's `expires_at` (`DriveRobots::withDelay()` cuts the delay, to 0 with
+a second or less left), however high the robot delay is set; and a robot
+never answers a claim whose time is up (`BoardTable::claimExpired()`):
+silence has rejected it already.
 
 **Sure winners**, suit by suit: our cards from the top down, as long as no
 card still out beats them (A-K-Q with the A, K and Q all ours count three),
@@ -856,7 +865,7 @@ set — a human alone with three robots presses it once.
 | robots against v1 | `tests/Unit/Robots/Support/` (`RobotTable`: four robots bid and play a deal in memory; `V1CardPlayer`: the first robots' card play, kept as the baseline) | `tests/Unit/Robots/RobotSimulationTest` ([Robots against v1](#robots-against-v1)) |
 | the pool and each move | `App\Services\RobotService` (`seatRobot()`, `act()`) | `tests/Feature/Game/RobotPlayTest`, `tests/Feature/Table/RobotSeatingTest` |
 | the trigger | `App\Listeners\DriveRobots` (queued, after `PlayingUpdated`) | `tests/Feature/Game/RobotPlayTest` |
-| settings | `config/bridge.php`: `robot_delay_seconds`, `unattended_table_minutes` | |
+| settings | `config/bridge.php`: `robot_delay_seconds`, `unattended_table_minutes`; `claim_seconds` bounds a claim answer's delay | |
 
 The decision classes are pure (no database) and read only the robot's view
 of the state, so they can be unit-tested on hands written out by hand. How

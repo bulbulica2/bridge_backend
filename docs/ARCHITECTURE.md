@@ -96,7 +96,7 @@ the same pattern:
 | `PlayingStateService` | the one place that works out a playing's phase, calls, cards, turn, who acts (`actingUserId()`, with `dummyPlaysForDeclarer()`: a human dummy plays a robot declarer's cards), the hands, dummy and a human dummy's `declarer_hand` | feature tests (`HumanDummyPlaysTest` for the human dummy) |
 | `AuctionService` | one call (`call()`); `nextToCall`, `illegalReason`, `isOver`, `result` | `tests/Unit/AuctionServiceTest` |
 | `CardPlayService` | one card (`play()`); `nextToPlay`, `actingSeat`, `illegalReason`, `trickWinner`, `tricks`, `tricksWon` | `tests/Unit/CardPlayServiceTest` |
-| `ClaimService` | claims and concessions (`claim`, `respond`, `withdraw`) | `tests/Unit/ClaimServiceTest` |
+| `ClaimService` | claims and concessions (`claim`, `respond`, `withdraw`, and `expire`, which the queued `App\Jobs\ExpireClaim` runs `bridge.claim_seconds` after a claim: silence rejects it) | `tests/Unit/ClaimServiceTest`, `tests/Feature/Game/ClaimTest` |
 | `ScoringService` | duplicate scoring (`score()`, from declarer's side) and matchpoints (`matchpoints()`), pure static functions | `tests/Unit/ScoringTest` |
 | `BoardResultsService` | reads finished playings back for results across tables, a set's results (`set()`, `maySeeSet()`) and a player's history | feature tests (`BoardResultsTest`, `BoardSetTest`) |
 | `RobotService` | robot players: the pool they are seated from (`seatRobot()`), and one robot move at a time (`act()`: a call, a card or a claim, a claim answer, ready) through the services above | `tests/Feature/Game/RobotPlayTest`, `tests/Feature/Table/RobotSeatingTest` |
@@ -206,7 +206,10 @@ Robot players are `users` rows with `is_robot` (see
   it isn't unattended.
 
 `App\Listeners\DriveRobots` (auto-discovered, queued, `withDelay` =
-`bridge.robot_delay_seconds`) calls `act()` after every `PlayingUpdated`.
+`bridge.robot_delay_seconds`, cut to a second before `claim.expires_at`
+while a claim is pending, so a robot's answer comes in time) calls `act()`
+after every `PlayingUpdated`. A robot never answers a claim whose time is
+up (`BoardTable::claimExpired()`).
 Each robot move sends `PlayingUpdated` itself, so a run of robot turns is a
 chain of one-move jobs, spaced out for the human watching. On the `sync`
 queue (tests) that chain would nest a job inside a job 52 deep for a board
@@ -305,8 +308,11 @@ payload that outgrows the budget still gets through while it's fixed.
 
 Three long-running processes sit next to `php artisan serve`:
 
-- `php artisan queue:work --sleep=0.1` sends the queued broadcasts to Reverb
-  and runs the robots' moves (`DriveRobots`).
+- `php artisan queue:work --sleep=0.1` sends the queued broadcasts to Reverb,
+  runs the robots' moves (`DriveRobots`) and expires unanswered claims
+  (`App\Jobs\ExpireClaim`, dispatched `afterCommit()` with a delay up to
+  the claim's `claim_expires_at` — a delayed job, not a scheduled check,
+  since the 10-second schedule tick is as long as the whole deadline).
 - `php artisan reverb:start` holds the players' websocket connections.
 - `php artisan schedule:work` runs what `routes/console.php` schedules, every
   minute: `tables:release-idle-seats`
@@ -407,7 +413,13 @@ rules refuse (`RobotFallbackTest`).
   alone keep a table alive, as *unattended*, until the scheduler deletes it.
 - **Robots need the queue worker.** Without `queue:work` their jobs wait in
   `jobs` and the table stalls on a robot's turn. A robot job that throws
-  fails like any job (`queue:retry`).
+  fails like any job (`queue:retry`). Claims need it too: without it an
+  unanswered claim never expires (though no answer is taken after its
+  `expires_at`).
+- **Delayed jobs run at once in the tests.** The `sync` queue ignores
+  `delay`, so `ExpireClaim` runs the moment its claim is made and, not due
+  yet, does nothing. Tests travel in time and run the job themselves
+  (`ClaimTest::runJob()`).
 - **2-space indentation**, including PHP (`.editorconfig`). Pint can't indent
   with 2 spaces, so `pint.json` turns its indentation fixers off: Pint
   neither catches nor fixes bad indentation. Don't remove those rules, or a

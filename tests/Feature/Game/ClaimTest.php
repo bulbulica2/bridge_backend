@@ -4,17 +4,20 @@ namespace Tests\Feature\Game;
 
 use App\auxiliary\Seats;
 use App\Events\PlayingUpdated;
+use App\Jobs\ExpireClaim;
 use App\Models\Bid;
 use App\Models\BoardTable;
 use App\Models\Card;
 use App\Models\Table;
 use App\Models\User;
+use App\Services\ClaimService;
 use App\Services\PlayingStateService;
 use App\Services\ScoringService;
 use App\Services\TableSeatService;
 use Database\Seeders\game\BidSeeder;
 use Database\Seeders\game\CardSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Testing\TestResponse;
@@ -329,6 +332,164 @@ class ClaimTest extends TestCase
     $this->assertNull($playing->finished_at);
   }
 
+  public function test_a_claim_nobody_finishes_answering_is_rejected_when_it_expires(): void
+  {
+    $this->freezeSecond();
+    Bus::fake([ExpireClaim::class]);
+
+    $expiresAt = now()->addSeconds(10);
+
+    $this->claim('N', 13)
+      ->assertCreated()
+      ->assertJsonPath('data.claim.expires_at', $expiresAt->toJSON());
+
+    $this->state('W')->assertJsonPath('data.claim.expires_at', $expiresAt->toJSON());
+
+    Bus::assertDispatched(ExpireClaim::class, fn (ExpireClaim $job) => $job->playingId === $this->playing->id
+      && $job->expiresAt === $expiresAt->getTimestamp()
+      && $expiresAt->equalTo($job->delay));
+
+    $job = Bus::dispatched(ExpireClaim::class)->sole();
+
+    // one answer in time isn't enough
+    $this->respond('E', true)->assertOk();
+
+    Event::fake([PlayingUpdated::class]);
+
+    // a job run early leaves the claim alone
+    $this->travel(9)->seconds();
+    $this->runJob($job);
+    $this->assertSame('N', $this->playing->fresh()->claim_seat);
+
+    $this->travel(1)->seconds();
+    $this->runJob($job);
+
+    $playing = $this->playing->fresh();
+    $this->assertSame([null, null, null, null, null], [$playing->claim_seat, $playing->claim_tricks, $playing->claim_accepted, $playing->claim_expires_at, $playing->finished_at]);
+
+    Event::assertDispatchedTimes(PlayingUpdated::class, 1);
+    $this->assertNull(Event::dispatched(PlayingUpdated::class)->sole()[0]->broadcastWith()['playing']['claim']);
+
+    // play goes on, and the answers given don't count for a new claim
+    $this->play('E', 'S10')->assertCreated();
+    $this->claim('W', 0)->assertCreated()->assertJsonPath('data.claim.accepted', []);
+  }
+
+  public function test_the_broadcast_carries_the_claims_expiry(): void
+  {
+    $this->freezeSecond();
+    Event::fake([PlayingUpdated::class]);
+
+    $this->claim('N', 13)->assertCreated();
+
+    $claim = Event::dispatched(PlayingUpdated::class)->sole()[0]->broadcastWith()['playing']['claim'];
+
+    $this->assertSame(now()->addSeconds(10)->toJSON(), $claim['expires_at']);
+  }
+
+  public function test_the_deadline_follows_the_config(): void
+  {
+    $this->freezeSecond();
+    config(['bridge.claim_seconds' => 30]);
+
+    $this->claim('N', 13)->assertJsonPath('data.claim.expires_at', now()->addSeconds(30)->toJSON());
+  }
+
+  public function test_an_answer_after_the_expiry_is_refused_before_the_job_has_run(): void
+  {
+    $this->claim('N', 13)->assertCreated();
+    $job = $this->expiryJob();
+
+    $this->travel(10)->seconds();
+
+    $this->respond('E', true)
+      ->assertStatus(409)
+      ->assertJsonPath('message', 'There is no claim to answer.');
+
+    $this->runJob($job);
+    $this->assertNull($this->playing->fresh()->claim_seat);
+
+    $this->respond('E', true)->assertStatus(409);
+  }
+
+  public function test_a_claim_accepted_in_time_finishes_the_board_and_its_expiry_does_nothing(): void
+  {
+    $this->claim('N', 13)->assertCreated();
+    $job = $this->expiryJob();
+
+    $this->respond('E', true)->assertOk();
+    $this->respond('W', true)->assertOk()->assertJsonPath('data.phase', 'finished');
+
+    Event::fake([PlayingUpdated::class]);
+    $this->travel(10)->seconds();
+    $this->runJob($job);
+
+    Event::assertNotDispatched(PlayingUpdated::class);
+    $this->assertSame(['N', 13], [$this->playing->fresh()->claim_seat, $this->playing->fresh()->claim_tricks]);
+    $this->state('N')->assertJsonPath('data.result.claimed', true)->assertJsonPath('data.result.tricks_won', 13);
+  }
+
+  public function test_a_rejected_or_withdrawn_claims_expiry_does_nothing(): void
+  {
+    $this->claim('N', 13)->assertCreated();
+    $rejected = $this->expiryJob();
+    $this->respond('E', false)->assertOk();
+
+    $this->claim('N', 13)->assertCreated();
+    $withdrawn = $this->expiryJob();
+    $this->actingAs($this->players['N'])->deleteJson("/tables/{$this->table->id}/claim")->assertOk();
+
+    Event::fake([PlayingUpdated::class]);
+    $this->travel(10)->seconds();
+    $this->runJob($rejected);
+    $this->runJob($withdrawn);
+
+    Event::assertNotDispatched(PlayingUpdated::class);
+    $this->play('E', 'S10')->assertCreated();
+  }
+
+  public function test_a_new_claim_gets_its_own_deadline_and_the_old_job_leaves_it_alone(): void
+  {
+    $this->freezeSecond();
+
+    $this->claim('N', 13)->assertCreated();
+    $first = $this->expiryJob();
+
+    $this->travel(10)->seconds();
+    $this->runJob($first);
+    $this->assertNull($this->playing->fresh()->claim_seat);
+
+    $this->travel(3)->seconds();
+    $this->claim('N', 13)->assertCreated()->assertJsonPath('data.claim.expires_at', now()->addSeconds(10)->toJSON());
+    $second = $this->expiryJob();
+
+    // the first claim's job again, even once the second claim is due
+    $this->travel(10)->seconds();
+    $this->runJob($first);
+    $this->assertSame('N', $this->playing->fresh()->claim_seat);
+
+    $this->runJob($second);
+    $this->assertNull($this->playing->fresh()->claim_seat);
+  }
+
+  public function test_a_detached_playings_claim_expires_without_a_broadcast(): void
+  {
+    $this->claim('N', 13)->assertCreated();
+    $job = $this->expiryJob();
+
+    app(TableSeatService::class)->remove($this->table, $this->players['E']);
+
+    Event::fake([PlayingUpdated::class]);
+    $this->travel(10)->seconds();
+
+    $this->assertTrue(app(ClaimService::class)->expire($job->playingId, $job->expiresAt));
+    $this->assertNull($this->playing->fresh()->claim_seat);
+    Event::assertNotDispatched(PlayingUpdated::class);
+
+    // a playing that is gone
+    $this->assertFalse(app(ClaimService::class)->expire(0, $job->expiresAt));
+  }
+
   public function test_only_seated_players_may_claim_and_guests_get_401(): void
   {
     $stranger = User::factory()->create();
@@ -383,6 +544,20 @@ class ClaimTest extends TestCase
       [$seat, $code] = explode(' ', $made);
       $this->play($seat, $code)->assertCreated();
     }
+  }
+
+  /**
+   * The expiry job of the claim pending now, as `ClaimService::claim()`
+   * queued it.
+   */
+  private function expiryJob(): ExpireClaim
+  {
+    return new ExpireClaim($this->playing->id, $this->playing->fresh()->claim_expires_at->getTimestamp());
+  }
+
+  private function runJob(ExpireClaim $job): void
+  {
+    app()->call([$job, 'handle']);
   }
 
   private function state(string $seat): TestResponse

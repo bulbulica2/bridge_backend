@@ -5,6 +5,7 @@ namespace App\Services;
 use App\auxiliary\Seats;
 use App\Events\PlayingUpdated;
 use App\Exceptions\IllegalClaimException;
+use App\Jobs\ExpireClaim;
 use App\Models\BoardTable;
 use App\Models\Card;
 use App\Models\Table;
@@ -17,8 +18,10 @@ use Illuminate\Support\Facades\DB;
  * play for their side, 0 being a concession. The claimer's hand goes face up
  * and play stops until the other two non-dummy players have all accepted,
  * which finishes the board, or one rejects it or the claimer withdraws it,
- * which clears it and play goes on. A human dummy who plays a robot
- * declarer's cards claims, answers and withdraws for declarer's seat.
+ * which clears it and play goes on. Silence counts as a reject: a claim
+ * still pending `bridge.claim_seconds` after it was made expires
+ * (`ExpireClaim`, `expire()`). A human dummy who plays a robot declarer's
+ * cards claims, answers and withdraws for declarer's seat.
  *
  * Like `AuctionService` and `CardPlayService`, every action locks the
  * playing's row, and the rules are static functions unit-tested with no
@@ -48,9 +51,44 @@ class ClaimService
         throw new IllegalClaimException($reason);
       }
 
-      $playing->update(['claim_seat' => $seat, 'claim_tricks' => $tricks, 'claim_accepted' => []]);
+      // whole seconds, as the column keeps it, so the job's delay and the
+      // stored deadline are the same instant
+      $expiresAt = now()->addSeconds((int) config('bridge.claim_seconds'))->startOfSecond();
+
+      $playing->update(['claim_seat' => $seat, 'claim_tricks' => $tricks, 'claim_accepted' => [], 'claim_expires_at' => $expiresAt]);
+
+      ExpireClaim::dispatch($playing->id, $expiresAt->getTimestamp())->delay($expiresAt)->afterCommit();
 
       PlayingUpdated::dispatch($table);
+    });
+  }
+
+  /**
+   * Silence means no: reject the claim on `$playingId` that expires at
+   * `$expiresAt` (a Unix time, which tells it from a later claim on the
+   * same playing) once that time has come, exactly as a reject would. Does
+   * nothing if it was accepted, rejected or withdrawn first — the lock
+   * decides which came first — or isn't due yet. Run by `ExpireClaim`.
+   *
+   * @return bool whether the claim expired
+   */
+  public function expire(int $playingId, int $expiresAt): bool
+  {
+    return DB::transaction(function () use ($playingId, $expiresAt) {
+      $playing = BoardTable::query()->lockForUpdate()->find($playingId);
+
+      if ($playing === null || ! $playing->claimExpired() || $playing->claim_expires_at->getTimestamp() !== $expiresAt) {
+        return false;
+      }
+
+      $playing->clearClaim();
+
+      // a playing detached by a player leaving is no table's game any more
+      if ($playing->table !== null) {
+        PlayingUpdated::dispatch($playing->table);
+      }
+
+      return true;
     });
   }
 
@@ -67,7 +105,9 @@ class ClaimService
     return DB::transaction(function () use ($table, $user, $accept) {
       [$playing, $seat] = $this->playingAndSeat($table, $user);
 
-      if (! $playing->hasPendingClaim()) {
+      // an expired claim is rejected already, even before ExpireClaim has
+      // cleared it
+      if (! $playing->hasPendingClaim() || $playing->claimExpired()) {
         throw new IllegalClaimException('There is no claim to answer.');
       }
 

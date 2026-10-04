@@ -5,6 +5,8 @@ namespace Tests\Feature\Game;
 use App\auxiliary\Seats;
 use App\Broadcasting\PusherBody;
 use App\Events\PlayingUpdated;
+use App\Jobs\ExpireClaim;
+use App\Listeners\DriveRobots;
 use App\Models\Bid;
 use App\Models\BoardTable;
 use App\Models\Table;
@@ -227,6 +229,67 @@ class RobotPlayTest extends TestCase
     $this->assertNull($playing->claim_seat);
     $this->assertCount(7, $playing->cardPlays);
     $this->assertSame($this->human->id, $this->state->actingUserId($playing));
+  }
+
+  public function test_a_robot_plays_on_after_its_claim_expires(): void
+  {
+    // the robot declarer S holds all the diamonds; the human defends as E
+    $table = $this->claimTable(['N' => 'S', 'E' => 'H', 'S' => 'D', 'W' => 'C'], human: 'E', declarer: 'S');
+
+    PlayingUpdated::dispatch($table);
+
+    $heart = $this->actingAs($this->human)->getJson("/tables/$table->id/playing")->json('data.hand.0.id');
+    $this->actingAs($this->human)->postJson("/tables/$table->id/cards", ['card_id' => $heart])->assertCreated();
+
+    // S ruffs and claims the rest; the human says nothing
+    $playing = $this->state->currentPlaying($table);
+    $this->assertSame('S', $playing->claim_seat);
+
+    $this->travel(10)->seconds();
+    ExpireClaim::dispatchSync($playing->id, $playing->claim_expires_at->getTimestamp());
+
+    // S doesn't claim again from the same place: it leads, W and dummy
+    // follow, and it is the human's turn again
+    $playing->refresh();
+    $this->assertNull($playing->claim_seat);
+    $this->assertCount(7, $playing->cardPlays);
+    $this->assertSame($this->human->id, $this->state->actingUserId($playing));
+  }
+
+  public function test_robots_never_answer_a_claim_whose_time_is_up(): void
+  {
+    $table = $this->claimTable(['N' => 'S', 'E' => 'H', 'S' => 'D', 'W' => 'C']);
+
+    Event::fakeFor(fn () => $this->actingAs($this->human)->postJson("/tables/$table->id/claim", ['tricks' => 13])->assertCreated(), [PlayingUpdated::class]);
+
+    $this->travel(10)->seconds();
+
+    $this->assertFalse(app(RobotService::class)->act($table));
+    $this->assertSame([], $this->state->currentPlaying($table)->claim_accepted);
+  }
+
+  public function test_a_robots_answer_to_a_claim_comes_before_it_expires(): void
+  {
+    $this->freezeSecond();
+    config(['bridge.robot_delay_seconds' => 30]);
+
+    $table = $this->claimTable(['N' => 'S', 'E' => 'H', 'S' => 'D', 'W' => 'C']);
+    $driver = app(DriveRobots::class);
+
+    $this->assertSame(30, $driver->withDelay(new PlayingUpdated($table)));
+
+    Event::fakeFor(fn () => $this->actingAs($this->human)->postJson("/tables/$table->id/claim", ['tricks' => 13])->assertCreated(), [PlayingUpdated::class]);
+
+    // a second before the deadline at the latest
+    $this->assertSame(9, $driver->withDelay(new PlayingUpdated($table)));
+
+    $this->travel(9)->seconds();
+    $this->assertSame(0, $driver->withDelay(new PlayingUpdated($table)));
+
+    // and at the default delay, the robot's own
+    config(['bridge.robot_delay_seconds' => 1]);
+    $this->travel(-9)->seconds();
+    $this->assertSame(1, $driver->withDelay(new PlayingUpdated($table)));
   }
 
   public function test_robots_wait_at_an_unattended_table_and_a_returning_human_runs_it(): void
