@@ -167,14 +167,20 @@ class RobotPlayTest extends TestCase
 
   public function test_a_robot_declarer_claims_when_every_trick_left_is_a_top_winner(): void
   {
-    // the robot declarer S holds all thirteen diamonds (trumps); the human
-    // is dummy N
-    $table = $this->claimTable(['N' => 'S', 'E' => 'H', 'S' => 'D', 'W' => 'C'], declarer: 'S');
+    // the robot declarer S holds all thirteen diamonds (trumps), with a robot
+    // dummy; the human defends as E
+    $table = $this->claimTable(['N' => 'S', 'E' => 'H', 'S' => 'D', 'W' => 'C'], human: 'E', declarer: 'S');
 
+    // W leads a club and dummy follows: it is the human's turn
     PlayingUpdated::dispatch($table);
 
-    // W led a club, S ruffed it and claimed the other twelve; the robot
-    // defenders accepted
+    $heart = $this->actingAs($this->human)->getJson("/tables/$table->id/playing")->json('data.hand.0.id');
+    $this->actingAs($this->human)->postJson("/tables/$table->id/cards", ['card_id' => $heart])->assertCreated();
+
+    // S ruffed and claimed the other twelve; W accepted, and the human's
+    // accept ends the board
+    $this->actingAs($this->human)->postJson("/tables/$table->id/claim/response", ['accept' => true])->assertOk();
+
     $playing = BoardTable::where('table_id', $table->id)->sole();
 
     $this->assertCount(4, $playing->cardPlays);
@@ -294,7 +300,7 @@ class RobotPlayTest extends TestCase
       }
 
       if ($state['claim'] !== null) {
-        $this->postJson("/tables/$table->id/claim/response", ['accept' => RobotClaims::accepts($state)])->assertOk();
+        $this->postJson("/tables/$table->id/claim/response", ['accept' => RobotClaims::accepts(self::asDeclarer($state))])->assertOk();
 
         continue;
       }
@@ -307,9 +313,26 @@ class RobotPlayTest extends TestCase
 
         $this->postJson("/tables/$table->id/calls", ['bid_id' => Bid::where('suit', $call)->value('id')])->assertCreated();
       } else {
-        $this->postJson("/tables/$table->id/cards", ['card_id' => RobotCardPlayer::choose($state)])->assertCreated();
+        $this->postJson("/tables/$table->id/cards", ['card_id' => RobotCardPlayer::choose(self::asDeclarer($state))])->assertCreated();
       }
     }
+  }
+
+  /**
+   * A human dummy who plays for a robot declarer sees both hands of their
+   * side, as declarer does: the state as declarer's seat would be served it,
+   * which is what the robots' card play reads. Anyone else's, unchanged.
+   *
+   * @param  array<string, mixed>  $state
+   * @return array<string, mixed>
+   */
+  private static function asDeclarer(array $state): array
+  {
+    if ($state['declarer_hand'] === null) {
+      return $state;
+    }
+
+    return [...$state, 'my_seat' => $state['contract']['declarer'], 'hand' => $state['declarer_hand']];
   }
 
   /**

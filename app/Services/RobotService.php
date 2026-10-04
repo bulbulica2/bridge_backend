@@ -147,7 +147,8 @@ class RobotService
    * one to move: its call, its card (declarer's robot plays dummy's too) or
    * a claim of the rest when every trick left is a top winner, its answer
    * to a pending claim, or its ready for the next board. Returns whether a
-   * robot moved.
+   * robot moved. A robot declarer whose dummy is a human never moves in the
+   * play: that human plays both hands (`actingUserId()`).
    *
    * A move the rules refuse means the table changed after the event that
    * asked for it; that change sent its own `PlayingUpdated`, which brings
@@ -264,6 +265,8 @@ class RobotService
 
   /**
    * The first robot that still has to answer the pending claim answers it.
+   * A robot declarer whose human dummy plays for it leaves declarer's
+   * answer to that human.
    */
   private function answerClaim(Table $table, BoardTable $playing): bool
   {
@@ -271,9 +274,11 @@ class RobotService
       ClaimService::responders($playing->claim_seat, $playing->declarer_seat),
       $playing->claim_accepted ?? [],
     );
+    $dummyPlays = $this->state->dummyPlaysForDeclarer($playing);
 
     foreach ($waiting as $seat) {
-      $robot = $playing->seats->firstWhere('seat', $seat)?->user;
+      $acting = CardPlayService::actingSeat($seat, $playing->declarer_seat, $dummyPlays);
+      $robot = $playing->seats->firstWhere('seat', $acting)?->user;
 
       if ($robot?->is_robot) {
         $this->claims->respond($table, $robot, RobotClaims::accepts($this->state->stateFor($table, $robot)));

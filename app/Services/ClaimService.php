@@ -17,7 +17,8 @@ use Illuminate\Support\Facades\DB;
  * play for their side, 0 being a concession. The claimer's hand goes face up
  * and play stops until the other two non-dummy players have all accepted,
  * which finishes the board, or one rejects it or the claimer withdraws it,
- * which clears it and play goes on.
+ * which clears it and play goes on. A human dummy who plays a robot
+ * declarer's cards claims, answers and withdraws for declarer's seat.
  *
  * Like `AuctionService` and `CardPlayService`, every action locks the
  * playing's row, and the rules are static functions unit-tested with no
@@ -133,8 +134,10 @@ class ClaimService
   }
 
   /**
-   * The table's playing, locked, and the caller's seat at it, once it is
-   * in the play and the caller is one of its non-dummy players.
+   * The table's playing, locked, and the seat the caller claims, answers or
+   * withdraws for, once it is in the play and the caller is one of its
+   * non-dummy players — or a human dummy playing for a robot declarer, who
+   * acts for declarer's seat.
    *
    * @return array{0: BoardTable, 1: string}
    *
@@ -144,28 +147,32 @@ class ClaimService
   {
     $playing = $this->state->currentPlaying($table, lock: true);
     $seat = $playing === null ? null : $this->state->seatOf($playing, $user);
+    $dummyPlays = $playing !== null && $this->state->dummyPlaysForDeclarer($playing);
 
-    $reason = self::illegalPlayerReason($this->state->phase($playing), $seat, $playing?->declarer_seat);
+    $reason = self::illegalPlayerReason($this->state->phase($playing), $seat, $playing?->declarer_seat, $dummyPlays);
 
     if ($reason !== null) {
       throw new IllegalClaimException($reason);
     }
 
-    return [$playing, $seat];
+    return [$playing, $dummyPlays && $seat === Seats::partner($playing->declarer_seat) ? $playing->declarer_seat : $seat];
   }
 
   /**
    * Why the player in `$seat` can't claim, or answer or withdraw a claim,
-   * now, or null when they can: only during the play, and never dummy.
+   * now, or null when they can: only during the play, and never dummy —
+   * unless `$dummyPlays` (a human dummy playing a robot declarer's cards),
+   * when it is the other way round: dummy acts for declarer, who never does.
    */
-  public static function illegalPlayerReason(string $phase, ?string $seat, ?string $declarer): ?string
+  public static function illegalPlayerReason(string $phase, ?string $seat, ?string $declarer, bool $dummyPlays = false): ?string
   {
     return match (true) {
       $phase === PlayingStateService::PHASE_WAITING => 'The table has no board yet: the play starts once four players are seated and the auction is over.',
       $phase === PlayingStateService::PHASE_AUCTION => 'The auction is not over yet.',
       $phase === PlayingStateService::PHASE_FINISHED => 'The board is finished.',
       $seat === null => 'You are not playing this board.',
-      $seat === Seats::partner($declarer) => "Dummy takes no part in a claim: declarer claims for declarer's side.",
+      $dummyPlays && $seat === $declarer => "Your partner, dummy, plays declarer's cards and claims for declarer's side.",
+      ! $dummyPlays && $seat === Seats::partner($declarer) => "Dummy takes no part in a claim: declarer claims for declarer's side.",
       default => null,
     };
   }

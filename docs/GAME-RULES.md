@@ -202,7 +202,9 @@ dummy's `seat`.
   a database in `tests/Unit/CardPlayServiceTest`:
   - **Turn:** declarer's left leads trick 1, then clockwise; each trick's
     winner leads the next. Each player plays their own hand, except dummy's,
-    which declarer plays; dummy's own player is always refused.
+    which declarer plays; dummy's own player is always refused — except
+    with a robot declarer and a human dummy, where the human plays both
+    hands and the robot declarer is refused instead (§9).
   - **Legal card:** in the hand being played (its `board_card` rows less what
     is already in `cardplays`), not already played (checked before the unique
     index), and of the suit led if that hand still holds it.
@@ -236,7 +238,9 @@ static and unit-tested without a database in `tests/Unit/ClaimServiceTest`
 (`illegalPlayerReason`, `responders`, `remaining`, `tricksReason`,
 `declarerTricks`):
 - **Who:** only during the `play`, and any player **except dummy**, whose own
-  player can neither claim nor answer.
+  player can neither claim nor answer — except a human dummy playing for a
+  robot declarer (§9), who claims, answers and withdraws for declarer's
+  seat, while that robot declarer does none of it.
 - **How many:** 0 up to the tricks still to play — 13 less the complete
   tricks, so a trick in progress counts as remaining.
 - **Face up:** while the claim is pending, the claimer's remaining cards are
@@ -612,6 +616,23 @@ Rules the robots keep, and that keep them honest:
   `CardPlayService`, `ClaimService` and `BoardSelectionService::moveOn()`,
   so §4 and §5 are enforced on robots exactly as on people. Declarer's robot
   plays dummy's cards; a robot dummy does nothing, like a human dummy.
+- **A human never just watches.** When a robot declares and its partner,
+  dummy, is a human, the human plays **both** hands for the whole play —
+  declarer's cards and their own — and claims, answers claims and withdraws
+  for declarer's seat; the robot declarer never acts in the play. Nothing
+  else changes: declarer and dummy are still the auction's
+  (`contract.declarer`/`dummy`), declarer's left-hand opponent still leads,
+  the human's hand still goes face up after the lead as dummy's, scoring
+  and the history are the same, and each card is recorded by the hand it
+  came from. Only the human sees declarer's cards (`declarer_hand` in their
+  own state, pushed as `DeclarerHandShown` when the auction ends); the
+  defenders see dummy only, as always. Playing for declarer is a sign of
+  life like any card, and the away and forfeit rules (§8) apply to the human
+  while either hand is to play. **In code:**
+  `PlayingStateService::dummyPlaysForDeclarer()` (from the seat snapshot),
+  `CardPlayService::actingSeat($turn, $declarer, $dummyPlays)` and
+  `ClaimService::illegalPlayerReason(..., $dummyPlays)`. A human declarer
+  with a robot dummy plays both hands as before.
 - **No peeking.** A robot decides from what its own seat is served
   (`PlayingStateService::stateFor()`): its hand, dummy once face up, a
   claimer's face-up hand and the cards played — never the other hands.

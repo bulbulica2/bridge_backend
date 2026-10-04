@@ -691,7 +691,8 @@ page refresh or a reconnect. No body. Built by
       {"id": 52, "suit": "S", "rank": 15, "rank_name": "Ace"},
       {"id": 47, "suit": "S", "rank": 9, "rank_name": "9"},
       {"id": 38, "suit": "H", "rank": 13, "rank_name": "Queen"}
-    ]
+    ],
+    "declarer_hand": null
   }
 }
 ```
@@ -704,7 +705,7 @@ page refresh or a reconnect. No body. Built by
 | `board` | `id`, `number`, `dealer` (`N/E/S/W`) and `vulnerable` (a `Vulnerability` value) from `boards` |
 | `players` | seat → public profile (`UserResource`, no email; `is_robot` marks a robot), from the playing's `board_table_seats` snapshot, not from `table_seats` |
 | `turn` | the seat expected to act. During the `auction`: the dealer first, then clockwise after the last call. During the `play`: the **hand** the next card comes from — declarer's left-hand opponent leads the first trick, then clockwise, and each trick's winner leads the next. When it is dummy's seat, declarer plays it (see `acting_user_id`). `null` while `waiting` and once `finished` |
-| `acting_user_id` | the id of the user who must act for `turn`: that seat's player, except that on dummy's turn it is **declarer**. A client compares it with its own user id to know it is its move (and, for declarer, that it is playing dummy's cards). `null` whenever `turn` is |
+| `acting_user_id` | the id of the user who must act for `turn`: that seat's player, except that on dummy's turn it is **declarer**. One exception to that: when a **robot declares and dummy is a human**, the human plays both hands, so on declarer's turn **and** on dummy's turn it is the **human dummy's** id, and the robot declarer never acts in the play (see [`declarer_hand`](#get-tablestableplaying) and [`POST /tables/{table}/cards`](#post-tablestablecards)). Declarer and dummy themselves don't change (`contract`). A client compares it with its own user id to know it is its move (and, when `turn` isn't its own seat, that it is playing its partner's cards). `null` whenever `turn` is |
 | `auction` | the calls made so far, in order: `{seat, bid}`, where `bid` is `{id, call, level, strain, special}` — `call` is the short name (`P`, `X`, `XX`, `1C`…`7NT`) and the only field telling pass, double and redouble apart; `level`/`strain` are null for those three. `[]` before the first call |
 | `contract` | `null` during the auction and on a passed out board; once the auction ends with a bid, `{bid, doubled, declarer, dummy}` — `bid` shaped as above, `doubled` 0 (none), 1 (X) or 2 (XX), `declarer` the seat of the first player on the winning side to name the strain, `dummy` declarer's partner |
 | `tricks` | the **complete** tricks, in order: `{round, leader, cards, winner}` — `round` 1–13, `leader` the seat that led, `cards` the four `{seat, card}` in the order played (`seat` is the hand the card came from, so dummy's seat for dummy's cards), `winner` the seat whose card won. `[]` until the first trick is complete. `null` whenever `contract` is |
@@ -716,12 +717,13 @@ page refresh or a reconnect. No body. Built by
 | `deal` | `null` until the phase is `finished`. Then all four hands **as dealt** (from `board_card`, not what is left after the play): `{N: [...], E: [...], S: [...], W: [...]}`, each in `hand`'s order and card shape. Public — it is on the table channel too — since the board is over |
 | `ready` | `null` until the phase is `finished`. Then the seats whose players have asked for the next board (`POST /tables/{table}/playing/next`), in N, E, S, W order: `[]` right after the board ends |
 | `my_seat` | the caller's seat in the snapshot |
-| `hand` | the caller's **own** cards only: the 13 `board_card` rows for their seat, less any card already in `cardplays`, sorted spades, hearts, diamonds, clubs and high to low within a suit. Card `rank` is 2–10, J=12, Q=13, K=14, A=15. Apart from this, the only cards in the payload are face up: those in `tricks` / `current_trick`, after the opening lead `dummy_hand`, a pending claim's `claim.hand`, and once the board is finished `deal` |
+| `hand` | the caller's **own** cards only: the 13 `board_card` rows for their seat, less any card already in `cardplays`, sorted spades, hearts, diamonds, clubs and high to low within a suit. Card `rank` is 2–10, J=12, Q=13, K=14, A=15. Apart from this and `declarer_hand`, the only cards in the payload are face up: those in `tricks` / `current_trick`, after the opening lead `dummy_hand`, a pending claim's `claim.hand`, and once the board is finished `deal` |
+| `declarer_hand` | **only** for a human dummy whose declarer is a robot, who plays declarer's cards (see `acting_user_id`): declarer's **remaining** cards, in `hand`'s order and card shape, from the end of the auction (all 13, before the opening lead) to the end of the play. `null` for everyone else and at any other time, including once the board is `finished` (`deal` then shows it). Private to that player like `hand`: it is in their own answers only (this endpoint and the answers to calls, cards, claims, Start and Next), never on the table channel or in anyone else's state — the defenders see only dummy's cards after the lead. The auction usually ends on a robot's call, so it is also pushed as [`DeclarerHandShown`](#event-declarerhandshown) |
 
 A card is `{id, suit, rank, rank_name}` everywhere it appears.
 
 While `phase` is `waiting`, **every other field is null** (including `hand`,
-`my_seat` and `auction`).
+`declarer_hand`, `my_seat` and `auction`).
 
 ### `POST /tables/{table}/playing/next`
 Once the board is `finished` (13 tricks played, or passed out), ask for the
@@ -830,9 +832,16 @@ Play the next card of the current trick. Built by
 
 Each player plays their own hand, **except dummy's, which declarer plays**:
 on dummy's turn (`turn` is dummy's seat, `acting_user_id` is declarer's id)
-declarer sends one of dummy's cards. Dummy's own player never plays. The row
-stored in `cardplays` has the caller as `user_id` and the hand the card came
-from as `seat`, plus `round` (trick 1–13) and `order` (1–4).
+declarer sends one of dummy's cards. Dummy's own player never plays — unless
+declarer is a **robot and dummy a human**: then it is the other way round,
+the human dummy sends the card on declarer's turn (from `declarer_hand`) and
+on their own, and the robot declarer never plays. In both cases the caller
+sends the card for `turn` and must be `acting_user_id`. The row stored in
+`cardplays` has the caller as `user_id` and the hand the card came from as
+`seat`, plus `round` (trick 1–13) and `order` (1–4). Playing the partner's
+card is a sign of life like playing one's own (`seen`), so the idle and away
+timers treat it the same; while either hand of that side is to play, the
+table waits on the human dummy.
 
 - **201** with the updated state — exactly what `GET /tables/{table}/playing`
   would now return, `hand` and `my_seat` included — message
@@ -842,7 +851,10 @@ from as `seat`, plus `round` (trick 1–13) and `order` (1–4).
   - `"It is not your turn: E plays next."` — names the hand to play from
     (dummy's seat when declarer should play from dummy);
   - `"Dummy doesn't play: declarer plays dummy's cards."` — the caller is
-    dummy, whatever the turn;
+    dummy, whatever the turn (but see the robot declarer exception above);
+  - `"Your partner, dummy, plays declarer's cards."` — the caller is a robot
+    declarer whose dummy is a human (a robot never sends this request; the
+    services refuse it all the same);
   - `"That card is not in the hand being played."` — it was dealt to another
     seat (including declarer trying their own card on dummy's turn);
   - `"That card has already been played."`;
@@ -875,7 +887,11 @@ End the play early by agreement (`GAME-RULES.md` §5). Built by
 may claim a number of the tricks still to play for their side; the other two
 non-dummy players must all accept it — both defenders for declarer's claim,
 declarer and the other defender for a defender's. Dummy's own player can
-neither claim nor answer. While the claim is pending the state's `claim`
+neither claim nor answer — except a **human dummy whose declarer is a
+robot**, who plays declarer's cards and so claims, answers and withdraws
+**for declarer's seat** (`claim.seat` is declarer's, `claim.hand` declarer's
+cards, and their accept shows as declarer's seat in `claim.accepted`); that
+robot declarer never claims or answers. While the claim is pending the state's `claim`
 shows the claimer's remaining cards face up to everyone, no card may be
 played and no other claim made; `turn` doesn't move.
 
@@ -899,6 +915,9 @@ not seated at this table (checked before validation), **401** for guests,
   - `"You can claim between 0 and 12 tricks: 12 remain to be played."`;
   - `"A claim is already pending: N claims 10."`;
   - `"Dummy takes no part in a claim: declarer claims for declarer's side."`;
+  - `"Your partner, dummy, plays declarer's cards and claims for declarer's
+    side."` — a robot declarer whose dummy is a human (on all three claim
+    actions);
   - `"The auction is not over yet."`, `"The board is finished."`, or
     `"The table has no board yet: ..."` — the phase isn't `play`.
 
@@ -1352,7 +1371,7 @@ protocol, so any Pusher client (`pusher-js`, Laravel Echo) works.
 | Channel (as the client names it) | Echo | Who may subscribe | Carries |
 |---|---|---|---|
 | `private-table.{id}` | `echo.private('table.' + id)` | players seated at table `{id}` (`routes/channels.php`) | `TableUpdated`, `PlayingUpdated` |
-| `private-App.Models.User.{id}` | `echo.private('App.Models.User.' + id)` | user `{id}` only | `HandDealt` — one player's own cards; `UserBanned` |
+| `private-App.Models.User.{id}` | `echo.private('App.Models.User.' + id)` | user `{id}` only | `HandDealt` — one player's own cards; `DeclarerHandShown` — a robot declarer's cards, for its human dummy; `UserBanned` |
 
 A client should subscribe to its table's channel **after** it has a seat
 (the subscription is refused otherwise), and re-subscribe after moving to
@@ -1471,7 +1490,7 @@ It is **not** sent when a player leaving abandons the board; that shows up as
 **Payload** — `{playing}`, the **public** part of
 `GET /tables/{table}/playing`: `phase`, `playing_id`, `set`, `board`, `players`,
 `turn`, `acting_user_id`, `auction`, `contract`, `tricks`, `current_trick`,
-`tricks_won`, `dummy_hand`, `claim`, `result`, `deal`, `ready`. It never carries `hand` or `my_seat`: the table
+`tricks_won`, `dummy_hand`, `claim`, `result`, `deal`, `ready`. It never carries `hand`, `declarer_hand` or `my_seat`: the table
 channel is only authorised at subscribe time, so a player who has left may
 still be listening. The only cards in it are face up — the ones played,
 after the opening lead dummy's, the claimer's while a claim is pending, and
@@ -1524,6 +1543,37 @@ hand from this without polling `GET /tables/{table}/playing`.
 ```
 
 `hand` has the same order and card shape as in `GET /tables/{table}/playing`.
+
+### Event `DeclarerHandShown`
+
+Class `App\Events\DeclarerHandShown`, on `private-App.Models.User.{id}`
+(Echo: `echo.private('App.Models.User.' + myId).listen('DeclarerHandShown', ...)`).
+Same delivery as `TableUpdated`.
+
+**Sent when** an auction ends with a **robot declarer whose dummy is a
+human**: one event, to that human, who plays both hands (see
+`acting_user_id` and `declarer_hand` in
+[`GET /tables/{table}/playing`](#get-tablestableplaying)). It carries
+declarer's 13 cards, the state's `declarer_hand` at that moment. The auction
+usually ends on a robot's call, made in the queue, so no HTTP answer of the
+human's has them yet; this is how the client learns them without a
+`GET /tables/{table}/playing`. Nothing is sent for any other auction, nor to
+anyone else — never on the table channel.
+
+```json
+{
+  "table_id": 7,
+  "playing_id": 42,
+  "my_seat": "S",
+  "declarer": "N",
+  "declarer_hand": [{"id": 52, "suit": "S", "rank": 15, "rank_name": "Ace"}, ...]
+}
+```
+
+`my_seat` is the human's own seat (dummy), `declarer` declarer's seat, and
+`declarer_hand` has the same order and card shape as `hand`. The client then
+keeps it like its own hand, dropping each card played from declarer's seat
+(or re-reads `declarer_hand` from any game state it is answered).
 
 Calls, cards and claims re-send `PlayingUpdated` rather than add new table events.
 A played card needs no per-player event: it only takes a card out of one

@@ -49,13 +49,28 @@ robot makes **one** move if it is a robot's turn:
 | Phase | The robot that moves | Its move |
 |---|---|---|
 | auction | the robot whose turn it is | one call ([Bidding](#bidding)) |
-| play, no claim pending | the robot acting for `turn` — declarer's robot also plays dummy's cards | one card ([Card play](#card-play)), or a claim of the rest ([Claims](#claims)) |
-| play, claim pending | the first robot (N, E, S, W order) that still has to answer | accept or reject ([Claims](#claims)) |
+| play, no claim pending | the robot acting for `turn` — declarer's robot also plays dummy's cards, unless dummy is a human (below) | one card ([Card play](#card-play)), or a claim of the rest ([Claims](#claims)) |
+| play, claim pending | the first robot (N, E, S, W order) that still has to answer, never a robot declarer whose dummy is a human | accept or reject ([Claims](#claims)) |
 | finished, mid-set | the first robot not yet ready for the next board | ready ([The next board](#the-next-board)); nothing after a set's last board |
 
 That move changes the game, which sends the next `PlayingUpdated`, so the
 robots take their turns one after another until it is a human's turn. A
 robot that is dummy never acts: declarer plays dummy's cards.
+
+**A robot declarer with a human dummy hands the play over.** When a robot
+wins the contract and its partner, dummy, is a human, the human plays
+**both** hands — declarer's and their own — and the robot declarer never
+acts in the play: no card, no claim, no answer to a defender's claim
+(`PlayingStateService::dummyPlaysForDeclarer()`, read from the seat
+snapshot; `acting_user_id` is the human on both hands' turns). Everything
+else stays as the auction left it: the robot bid its own hand, it is still
+declarer (`contract.declarer`), the opening lead is still its left-hand
+opponent's, the human's hand still goes face up after it as dummy's, and
+the robot defenders play and answer claims as against any declarer. The
+human sees declarer's cards privately (`declarer_hand`, pushed as
+`DeclarerHandShown` when the auction ends). A human declarer with a robot
+dummy plays both hands as before; it is only the robot declarer that gives
+way, so a human at a table of robots never just watches a board.
 
 **The same rules as a human.** Every robot move goes through the services a
 human's request goes through (`AuctionService`, `CardPlayService`,
@@ -571,7 +586,9 @@ there are no trumps; else ruff with the lowest trump, or over-ruff an
 opponent's ruff with the lowest trump that beats it (throwing a card when
 none does).
 
-Declarer's robot plays dummy's cards by these rules too, as dummy's seat.
+Declarer's robot plays dummy's cards by these rules too, as dummy's seat —
+except when dummy is a human, who then plays both hands
+([At the table](#at-the-table)); the robot defenders' rules don't change.
 
 #### Holding up in no trump
 
@@ -739,7 +756,8 @@ on 60 deals and requires both.
 ## Claims
 
 **A robot claims** when it is on lead (for its own seat, or declarer's
-robot for dummy) and the hand on lead holds nothing but **top winners**:
+robot for dummy — never a robot declarer whose dummy is a human, who claims
+for it instead) and the hand on lead holds nothing but **top winners**:
 every card a master, and in a suit contract no more trumps out than the
 hand's own (all masters, so leading them first draws the rest). It claims
 **all** the tricks left. The two other non-dummy players answer as for any
@@ -749,7 +767,9 @@ cache for a day): if the claim is rejected, it plays on, and may claim
 again after more cards.
 
 **Answering a claim.** When someone claims, each robot that must answer
-(the other non-dummy players) decides on its own:
+(the other non-dummy players) decides on its own. A defender's claim that
+declarer must answer is answered by the human dummy when declarer is a robot
+playing with one; the robot declarer leaves it to them:
 
 1. A **concession** — a claim of 0 tricks — is always **accepted**.
 2. Otherwise the robot works out its side's share of the remaining tricks if

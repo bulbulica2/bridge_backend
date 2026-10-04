@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\auxiliary\Seats;
+use App\Events\DeclarerHandShown;
 use App\Events\PlayingUpdated;
 use App\Exceptions\IllegalCallException;
 use App\Models\Bid;
@@ -106,6 +107,14 @@ class AuctionService
       'declarer_id' => $playing->seats->firstWhere('seat', $result['declarer'])?->user_id,
       'auction_ended_at' => now(),
     ]);
+
+    // a human dummy who plays a robot declarer's cards gets them on their own
+    // channel: the auction usually ends on a robot's call
+    if ($this->state->dummyPlaysForDeclarer($playing)) {
+      $dummy = $playing->seats->firstWhere('seat', Seats::partner($result['declarer']));
+
+      DeclarerHandShown::dispatch($playing, (int) $dummy->user_id, $dummy->seat);
+    }
   }
 
   /**

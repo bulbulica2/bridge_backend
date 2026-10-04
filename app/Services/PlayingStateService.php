@@ -88,7 +88,8 @@ class PlayingStateService
 
   /**
    * The user who acts for `turn()`: that seat's player, except that
-   * declarer plays dummy's cards.
+   * declarer plays dummy's cards — and a human dummy plays both hands for a
+   * robot declarer (`dummyPlaysForDeclarer()`).
    */
   public function actingUserId(?BoardTable $playing): ?int
   {
@@ -99,12 +100,51 @@ class PlayingStateService
     }
 
     if ($this->phase($playing) === self::PHASE_PLAY) {
-      $turn = CardPlayService::actingSeat($turn, $playing->declarer_seat);
+      $turn = CardPlayService::actingSeat($turn, $playing->declarer_seat, $this->dummyPlaysForDeclarer($playing));
     }
 
     $userId = $playing->seats->firstWhere('seat', $turn)?->user_id;
 
     return $userId === null ? null : (int) $userId;
+  }
+
+  /**
+   * Whether dummy plays declarer's cards as well as their own: when a robot
+   * declares and its partner, dummy, is a human, who came to play rather
+   * than watch. Declarer and dummy stay where the auction put them; only
+   * who sends the cards (and claims for that side) changes. From the
+   * snapshot taken at the deal; false while there is no contract.
+   */
+  public function dummyPlaysForDeclarer(BoardTable $playing): bool
+  {
+    if ($playing->declarer_seat === null) {
+      return false;
+    }
+
+    $declarer = $playing->seats->firstWhere('seat', $playing->declarer_seat)?->user;
+    $dummy = $playing->seats->firstWhere('seat', Seats::partner($playing->declarer_seat))?->user;
+
+    return $declarer?->is_robot === true && $dummy !== null && ! $dummy->is_robot;
+  }
+
+  /**
+   * Declarer's remaining cards for the human dummy who plays them
+   * (`dummyPlaysForDeclarer()`), from the end of the auction to the end of
+   * the play; null for anyone else and at any other time. Private to that
+   * player: never in the public state.
+   *
+   * @return list<array{id: int, suit: string, rank: int, rank_name: string}>|null
+   */
+  public function declarerHandFor(BoardTable $playing, ?string $seat): ?array
+  {
+    if ($seat === null
+      || $this->phase($playing) !== self::PHASE_PLAY
+      || $seat !== Seats::partner($playing->declarer_seat)
+      || ! $this->dummyPlaysForDeclarer($playing)) {
+      return null;
+    }
+
+    return $this->hand($playing, $playing->declarer_seat);
   }
 
   /**
@@ -274,9 +314,10 @@ class PlayingStateService
   }
 
   /**
-   * The public state plus what only this user may see: their seat and hand.
-   * Dummy's hand isn't private once it is face up, so it is in the public
-   * part (`dummy_hand`), for declarer and everyone else alike.
+   * The public state plus what only this user may see: their seat and hand,
+   * and `declarer_hand` for a human dummy who plays a robot declarer's
+   * cards. Dummy's hand isn't private once it is face up, so it is in the
+   * public part (`dummy_hand`), for declarer and everyone else alike.
    *
    * @return array<string, mixed>
    */
@@ -310,6 +351,7 @@ class PlayingStateService
       ...json_decode(json_encode(new PlayingResource($playing)), true),
       'my_seat' => $seat,
       'hand' => $seat === null ? null : $this->hand($playing, $seat),
+      'declarer_hand' => $playing === null ? null : $this->declarerHandFor($playing, $seat),
     ];
   }
 }
