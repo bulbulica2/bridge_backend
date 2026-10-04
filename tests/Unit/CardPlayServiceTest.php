@@ -67,6 +67,15 @@ class CardPlayServiceTest extends TestCase
     $this->assertNull(CardPlayService::actingSeat(null, 'N'));
   }
 
+  public function test_a_human_dummy_acts_for_a_robot_declarer(): void
+  {
+    $this->assertSame('S', CardPlayService::actingSeat('S', 'N', dummyPlays: true));
+    $this->assertSame('S', CardPlayService::actingSeat('N', 'N', dummyPlays: true));
+    $this->assertSame('E', CardPlayService::actingSeat('E', 'N', dummyPlays: true));
+    $this->assertSame('W', CardPlayService::actingSeat('W', 'N', dummyPlays: true));
+    $this->assertNull(CardPlayService::actingSeat(null, 'N', dummyPlays: true));
+  }
+
   public function test_the_lead_may_be_any_card_in_the_hand(): void
   {
     $this->assertNull(CardPlayService::illegalReason([], $this->hand('SA H2'), $this->card('H2')));

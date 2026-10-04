@@ -30,7 +30,9 @@ class CardPlayService
 
   /**
    * Play `$card` for `$user` at the table's current playing: from their own
-   * hand, or from dummy's when it is dummy's turn and they are declarer.
+   * hand, or from dummy's when it is dummy's turn and they are declarer —
+   * or from declarer's when they are a human dummy playing for a robot
+   * declarer.
    *
    * The playing's row is locked first, so two cards played at once queue and
    * the second is checked against the first.
@@ -64,16 +66,20 @@ class CardPlayService
       }
 
       $declarer = $playing->declarer_seat;
-      $dummy = Seats::partner($declarer);
+      $dummyPlays = $this->state->dummyPlaysForDeclarer($playing);
 
-      if ($seat === $dummy) {
+      if ($seat === Seats::partner($declarer) && ! $dummyPlays) {
         throw new IllegalPlayException("Dummy doesn't play: declarer plays dummy's cards.");
+      }
+
+      if ($seat === $declarer && $dummyPlays) {
+        throw new IllegalPlayException("Your partner, dummy, plays declarer's cards.");
       }
 
       $plays = $this->state->plays($playing);
       $turn = self::nextToPlay($plays, $declarer, $this->state->trump($playing));
 
-      if ($seat !== self::actingSeat($turn, $declarer)) {
+      if ($seat !== self::actingSeat($turn, $declarer, $dummyPlays)) {
         throw new IllegalPlayException("It is not your turn: $turn plays next.");
       }
 
@@ -147,11 +153,19 @@ class CardPlayService
 
   /**
    * The seat of the player who acts for `$turn`: its own player, except
-   * dummy's hand, which declarer plays.
+   * dummy's hand, which declarer plays — or, when `$dummyPlays` (a human
+   * dummy partnering a robot declarer, `PlayingStateService::
+   * dummyPlaysForDeclarer()`), both of that side's hands, which dummy plays.
    */
-  public static function actingSeat(?string $turn, string $declarer): ?string
+  public static function actingSeat(?string $turn, string $declarer, bool $dummyPlays = false): ?string
   {
-    return $turn === Seats::partner($declarer) ? $declarer : $turn;
+    $dummy = Seats::partner($declarer);
+
+    if ($turn !== $declarer && $turn !== $dummy) {
+      return $turn;
+    }
+
+    return $dummyPlays ? $dummy : $declarer;
   }
 
   /**

@@ -54,6 +54,7 @@ class PlayingStateTest extends TestCase
           'players' => null,
           'my_seat' => null,
           'hand' => null,
+          'declarer_hand' => null,
           'turn' => null,
           'acting_user_id' => null,
           'auction' => null,
@@ -222,13 +223,14 @@ class PlayingStateTest extends TestCase
     Event::assertDispatched(PlayingUpdated::class, function (PlayingUpdated $event) use ($table, $players) {
       $payload = $event->broadcastWith()['playing'];
       $public = $this->actingAs($players['N'])->getJson("/tables/$table->id/playing")->json('data');
-      unset($public['my_seat'], $public['hand']);
+      unset($public['my_seat'], $public['hand'], $public['declarer_hand']);
 
       return $event->broadcastOn() == [new PrivateChannel("table.$table->id")]
         && $payload === $public
         && $payload['phase'] === 'auction'
         && ! array_key_exists('hand', $payload)
         && ! array_key_exists('my_seat', $payload)
+        && ! array_key_exists('declarer_hand', $payload)
         && ! str_contains(json_encode($payload), 'rank');
     });
   }

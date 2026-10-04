@@ -283,6 +283,8 @@ vendor/bin/pint --test            # check formatting without changing files
   Dealing a board dispatches `PlayingUpdated` (table channel, the
   public game state only — no hand, no `my_seat`) and one `HandDealt` per
   human player (their own channel, their 13 cards) when it deals a board.
+  An auction won by a robot whose dummy is a human also sends that human
+  `DeclarerHandShown` (their own channel, declarer's 13 cards).
   `AuctionService` re-dispatches `PlayingUpdated` after every accepted call,
   `CardPlayService` after every accepted card and `ClaimService` after every
   accepted claim action.
@@ -306,7 +308,11 @@ vendor/bin/pint --test            # check formatting without changing files
   opening lead), `claim` while one is pending, plus `result` once the board
   is finished. `dummy_hand` and `claim.hand` are public — they go on the
   table channel — because dummy and a claimer are face up; no other hand
-  may.
+  may. `stateFor()` adds `declarer_hand` only for a human dummy whose
+  declarer is a robot (`dummyPlaysForDeclarer()`, from the seat snapshot):
+  that human plays **both** hands — `actingUserId()` is theirs on declarer's
+  and dummy's turns — and claims/answers/withdraws for declarer's seat,
+  while the robot declarer never acts in the play.
 - **Auction**: `App\Services\AuctionService::call()` runs one call in a
   transaction that `lockForUpdate`s the `board_table` row
   (`PlayingStateService::currentPlaying($table, lock: true)`), so concurrent
@@ -327,7 +333,9 @@ vendor/bin/pint --test            # check formatting without changing files
   unit-tested in `tests/Unit/CardPlayServiceTest`, and
   `App\Exceptions\IllegalPlayException` mapped to a 409. Declarer plays
   dummy's cards, so a `cardplays` row's `user_id` is the caller and its
-  `seat` the hand the card came from; dummy's own user is always refused.
+  `seat` the hand the card came from; dummy's own user is always refused —
+  except with a robot declarer and a human dummy, where it is the other
+  way round (`actingSeat($turn, $declarer, $dummyPlays)`).
   After each 4th card the winner's row gets `won_trick`; after the 13th trick
   it calls `BoardTable::finish($tricksWon)`.
   Compare cards by `rank` (not contiguous: 11 is skipped), never by id.
@@ -350,7 +358,8 @@ vendor/bin/pint --test            # check formatting without changing files
   `robot-*` usernames. The queued listener `App\Listeners\DriveRobots`
   (auto-discovered, delay `bridge.robot_delay_seconds`) runs
   `RobotService::act()` after every `PlayingUpdated`: **one** robot move —
-  call, card (declarer's robot plays dummy) or a claim of the rest when
+  call, card (declarer's robot plays dummy; a robot declarer with a human
+  dummy never moves in the play) or a claim of the rest when
   every trick left is a top winner (once per position: a `Cache::add()`
   key stops a re-claim after a rejection), claim answer, or ready for the
   next board — through the normal services, only while a human is seated

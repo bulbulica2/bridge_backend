@@ -34,6 +34,18 @@ class ClaimServiceTest extends TestCase
     $this->assertStringStartsWith('The table has no board yet', ClaimService::illegalPlayerReason(PlayingStateService::PHASE_WAITING, null, null));
   }
 
+  public function test_a_human_dummy_claims_for_a_robot_declarer_who_never_does(): void
+  {
+    foreach (['S', 'E', 'W'] as $seat) {
+      $this->assertNull(ClaimService::illegalPlayerReason(PlayingStateService::PHASE_PLAY, $seat, 'N', dummyPlays: true));
+    }
+
+    $this->assertSame(
+      "Your partner, dummy, plays declarer's cards and claims for declarer's side.",
+      ClaimService::illegalPlayerReason(PlayingStateService::PHASE_PLAY, 'N', 'N', dummyPlays: true)
+    );
+  }
+
   /**
    * claimer, declarer, the seats that must accept
    */
