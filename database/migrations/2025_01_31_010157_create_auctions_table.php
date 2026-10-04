@@ -22,6 +22,12 @@ return new class extends Migration
       $table->foreignId('user_id')->constrained('users');
       $table->foreignId('bid_id')->constrained('bids');
       $table->enum('seat', Seats::SEATS);
+      // a self-alert: the bidder marked the call as conventional and may say
+      // what it means (the opponents see it, partner doesn't)
+      $table->boolean('alerted')->default(false);
+      $table->string('explanation', 200)->nullable();
+      // the opponent's seat with a question about this call still open
+      $table->enum('question_seat', Seats::SEATS)->nullable();
       $table->timestamps();
     });
   }

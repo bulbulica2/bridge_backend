@@ -3,13 +3,17 @@
 namespace App\Services;
 
 use App\auxiliary\Seats;
+use App\Events\CallAlerted;
+use App\Events\CallQuestioned;
 use App\Events\DeclarerHandShown;
 use App\Events\PlayingUpdated;
 use App\Exceptions\IllegalCallException;
+use App\Models\Auction;
 use App\Models\Bid;
 use App\Models\BoardTable;
 use App\Models\Table;
 use App\Models\User;
+use App\Robots\RobotBidder;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -21,13 +25,19 @@ use Illuminate\Support\Facades\DB;
  * `['seat' => 'N', 'bid' => Bid]` pair in the order they were made, so they
  * work the same on the stored auction (`PlayingStateService::calls()`) and in
  * unit tests with no database.
+ *
+ * Alerts (`GAME-RULES.md` §4) are self-alerts: the bidder marks their own
+ * call and may say what it means. The two opponents learn it on their own
+ * channels (`CallAlerted`), never partner, and may ask about any call of
+ * the other side (`ask()`), which its bidder answers (`explain()`).
  */
 class AuctionService
 {
   public function __construct(private PlayingStateService $state) {}
 
   /**
-   * Make `$user`'s call at the table's current playing.
+   * Make `$user`'s call at the table's current playing, alerted when
+   * `$alert` is set or there is an `$explanation` (blank counts as none).
    *
    * The playing's row is locked first, so two players calling at once queue
    * behind each other and the second sees the first one's call when it works
@@ -35,9 +45,12 @@ class AuctionService
    *
    * @throws IllegalCallException
    */
-  public function call(Table $table, User $user, Bid $bid): void
+  public function call(Table $table, User $user, Bid $bid, bool $alert = false, ?string $explanation = null): void
   {
-    DB::transaction(function () use ($table, $user, $bid) {
+    $explanation = self::cleanExplanation($explanation);
+    $alert = $alert || $explanation !== null;
+
+    DB::transaction(function () use ($table, $user, $bid, $alert, $explanation) {
       $playing = $this->state->currentPlaying($table, lock: true);
 
       if ($playing === null) {
@@ -71,7 +84,13 @@ class AuctionService
         'user_id' => $user->id,
         'bid_id' => $bid->id,
         'seat' => $seat,
+        'alerted' => $alert,
+        'explanation' => $explanation,
       ]);
+
+      if ($alert) {
+        $this->alertTo($playing, $seat, count($calls), $explanation);
+      }
 
       $calls[] = ['seat' => $seat, 'bid' => $bid];
 
@@ -81,6 +100,143 @@ class AuctionService
 
       PlayingUpdated::dispatch($table);
     });
+  }
+
+  /**
+   * `$user` asks what the call at `$index` of the auction (from 0) means: a
+   * call of the other side, until the board is finished, one open question
+   * per call. A robot bidder answers at once with what its system reads
+   * into that call (`RobotBidder::read()`); a human gets `CallQuestioned`.
+   * Returns whether the question was answered at once.
+   *
+   * @throws IllegalCallException
+   */
+  public function ask(Table $table, User $user, int $index): bool
+  {
+    return DB::transaction(function () use ($table, $user, $index) {
+      [$playing, $seat, $call] = $this->callAt($table, $user, $index);
+
+      if ($call->seat === $seat || $call->seat === Seats::partner($seat)) {
+        throw new IllegalCallException("Ask the opponents about their own calls: that call is your side's.");
+      }
+
+      if ($call->question_seat !== null) {
+        throw new IllegalCallException("{$call->question_seat} has asked about that call already: wait for the answer.");
+      }
+
+      $bidder = $playing->seats->firstWhere('seat', $call->seat)->user;
+
+      if ($bidder->is_robot) {
+        $calls = array_map(
+          fn ($made) => ['seat' => $made['seat'], 'call' => $made['bid']->suit],
+          $this->state->calls($playing),
+        );
+
+        $this->answer($playing, $call, $index, RobotBidder::read($calls)[$index]->explanation());
+
+        return true;
+      }
+
+      $call->update(['question_seat' => $seat]);
+
+      CallQuestioned::dispatch((int) $bidder->id, (int) $playing->table_id, (int) $playing->id, $index, $seat);
+
+      return false;
+    });
+  }
+
+  /**
+   * `$user` explains their own call at `$index`: the answer to an open
+   * question, a fix to their alert's explanation, or a late alert. It
+   * alerts the call and closes its question, and both opponents get it.
+   *
+   * @throws IllegalCallException
+   */
+  public function explain(Table $table, User $user, int $index, string $explanation): void
+  {
+    $explanation = trim($explanation);
+
+    DB::transaction(function () use ($table, $user, $index, $explanation) {
+      [$playing, $seat, $call] = $this->callAt($table, $user, $index);
+
+      if ($call->seat !== $seat) {
+        throw new IllegalCallException('Only its bidder can explain a call.');
+      }
+
+      $this->answer($playing, $call, $index, $explanation);
+    });
+  }
+
+  /**
+   * The current playing (locked), `$user`'s seat in it and the call at
+   * `$index`, for a question or an explanation: refused once the board is
+   * finished, since every alert is public then.
+   *
+   * @return array{BoardTable, string, Auction}
+   *
+   * @throws IllegalCallException
+   */
+  private function callAt(Table $table, User $user, int $index): array
+  {
+    $playing = $this->state->currentPlaying($table, lock: true);
+
+    if ($playing === null) {
+      throw new IllegalCallException('The table has no board yet.');
+    }
+
+    if ($this->state->phase($playing) === PlayingStateService::PHASE_FINISHED) {
+      throw new IllegalCallException('The board is over: every alert is public now.');
+    }
+
+    $seat = $this->state->seatOf($playing, $user);
+
+    if ($seat === null) {
+      throw new IllegalCallException('You are not playing this board.');
+    }
+
+    $call = $playing->auctions->sortBy('id')->values()->get($index);
+
+    if ($call === null) {
+      throw new IllegalCallException("There is no call $index in the auction.");
+    }
+
+    return [$playing, $seat, $call];
+  }
+
+  /**
+   * Alert `$call` with `$explanation`, close its question and tell both
+   * opponents.
+   */
+  private function answer(BoardTable $playing, Auction $call, int $index, string $explanation): void
+  {
+    $call->update(['alerted' => true, 'explanation' => $explanation, 'question_seat' => null]);
+
+    $this->alertTo($playing, $call->seat, $index, $explanation);
+  }
+
+  /**
+   * Send the call at `$index`, made from `$seat`, to the humans among that
+   * seat's two opponents (`CallAlerted`): never to partner.
+   */
+  private function alertTo(BoardTable $playing, string $seat, int $index, ?string $explanation): void
+  {
+    foreach ([Seats::next($seat), Seats::partner(Seats::next($seat))] as $opponent) {
+      $user = $playing->seats->firstWhere('seat', $opponent)->user;
+
+      if (! $user->is_robot) {
+        CallAlerted::dispatch((int) $user->id, (int) $playing->table_id, (int) $playing->id, $index, $explanation);
+      }
+    }
+  }
+
+  /**
+   * An explanation as stored: trimmed, null when blank.
+   */
+  private static function cleanExplanation(?string $explanation): ?string
+  {
+    $explanation = trim((string) $explanation);
+
+    return $explanation === '' ? null : $explanation;
   }
 
   /**

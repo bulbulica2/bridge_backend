@@ -344,6 +344,19 @@ vendor/bin/pint --test            # check formatting without changing files
   it saves `contract_bid_id`, `doubled`, `declarer_seat`, `declarer_id` (from
   the `board_table_seats` snapshot) and `auction_ended_at`; a passed out
   board is finished at once through `BoardTable::finish(null)` (score 0).
+- **Alerts**: self-alerts, for the bidder's **opponents only** until the
+  board is finished. A call's `alert`/`explanation` (≤ 200 chars) are
+  stored on `auctions` (`alerted`, `explanation`, `question_seat` for an
+  open question); `AuctionService::ask()`
+  (`POST /tables/{table}/calls/{index}/question`, `index` from 0) and
+  `explain()` (`PUT .../explanation`) use the same row lock. Alerts go out
+  as `CallAlerted` on the two opponents' own channels, questions as
+  `CallQuestioned` to the bidder; a robot alerts the rules marked
+  `alert: true` in `BiddingSystem` and answers questions at once with
+  `RobotBidder::read()`. `PlayingStateService::alerts()` adds `alert` and
+  `question` to each `auction` entry in `stateFor()` only (null for
+  partner's calls) — never in `PlayingResource`'s public part, so never in
+  `PlayingUpdated`; the review (`forReview()`) shows every `alert`.
 - **Card play**: `App\Services\CardPlayService::play()`
   (`POST /tables/{table}/cards`, `Game\CardPlayController`) follows the same
   pattern: one transaction with the `board_table` row locked, static rules

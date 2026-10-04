@@ -75,6 +75,8 @@ class RobotFallbackTest extends TestCase
     $this->assertCount(1, $calls);
     $this->assertSame('N', $calls[0]['seat']);
     $this->assertTrue($calls[0]['bid']->isPass());
+    // the alert went with the refused call
+    $this->assertFalse($playing->auctions()->sole()->alerted);
   }
 
   public static function badCards(): array
@@ -126,9 +128,11 @@ class RobotFallbackTest extends TestCase
         );
       }
 
-      protected function chooseCall(array $state): string
+      protected function chooseCall(array $state): array
       {
-        return $this->call ?? parent::chooseCall($state);
+        return $this->call === null
+          ? parent::chooseCall($state)
+          : ['call' => $this->call, 'alert' => true, 'explanation' => 'Made up'];
       }
 
       protected function chooseCard(array $state): int

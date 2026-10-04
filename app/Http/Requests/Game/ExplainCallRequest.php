@@ -6,7 +6,7 @@ use App\Models\Auction;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Foundation\Http\FormRequest;
 
-class MakeCallRequest extends FormRequest
+class ExplainCallRequest extends FormRequest
 {
   public function authorize(): bool
   {
@@ -19,16 +19,12 @@ class MakeCallRequest extends FormRequest
   public function rules(): array
   {
     return [
-      // one of the 38 calls: P, X, XX, 1C…7NT
-      'bid_id' => ['required', 'integer', 'exists:bids,id'],
-      // a self-alert, for the opponents only; an explanation alerts too
-      'alert' => ['sometimes', 'boolean'],
-      'explanation' => ['nullable', 'string', 'max:'.Auction::EXPLANATION_MAX],
+      'explanation' => ['required', 'string', 'max:'.Auction::EXPLANATION_MAX],
     ];
   }
 
   protected function failedAuthorization(): void
   {
-    throw new AuthorizationException('Only the players seated at this table can make calls.');
+    throw new AuthorizationException('Only the players seated at this table can explain a call.');
   }
 }

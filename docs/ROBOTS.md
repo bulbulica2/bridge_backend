@@ -117,13 +117,38 @@ the suits partner's no trump promised stopped and whether the last call
 invites game. That is what "partner's minimum" and "partner's maximum"
 mean below.
 
-Each call's meaning has a short **explanation**, ready for bid alerts:
+Each call's meaning has a short **explanation**:
 "Stayman: 8–17 HCP, asks for a four-card major", "Weak two: 5–11 HCP,
 6+ ♥", "Takeout double: 12+ HCP, short in ♦, asks partner to pick a suit",
 "Invitation: 11–12 HCP, balanced, ♠ stopped, invites game".
 `RobotBidder::bid()` returns it with the robot's call, and
-`RobotBidder::read()` explains every call of an auction. The API doesn't
-send explanations yet.
+`RobotBidder::read()` explains every call of an auction.
+
+### Alerts
+
+A robot **alerts** its conventional and artificial calls to the opponents,
+with the explanation above, as a human does with `alert` on
+`POST /tables/{table}/calls` ([`API.md`](API.md#alerts)). Which calls those
+are is marked on the rule itself in `BiddingSystem` (`alert: true` on its
+`BidMeaning`), and `RobotBidder::bid()` returns it as `alert`:
+
+- **Stayman** (2♣/3♣ over 1NT/2NT) — but not the answer to it;
+- **Jacoby transfers** (2♦/2♥, 3♦/3♥) and the **super-accept** — but not
+  the plain completion of a transfer;
+- the **strong 2♣** opening and the **2♦ waiting** answer;
+- **Gerber** (4♣ over no trump) and **Blackwood** (4NT), and the **ace
+  answers** to either;
+- **fourth suit forcing**;
+- the **negative double**;
+- the **penalty double of no trump**: of their 1NT/2NT opening, of a 1NT
+  overcall of partner's opening, and of their no trump later on.
+
+Natural calls aren't alerted — openings, raises, overcalls, the takeout
+double, no trump bids, the quantitative 4NT, passes — nor is a call that
+fell back to a pass. Asked about **any** of its calls
+(`POST /tables/{table}/calls/{index}/question`), a robot answers at once,
+with `RobotBidder::read()`'s explanation of that call ("Natural" for one
+no rule makes), which alerts the call and goes to both opponents.
 
 ### Hand evaluation
 
@@ -939,7 +964,9 @@ set — a human alone with three robots presses it once.
 - A call's meaning is read from its rules alone: when several rules make
   the same call, partner sees the widest of their ranges, not the hands the
   earlier rules have already taken.
-- Bid explanations are worked out but not sent to clients (no alerts yet).
+- A robot never asks about the opponents' calls, nor reads their alerts:
+  it reads every call through its own system (a call it doesn't know is
+  "Natural").
 - No inferences from the auction in the play: nobody places an honour or
   a long suit from the bidding, and the ending search takes every layout
   as equally likely.
@@ -968,7 +995,7 @@ set — a human alone with three robots presses it once.
 |---|---|---|
 | hand evaluation | `App\Robots\RobotHand` | `tests/Unit/Robots/RobotHandTest` |
 | bidding: the system | `App\Robots\BiddingSystem` (the rules for each position), `App\Robots\BidRule`, `App\Robots\BidMeaning` (a call's meaning and explanation), `App\Robots\AuctionView` (the auction as one seat sees it, legal calls, `shown()`) | `tests/Unit/Robots/RobotBidderTest` |
-| bidding: the robot | `App\Robots\RobotBidder` (`choose()`, `bid()` with the explanation, `read()`, `shown()`) | `tests/Unit/Robots/RobotBidderTest` (a case for each convention above, and 500 random deals bid by four robots: each call checked by `AuctionService`, and each robot's HCP inside the range its own call shows) |
+| bidding: the robot | `App\Robots\RobotBidder` (`choose()`, `bid()` with the explanation and `alert`, `read()`, `shown()`) | `tests/Unit/Robots/RobotBidderTest` (a case for each convention above, which calls are alerted, and 500 random deals bid by four robots: each call checked by `AuctionService`, and each robot's HCP inside the range its own call shows) |
 | card play | `App\Robots\RobotCardPlayer` (`choose()`), `App\Robots\PlayView` (what the seat knows: hands it sees, cards out, voids, tricks needed), `App\Robots\DeclarerPlan` (the count and the line), `App\Robots\DeclarerPlay`, `App\Robots\DefenderPlay`, `App\Robots\LeadSafety` (what a defender on lead sees in dummy: ruffs, ruff-and-discards, tenaces, weak suits, a trump to cut the ruffs), `App\Robots\Signals`, `App\Robots\Discards`, `App\Robots\Endgame` (the last four tricks) | `tests/Unit/Robots/RobotCardPlayerTest` (a case for each technique above, and 80 random deals played out, each card checked by `CardPlayService`), `tests/Unit/Robots/DeclarerPlanTest` |
 | double dummy | `App\Robots\DoubleDummy` (`tricks()`, `cardValues()`: an exhaustive search with alpha-beta, fine for endings of a few tricks) | `tests/Unit/Robots/DoubleDummyTest` (against a plain minimax on random endings) |
 | claims | `App\Robots\RobotClaims` (`claim()`, `accepts()`, `doubleDummy()`, `sureWinners()`) | `tests/Unit/Robots/RobotClaimsTest`, `tests/Feature/Game/RobotPlayTest` |

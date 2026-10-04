@@ -329,7 +329,11 @@ Clients get the ids from `GET /bids` (`Game\BidController`, see
 
 ### Auction (`auctions`)
 Fields: `board_table_id`, `user_id`, `bid_id` (all FK), `seat` (enum
-`Seats::SEATS`).
+`Seats::SEATS`), `alerted` (boolean, default false, cast), `explanation`
+(nullable string, at most `Auction::EXPLANATION_MAX` = 200 characters) and
+`question_seat` (nullable enum `Seats::SEATS`): the call's self-alert, what
+its bidder says it means, and the opponent whose question about it is still
+open (null once answered). See [`API.md`](API.md#alerts) for who sees them.
 Represents one call made by one user, at one seat, in one playing (a
 `board_table` row, i.e. one board at one table) — a sequence of these rows is
 the bidding history of that playing. The board and table are reached through

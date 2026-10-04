@@ -72,6 +72,13 @@ Route::middleware('auth')->group(function () {
       // the next call in the auction: bid, pass, double or redouble
       Route::post('tables/{table}/calls', [CallController::class, 'store'])->name('tables.calls.store');
 
+      // ask the opponents what one of their calls means (index in the
+      // auction, from 0), or explain your own: until the board is finished
+      Route::post('tables/{table}/calls/{index}/question', [CallController::class, 'question'])
+        ->whereNumber('index')->name('tables.calls.question');
+      Route::put('tables/{table}/calls/{index}/explanation', [CallController::class, 'explain'])
+        ->whereNumber('index')->name('tables.calls.explanation');
+
       // the next card of the trick, from your own hand or, as declarer, dummy's
       Route::post('tables/{table}/cards', [CardPlayController::class, 'store'])->name('tables.cards.store');
 
