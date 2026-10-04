@@ -392,7 +392,7 @@ vendor/bin/pint --test            # check formatting without changing files
   and the table isn't unattended. The decisions are pure classes in
   `app/Robots/` (`RobotHand`, `RobotBidder`; `RobotCardPlayer` over a
   `PlayView`, with `DeclarerPlan`, `DeclarerPlay`, `DefenderPlay`,
-  `Signals`, `Discards` and `Endgame`; `RobotClaims`; `DoubleDummy`, the
+  `LeadSafety`, `Signals`, `Discards` and `Endgame`; `RobotClaims`; `DoubleDummy`, the
   exhaustive solver the last two use on small endings) over the robot's own
   `stateFor()` arrays — never another hand — unit-tested in
   `tests/Unit/Robots/`. `RobotSimulationTest` has four robots bid and play

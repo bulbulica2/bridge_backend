@@ -4,11 +4,11 @@ namespace App\Robots;
 
 /**
  * A defender's cards (`docs/ROBOTS.md` lists the rules): the opening lead,
- * later leads that read partner's signals, second hand low (covering an
- * honour dummy leads, taking the setting trick), third hand high enough to
- * beat dummy, signals when not trying to win, and holding up an ace
- * against dummy's long suit for as long as partner's count says declarer
- * can still reach it.
+ * later leads that read partner's signals and dummy (`LeadSafety`), second
+ * hand low (covering an honour dummy leads, taking the setting trick),
+ * third hand high enough to beat dummy, signals when not trying to win,
+ * and holding up an ace against dummy's long suit for as long as
+ * partner's count says declarer can still reach it.
  */
 class DefenderPlay
 {
@@ -307,7 +307,8 @@ class DefenderPlay
 
   /**
    * A suit partner has shown out of (and may still ruff in, trumps being
-   * out), led with a suit-preference card. Null when there is none.
+   * out), led with a suit-preference card, unless it gives declarer a
+   * ruff-and-discard. Null when there is none.
    *
    * @return array{id: int, suit: string, rank: int}|null
    */
@@ -323,7 +324,7 @@ class DefenderPlay
     foreach (RobotHand::SUITS as $suit) {
       $cards = $view->hand->cards($suit);
 
-      if ($suit !== $trump && $cards !== [] && $view->isVoid($partner, $suit)) {
+      if ($suit !== $trump && $cards !== [] && $view->isVoid($partner, $suit) && ! LeadSafety::ruffAndDiscard($view, $suit)) {
         return Signals::suitPreference($view, $cards);
       }
     }
@@ -333,7 +334,8 @@ class DefenderPlay
 
   /**
    * Having just ruffed partner's lead, the suit partner's card asked for
-   * back: its master, or the lowest. Null otherwise.
+   * back: its master, or the lowest. Null otherwise, or when declarer's
+   * side would ruff it.
    *
    * @return array{id: int, suit: string, rank: int}|null
    */
@@ -353,7 +355,7 @@ class DefenderPlay
     }
 
     $suit = Signals::readSuitPreference($view, $last['cards'][0]['card']);
-    $cards = $suit === null ? [] : $view->hand->cards($suit);
+    $cards = $suit === null || LeadSafety::ruffed($view, $suit) ? [] : $view->hand->cards($suit);
 
     if ($cards === []) {
       return null;
@@ -364,7 +366,8 @@ class DefenderPlay
 
   /**
    * A sure winner outside trumps: the top card of the first suit, in
-   * ♠ ♥ ♦ ♣ order, whose top card is a master.
+   * ♠ ♥ ♦ ♣ order, whose top card is a master and that declarer's side
+   * can't ruff.
    *
    * @return array{id: int, suit: string, rank: int}|null
    */
@@ -373,7 +376,7 @@ class DefenderPlay
     foreach (RobotHand::SUITS as $suit) {
       $cards = $view->hand->cards($suit);
 
-      if ($suit !== $view->trump && $cards !== [] && $view->isMaster($cards[0])) {
+      if ($suit !== $view->trump && $cards !== [] && $view->isMaster($cards[0]) && ! LeadSafety::ruffed($view, $suit)) {
         return $cards[0];
       }
     }
@@ -384,7 +387,7 @@ class DefenderPlay
   /**
    * Back to the suit partner led first: the higher of two cards left,
    * else the lowest. Null when partner has led nothing we hold, or only
-   * trumps.
+   * trumps, or declarer's side would ruff it.
    *
    * @return array{id: int, suit: string, rank: int}|null
    */
@@ -399,7 +402,7 @@ class DefenderPlay
 
       $cards = $view->hand->cards($lead['card']['suit']);
 
-      if ($cards === []) {
+      if ($cards === [] || LeadSafety::ruffed($view, $lead['card']['suit'])) {
         return null;
       }
 
@@ -412,9 +415,8 @@ class DefenderPlay
   /**
    * On with the suit this hand led first when partner encouraged it
    * (the next card: top of what is left when that is a sequence or a
-   * master, else low); otherwise a new suit, led as an opening lead would
-   * be, but away from suits partner discouraged (on our lead or by a
-   * discard), towards one partner asked for with a discard.
+   * master, else low), or to a suit partner asked for with a discard,
+   * unless declarer's side would ruff it; otherwise a switch.
    *
    * @return array{id: int, suit: string, rank: int}
    */
@@ -434,7 +436,7 @@ class DefenderPlay
       $likes = Signals::partnerLikes($view, $mine);
       $cards = $view->hand->cards($mine);
 
-      if ($likes === true && $cards !== []) {
+      if ($likes === true && $cards !== [] && ! LeadSafety::ruffed($view, $mine)) {
         $sequence = count($cards) >= 2 && PlayView::touching($cards[0]['rank'], $cards[1]['rank']) && $cards[0]['rank'] >= 10;
 
         return $sequence || $view->isMaster($cards[0]) ? $cards[0] : end($cards);
@@ -448,7 +450,7 @@ class DefenderPlay
     foreach (Signals::partnerDiscards($view) as $suit => $asks) {
       $cards = $view->hand->cards($suit);
 
-      if ($asks && $cards !== []) {
+      if ($asks && $cards !== [] && ! LeadSafety::ruffed($view, $suit)) {
         return $view->isMaster($cards[0]) ? $cards[0] : end($cards);
       }
 
@@ -457,6 +459,47 @@ class DefenderPlay
       }
     }
 
-    return self::openingLead($view->hand, $view->trump, $avoid);
+    return self::switchLead($view, $avoid);
+  }
+
+  /**
+   * A new suit, seeing dummy: a side suit that breaks no rule (not into a
+   * ruff or up to dummy's tenace), partner didn't discourage and dummy is
+   * weak in; else a trump to cut dummy's ruffs when it is short in a suit
+   * the defence holds; else the side suit that breaks no rule, away from
+   * those partner discouraged, dummy's weak suit first; when every side
+   * suit breaks one, a trump, else the one that breaks the least. The suit
+   * is led as an opening lead would be.
+   *
+   * @param  list<string>  $discouraged
+   * @return array{id: int, suit: string, rank: int}
+   */
+  private static function switchLead(PlayView $view, array $discouraged): array
+  {
+    $keys = [];
+
+    foreach (RobotHand::SUITS as $suit) {
+      if ($suit !== $view->trump && $view->hand->length($suit) > 0) {
+        $keys[$suit] = [LeadSafety::fault($view, $suit), in_array($suit, $discouraged, true), ! LeadSafety::dummyWeak($view, $suit)];
+      }
+    }
+
+    if ($keys === []) {
+      return self::openingLead($view->hand, $view->trump);
+    }
+
+    $best = min($keys);
+    $trumps = $view->trump === null ? [] : $view->hand->cards($view->trump);
+    $cut = $best === [0, false, false] ? null : LeadSafety::cutRuffs($view);
+
+    if ($cut !== null) {
+      return $cut;
+    }
+
+    if ($best[0] > 0 && $trumps !== []) {
+      return end($trumps);
+    }
+
+    return self::openingLead($view->hand, $view->trump, array_keys(array_filter($keys, fn ($key) => $key !== $best)));
   }
 }

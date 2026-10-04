@@ -249,6 +249,50 @@ class RobotCardPlayerTest extends TestCase
     $this->assertSame($this->card($lead)['id'], RobotCardPlayer::choose($state));
   }
 
+  /**
+   * A defender on lead seeing dummy: contract, declarer, the leader, the
+   * tricks so far, the leader's hand, dummy's, the leads allowed.
+   */
+  public static function defenceSeesDummy(): array
+  {
+    // 2♣ by S: dummy N is out of hearts with one trump left (♣2), holds
+    // ♦A-Q-J and a weak ♠J-7-4; E leads with dummy on its right
+    $twoClubs = 'W HK, N H6, E H2, S H3; W HA, N C3, E H4, S H5; N S2, E SA, S S3, W S5';
+
+    return [
+      'not into dummy\'s ruff or tenace: a trump or dummy\'s weak suit' => ['2C', 'S', 'E', $twoClubs, 'A86.J942.T98.T95', 'J742.6.AQJ654.32', ['S8', 'C5']],
+      'no master cashed in a suit dummy ruffs' => ['2C', 'S', 'E', $twoClubs, 'A86.Q942.T98.T95', 'J742.6.AQJ654.32', ['S8', 'C5']],
+      // 4♠ by S: dummy and declarer are both out of hearts, dummy holds
+      // trumps; E has nothing but hearts and trumps
+      'no ruff-and-discard: a trump instead' => ['4S', 'S', 'E', 'W HK, N S2, E H3, S H4; N D2, E DA, S D3, W D4; E H5, S C3, W H6, N S3; N D5, E DK, S D7, W D8', '9654.QJT9853.AK.-', 'Q732.-.Q952.J8642', ['S4']],
+      // 6♠ by S, out of spades and hearts like dummy: partner E is out
+      // of hearts and holds the trumps above dummy's J, and dummy plays
+      // before partner, who over-ruffs for the setting trick
+      'a ruff-and-discard for partner to beat the contract' => ['6S', 'S', 'W', 'W D2, N D3, E D4, S DA; S C2, W C3, N CA, E C4; N SA, E S3, S C5, W S4; N HA, E D5, S C6, W H3; N D6, E D7, S D8, W DQ', '4.KQJT93.QJ2.T73', 'AJ2.A.9763.AKQ98', ['H9']],
+      'no ruff-and-discard with the contract not at stake' => ['5S', 'S', 'W', 'W D2, N D3, E D4, S DA; S C2, W C3, N CA, E C4; N SA, E S3, S C5, W S4; N HA, E D5, S C6, W H3; N D6, E D7, S D8, W DQ', '4.KQJT93.QJ2.T73', 'AJ2.A.9763.AKQ98', ['DJ', 'C7', 'CT']],
+      // 4♥ by S: dummy is out of spades and keeps its trumps to ruff them
+      'a trump to cut dummy\'s ruffs' => ['4H', 'S', 'E', 'W DQ, N DA, E C3, S D3; N C2, E CA, S C5, W C4', 'KT973.962.-.AJ983', '-.J843.AK65.KQ762', ['H2']],
+      // 4♠ by N: partner encouraged E's hearts, but dummy is out of them now
+      'no continuing a suit dummy ruffs' => ['4S', 'N', 'E', 'E HK, S H2, W H9, N S7; N CQ, E CA, S C6, W C2', '54.KJ43.954.AT98', 'KQJ73.-.QJT8.Q543', ['CT']],
+      // 3NT by S: dummy N holds ♦A-Q-5; W has it on its left, E on its right
+      'through dummy\'s tenace' => ['3NT', 'S', 'W', 'W HA, N H2, E H3, S H4', '-.A.9876432.87654', 'A532.K62.AQ5.KQ2', ['D6']],
+      'not up to dummy\'s tenace' => ['3NT', 'S', 'E', 'W H5, N H2, E HA, S H4', '-.A.9876432.87654', 'A532.K62.AQ5.KQ2', ['C5']],
+    ];
+  }
+
+  /**
+   * @param  list<string>  $leads
+   */
+  #[DataProvider('defenceSeesDummy')]
+  public function test_a_defender_on_lead_sees_dummy(string $contract, string $declarer, string $leader, string $tricks, string $hand, string $dummy, array $leads): void
+  {
+    $strain = substr($contract, 1);
+    $state = $this->state($strain, $declarer, $leader, $this->cards($hand), $this->cards($dummy), [], $this->tricks($strain, $tricks), (int) $contract[0]);
+    $ids = array_map(fn ($lead) => $this->card($lead)['id'], $leads);
+
+    $this->assertContains(RobotCardPlayer::choose($state), $ids);
+  }
+
   public function test_hold_up_the_ace_against_dummys_long_suit_by_partners_count(): void
   {
     // 3NT by S; dummy N holds K-Q-J-T-4 of diamonds and no other winner; E

@@ -505,6 +505,10 @@ card.
   own hand, not in dummy or (for declarer) the other hand.
 - **Shown out**: a player who didn't follow suit has no more of that suit.
   Robots remember it for every seat.
+- **Tenace**: two cards of a suit with a card missing between them (A-Q,
+  K-J): the lower one wins if the missing card is played before them.
+- **Ruff-and-discard**: leading a suit both opponents are out of while
+  one has a trump: one ruffs, the other throws a loser.
 - **Spot card**: a 10 or lower.
 
 ### Declarer's plan
@@ -649,23 +653,78 @@ the hand playing, to have one to duck with.
 
 ### A defender on lead later
 
-Tried in this order:
+Dummy is face up by now, so the robot leads with it in view. Tried in this
+order:
 
 1. **Give partner a ruff**: in a suit contract, when partner has shown out
    of a side suit this hand holds, and may still have trumps (hasn't shown
    out of them, and some are out), lead that suit — with a
-   [suit-preference](#signals) card.
+   [suit-preference](#signals) card — unless it is a
+   [ruff-and-discard](#leading-with-dummy-in-view).
 2. **Return the suit asked for**: having just ruffed partner's lead, lead
-   the side suit partner's card asked for (its master, else the lowest).
+   the side suit partner's card asked for (its master, else the lowest) —
+   unless declarer's side would [ruff it](#leading-with-dummy-in-view).
 3. **Cash a master** outside trumps: the top card of the first suit, in
-   ♠ ♥ ♦ ♣ order, whose top card is a master.
+   ♠ ♥ ♦ ♣ order, whose top card is a master — and that declarer's side
+   can't ruff.
 4. **Partner's suit**: back to the first side suit partner led — the higher
-   of two cards left, else the lowest.
+   of two cards left, else the lowest — unless declarer's side would ruff
+   it.
 5. **Continue or switch**: on with the suit this hand first led if partner
    **encouraged** it (the top card when it is a master or tops a sequence,
-   else the lowest); otherwise a new suit, chosen as an opening lead would
-   be but away from suits partner **discouraged** (on our lead, or with a
-   low discard) — and to a suit partner asked for with a high discard first.
+   else the lowest), or to a suit partner asked for with a high discard —
+   either only while declarer's side can't ruff it. Otherwise a
+   **switch**, in this order:
+   1. a side suit that breaks no rule below, that partner didn't
+      **discourage** (on our lead, or with a low discard), and that dummy
+      is **weak** in;
+   2. a **trump to cut dummy's ruffs**;
+   3. the side suit that breaks no rule, those partner discouraged last,
+      dummy's weak suits first;
+   4. when every side suit breaks a rule, a **trump** (the lowest), and
+      without one the side suit that breaks the least: up to a tenace,
+      then into a ruff, then a ruff-and-discard last.
+
+   The suit chosen is led as an [opening lead](#a-defenders-opening-lead)
+   would be (top of a sequence, fourth best, never low from an ace against
+   a suit contract).
+
+#### Leading with dummy in view
+
+- **Into a ruff**: a side suit dummy is void in while it still holds a
+  trump, or that declarer has shown out of while it may still hold one
+  (it hasn't shown out of trumps, and some are out). Dummy, or declarer,
+  ruffs even a master there.
+- **A ruff-and-discard**: a side suit **both** declarer and dummy are out
+  of while either holds a trump — one ruffs and the other throws a loser.
+  Never led, not even to give partner a ruff, unless that trick **beats
+  the contract**: the defence needs one more trick, partner is out of the
+  suit too, declarer is out of trumps (so the trumps out are partner's)
+  and one of them beats dummy's best, and dummy plays before partner, who
+  over-ruffs.
+- **Up to dummy's tenace**: dummy plays **last** to the trick (it is on
+  the leader's right) and holds two cards with a card out between them,
+  the lower a 10 or higher (A-Q, A-Q-J, K-J, A-J-10): leading the suit
+  gives declarer a free finesse against partner's honour. Leading
+  **through** it (dummy on the leader's left) is fine — *through strength,
+  up to weakness*.
+- **Dummy's weak suit**: dummy holds no ace, king or queen there (a jack
+  at most, as J-7-4, or nothing), so partner's honours in it are worth
+  something.
+- **Cutting the ruffs**: in a suit contract where dummy still holds a trump
+  and is **void or short** (one or two cards) in a side suit declarer may
+  still hold, with a card above dummy's best there in this hand or out
+  (the defence holds the suit), lead the **lowest trump** — but only with
+  no trump honour to lose (every trump a spot card, or a master on top),
+  and not up to dummy's trump tenace. It comes after a safe suit dummy is
+  weak in: [measured](#robots-against-v1), leading the trump first gave
+  today's declarer more tricks than it saved.
+
+Contract 2♣, dummy ♠J-7-4 ♥— ♦A-Q-J-x-x-x ♣2, the robot on lead with
+dummy on its right: a heart is ruffed by the ♣2, and a diamond lets
+declarer finesse dummy's A-Q-J against partner's king, so it leads a spade
+(dummy's weak suit) — or, were dummy strong in spades, a club, which takes
+dummy's last trump and the heart ruff with it.
 
 ### A defender following
 
@@ -777,12 +836,16 @@ on each side:
 |---|---|---|---|
 | v1 | v1 | 527 (54.2%) | 8.22 |
 | today's | v1 | 680 (70.0%) | 8.83 |
-| v1 | today's | 485 (49.9%) | 8.01 |
-| today's | today's | 656 (67.5%) | 8.62 |
+| v1 | today's | 464 (47.7%) | 7.97 |
+| today's | today's | 653 (67.2%) | 8.62 |
 
 Today's declarer makes about 16 contracts in 100 more than v1 against the
-same defence, and today's defence beats about 4 in 100 more of v1's
-declarers. (Measured with today's bidding: requiring stoppers and shape
+same defence, and today's defence beats about 6 in 100 more of v1's
+declarers. Leading [with dummy in view](#leading-with-dummy-in-view) took
+the last two rows from 485 and 656 contracts made (the defenders taking
+4853 and 4260 tricks) to 464 and 653 (4886 and 4262 tricks); on another
+1000 seeded deals, today's declarer against today's defence went from 612
+contracts made to 602, the defenders' tricks from 4377 to 4374. (Measured with today's bidding: requiring stoppers and shape
 for no trump over the opponents' suits turned about 40 of these contracts
 from no trump into suits or part-scores, and cut the no trump contracts
 going down two or more from 61 to 54.) `tests/Unit/Robots/RobotSimulationTest` runs the same comparison
@@ -889,6 +952,10 @@ set — a human alone with three robots presses it once.
   hold up an ace against dummy's long suit, and suit preference only after
   a ruff; no trump echo or Smith echo, no forcing defence, no uppercuts, no
   ducking other than against dummy's long suit.
+- A defender on lead reads dummy and the suits declarer has shown out of,
+  not declarer's likely hand: it doesn't count declarer's tricks to choose
+  between cashing out and waiting, and leads a trump only to cut dummy's
+  ruffs.
 - Robots claim only all the tricks left, from top winners in the hand on
   lead: no partial claims, no concessions, and they never withdraw a claim.
 - Points are HCP only; nothing for shape or trump support.
@@ -902,7 +969,7 @@ set — a human alone with three robots presses it once.
 | hand evaluation | `App\Robots\RobotHand` | `tests/Unit/Robots/RobotHandTest` |
 | bidding: the system | `App\Robots\BiddingSystem` (the rules for each position), `App\Robots\BidRule`, `App\Robots\BidMeaning` (a call's meaning and explanation), `App\Robots\AuctionView` (the auction as one seat sees it, legal calls, `shown()`) | `tests/Unit/Robots/RobotBidderTest` |
 | bidding: the robot | `App\Robots\RobotBidder` (`choose()`, `bid()` with the explanation, `read()`, `shown()`) | `tests/Unit/Robots/RobotBidderTest` (a case for each convention above, and 500 random deals bid by four robots: each call checked by `AuctionService`, and each robot's HCP inside the range its own call shows) |
-| card play | `App\Robots\RobotCardPlayer` (`choose()`), `App\Robots\PlayView` (what the seat knows: hands it sees, cards out, voids, tricks needed), `App\Robots\DeclarerPlan` (the count and the line), `App\Robots\DeclarerPlay`, `App\Robots\DefenderPlay`, `App\Robots\Signals`, `App\Robots\Discards`, `App\Robots\Endgame` (the last four tricks) | `tests/Unit/Robots/RobotCardPlayerTest` (a case for each technique above, and 80 random deals played out, each card checked by `CardPlayService`), `tests/Unit/Robots/DeclarerPlanTest` |
+| card play | `App\Robots\RobotCardPlayer` (`choose()`), `App\Robots\PlayView` (what the seat knows: hands it sees, cards out, voids, tricks needed), `App\Robots\DeclarerPlan` (the count and the line), `App\Robots\DeclarerPlay`, `App\Robots\DefenderPlay`, `App\Robots\LeadSafety` (what a defender on lead sees in dummy: ruffs, ruff-and-discards, tenaces, weak suits, a trump to cut the ruffs), `App\Robots\Signals`, `App\Robots\Discards`, `App\Robots\Endgame` (the last four tricks) | `tests/Unit/Robots/RobotCardPlayerTest` (a case for each technique above, and 80 random deals played out, each card checked by `CardPlayService`), `tests/Unit/Robots/DeclarerPlanTest` |
 | double dummy | `App\Robots\DoubleDummy` (`tricks()`, `cardValues()`: an exhaustive search with alpha-beta, fine for endings of a few tricks) | `tests/Unit/Robots/DoubleDummyTest` (against a plain minimax on random endings) |
 | claims | `App\Robots\RobotClaims` (`claim()`, `accepts()`, `doubleDummy()`, `sureWinners()`) | `tests/Unit/Robots/RobotClaimsTest`, `tests/Feature/Game/RobotPlayTest` |
 | robots against v1 | `tests/Unit/Robots/Support/` (`RobotTable`: four robots bid and play a deal in memory; `V1CardPlayer`: the first robots' card play, kept as the baseline) | `tests/Unit/Robots/RobotSimulationTest` ([Robots against v1](#robots-against-v1)) |

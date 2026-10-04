@@ -177,7 +177,8 @@ Robot players are `users` rows with `is_robot` (see
   reject a claim). The card play is split by role over one `PlayView` of
   what the seat knows (hands it sees, cards out, voids shown, tricks
   needed): `DeclarerPlan` (the count of winners and losers, and the line),
-  `DeclarerPlay`, `DefenderPlay`, `Signals`, `Discards`, and `Endgame`,
+  `DeclarerPlay`, `DefenderPlay` (with `LeadSafety`, what a defender on
+  lead sees in dummy), `Signals`, `Discards`, and `Endgame`,
   which checks the last four tricks by solving every layout of the unseen
   cards with `DoubleDummy` — a plain exhaustive search, also what
   `RobotClaims` uses to answer a claim in a small ending, where three
