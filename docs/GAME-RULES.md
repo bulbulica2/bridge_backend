@@ -233,7 +233,8 @@ agree, or the director is called.
 **In code:** `App\Services\ClaimService`, over `POST /tables/{table}/claim`
 (`{tricks}`), `POST /tables/{table}/claim/response` (`{accept}`) and
 `DELETE /tables/{table}/claim` (withdraw). The pending claim lives on
-`board_table` (`claim_seat`, `claim_tricks`, `claim_accepted`). The rules are
+`board_table` (`claim_seat`, `claim_tricks`, `claim_accepted`,
+`claim_expires_at`). The rules are
 static and unit-tested without a database in `tests/Unit/ClaimServiceTest`
 (`illegalPlayerReason`, `responders`, `remaining`, `tricksReason`,
 `declarerTricks`):
@@ -250,6 +251,12 @@ static and unit-tested without a database in `tests/Unit/ClaimServiceTest`
   One reject clears the claim and play goes on; the claimer may withdraw it
   while it is pending. There is no director: a disputed claim is simply
   rejected and played out.
+- **Silence means no:** online, a player who doesn't answer would stall the
+  table, so a claim not fully accepted within `bridge.claim_seconds` (10)
+  **expires** and is rejected as a reject would (`ClaimService::expire()`,
+  run by the queued `App\Jobs\ExpireClaim`); accepts already given don't
+  count. The state shows the deadline as `claim.expires_at`, and from then
+  on no answer is taken. The row lock decides a late answer racing the job.
 - **While pending** no card may be played (409) and no other claim made;
   whose turn it is doesn't change.
 - **Result:** the last accept ends the board through `BoardTable::finish()`,

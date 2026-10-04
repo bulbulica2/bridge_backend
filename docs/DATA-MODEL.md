@@ -398,13 +398,16 @@ Fields:
 - Claim (`GAME-RULES.md` §5), all nullable: `claim_seat` (enum
   `Seats::SEATS`, the claimer — never dummy), `claim_tricks` (tinyint, the
   tricks claimed for the claimer's side of those still to play; 0 is a
-  concession) and `claim_accepted` (JSON list of the seats that have accepted,
-  in seat order; cast to `array`). All null while no claim is pending. A
-  claim is **pending** while `claim_seat` is set and `finished_at` is null
-  (`hasPendingClaim()`); a rejected or withdrawn one is cleared
+  concession), `claim_accepted` (JSON list of the seats that have accepted,
+  in seat order; cast to `array`) and `claim_expires_at` (timestamp, cast to
+  `datetime`: `bridge.claim_seconds` after the claim, in whole seconds;
+  `claimExpired()` once it is reached). All null while no claim is pending.
+  A claim is **pending** while `claim_seat` is set and `finished_at` is null
+  (`hasPendingClaim()`); a rejected, withdrawn or expired one is cleared
   (`clearClaim()`), and an accepted one is **kept** alongside `finished_at`,
   so the result can say the board ended by claim (`result.claimed`). A
-  playing detached with a claim pending keeps its columns as they were.
+  playing detached with a claim pending keeps its columns as they were
+  until the claim expires.
 - `table_set_id` (FK table_sets, nullable) and `set_position` (tinyint,
   nullable): the [set](#tableset-table_sets) the board was dealt in and its
   place there, 1 to the set's `size`. Set on every playing the services

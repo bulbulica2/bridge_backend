@@ -131,7 +131,7 @@ What runs where:
 |---|---|---|
 | API | `php artisan serve --host=localhost` (or Apache, see [Local speed](#local-speed)) | HTTP, including `POST /broadcasting/auth` |
 | Websocket server | `php artisan reverb:start` (add `--debug` to log every frame) | holds the players' connections on port 8080 |
-| Queue worker | `php artisan queue:work --sleep=0.1` | broadcasts are queued jobs; the worker sends them to Reverb. It also runs the robots' moves (`DriveRobots`) |
+| Queue worker | `php artisan queue:work --sleep=0.1` | broadcasts are queued jobs; the worker sends them to Reverb. It also runs the robots' moves (`DriveRobots`) and expires unanswered claims (`ExpireClaim`) |
 
 Broadcast events implement `ShouldBroadcast`, so they go through the queue: a
 Reverb server that is down fails a queued job, not the player's request. The
@@ -219,6 +219,18 @@ stays until somebody kicks its robots.
 |---|---|---|
 | `BRIDGE_SET_SIZE` | `4` | boards in a set (`config/bridge.php`): Start deals the first, Next the rest, and after the last it takes everyone's Start again. A set keeps the size it opened with |
 
+### Claims
+
+A claim the other players haven't all accepted within
+`BRIDGE_CLAIM_SECONDS` is rejected: silence means no. A delayed queued job
+(`App\Jobs\ExpireClaim`) does it, so **`queue:work` must be running**, or
+an unanswered claim stays on the table (no answer is taken after its
+deadline, but play doesn't resume until a worker runs the job).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `BRIDGE_CLAIM_SECONDS` | `10` | seconds the other players have to answer a claim before it expires (`config/bridge.php`) |
+
 ## Robots
 
 Robot players (see [`ROBOTS.md`](ROBOTS.md)) make their moves in the **queue
@@ -239,7 +251,7 @@ on. So locally:
 
 | Key | Default | Meaning |
 |---|---|---|
-| `BRIDGE_ROBOT_DELAY_SECONDS` | `1` | how long each robot waits before its move, so a human can follow the play. `0` makes them instant |
+| `BRIDGE_ROBOT_DELAY_SECONDS` | `1` | how long each robot waits before its move, so a human can follow the play. `0` makes them instant. A robot's answer to a claim waits less if it must, to come a second before the claim expires |
 
 Robots are ordinary `users` rows (`is_robot`), made the first time they are
 needed; `migrate:fresh` wipes them with everything else.

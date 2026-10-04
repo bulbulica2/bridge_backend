@@ -169,10 +169,10 @@ class PlayingResource extends JsonResource
   /**
    * The pending claim: the claimer's seat, the tricks they claim of those
    * still to play, their remaining cards — face up to everyone while it is
-   * pending, as at a real table — and the seats that have accepted it.
-   * Null when there is none.
+   * pending, as at a real table — the seats that have accepted it, and
+   * `expires_at`, when silence rejects it. Null when there is none.
    *
-   * @return array{seat: string, tricks: int, hand: list<array<string, mixed>>, accepted: list<string>}|null
+   * @return array{seat: string, tricks: int, hand: list<array<string, mixed>>, accepted: list<string>, expires_at: \Illuminate\Support\Carbon|null}|null
    */
   private static function claim(BoardTable $playing): ?array
   {
@@ -185,6 +185,7 @@ class PlayingResource extends JsonResource
       'tricks' => $playing->claim_tricks,
       'hand' => app(PlayingStateService::class)->hand($playing, $playing->claim_seat),
       'accepted' => $playing->claim_accepted ?? [],
+      'expires_at' => $playing->claim_expires_at,
     ];
   }
 

@@ -40,7 +40,7 @@ Local stack is XAMPP (MySQL on 3306, DB `bridge`, user `root`, no password).
 ```bash
 php artisan serve --host=localhost  # API on http://localhost:8000 (see RUNNING.md "Local speed")
 php artisan reverb:start          # websocket server on :8080 (live table updates)
-php artisan queue:work --sleep=0.1  # sends queued broadcasts to Reverb, and moves the robots
+php artisan queue:work --sleep=0.1  # sends queued broadcasts to Reverb, moves the robots, expires unanswered claims
 php artisan schedule:work         # runs tables:release-idle-seats and tables:delete-unattended every minute, tables:check-away every 10 s
 php artisan tables:release-idle-seats  # free idle players' seats once, by hand
 php artisan tables:check-away     # mark quiet players away mid-set and forfeit overdue sets, once, by hand
@@ -359,10 +359,17 @@ vendor/bin/pint --test            # check formatting without changing files
   `tests/Unit/ClaimServiceTest`. The pending claim is stored on
   `board_table` (`claim_seat`, `claim_tricks`, `claim_accepted` JSON list);
   `BoardTable::hasPendingClaim()` is `claim_seat` set and not finished, and
-  `clearClaim()` wipes it on reject/withdraw. The last accept calls
+  `clearClaim()` wipes it on reject/withdraw/expiry. The last accept calls
   `finish()` with tricks so far plus the claimed share; the columns are then
   kept, which is what `result.claimed` reads. A claim doesn't change
-  `turn()`/`actingUserId()`.
+  `turn()`/`actingUserId()`. Silence means no: `claim()` stores
+  `claim_expires_at` (`bridge.claim_seconds`, 10, shown as
+  `claim.expires_at`) and queues `App\Jobs\ExpireClaim` with that delay,
+  whose `expire()` rejects the claim under the same row lock if that very
+  claim is still pending; no answer is taken once it is due
+  (`claimExpired()`), and `DriveRobots` cuts a robot's delay so its answer
+  lands a second before. The `sync` test queue runs the job at once (not
+  due, so a no-op): tests travel in time and run it themselves.
 - **Robots**: `users.is_robot` players from a `robot-<n>` pool
   (`App\Services\RobotService::seatRobot()`, always with the asking human
   as `$by`, so a busy robot is never moved). They can't log in

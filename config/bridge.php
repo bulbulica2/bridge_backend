@@ -51,6 +51,19 @@ return [
 
   /*
   |--------------------------------------------------------------------------
+  | Claims
+  |--------------------------------------------------------------------------
+  |
+  | How many seconds the other players have to answer a claim. One still
+  | pending then is rejected, as a "no" would reject it: silence means no.
+  | The queued `ExpireClaim` job does it, so it needs `queue:work`.
+  |
+  */
+
+  'claim_seconds' => (int) env('BRIDGE_CLAIM_SECONDS', 10),
+
+  /*
+  |--------------------------------------------------------------------------
   | Robots
   |--------------------------------------------------------------------------
   |
@@ -59,7 +72,9 @@ return [
   | human sits down first.
   |
   | Robots wait this many seconds before each move (the delay on the queued
-  | `DriveRobots` listener), so a human can follow the play.
+  | `DriveRobots` listener), so a human can follow the play: less when a
+  | claim is waiting for their answer, so that it comes before the claim
+  | expires.
   |
   */
 

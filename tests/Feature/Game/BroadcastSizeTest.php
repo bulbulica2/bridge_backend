@@ -108,10 +108,12 @@ class BroadcastSizeTest extends TestCase
       'claim_seat' => $this->playing->declarer_seat,
       'claim_tricks' => 13,
       'claim_accepted' => [Seats::next($this->playing->declarer_seat)],
+      'claim_expires_at' => now()->addSeconds(10),
     ]);
 
     $playing = (new PlayingUpdated($this->table))->playing;
     $this->assertCount(13, $playing['claim']['hand']);
+    $this->assertNotNull($playing['claim']['expires_at']);
     $this->assertCount(13, $playing['dummy_hand']);
 
     $this->assertFits(new PlayingUpdated($this->table));
@@ -124,7 +126,7 @@ class BroadcastSizeTest extends TestCase
     $this->longestAuction();
     $this->play(48);
     $declarer = $this->playing->refresh()->declarer_seat;
-    $this->playing->update(['claim_seat' => $declarer, 'claim_tricks' => 1, 'claim_accepted' => []]);
+    $this->playing->update(['claim_seat' => $declarer, 'claim_tricks' => 1, 'claim_accepted' => [], 'claim_expires_at' => now()->addSeconds(10)]);
 
     $this->assertFits(new PlayingUpdated($this->table));
 

@@ -6,6 +6,7 @@ use App\Events\PlayingUpdated;
 use App\Models\Table;
 use App\Services\RobotService;
 use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Carbon;
 
 /**
  * Moves the robots: after every `PlayingUpdated` (sent only once its
@@ -27,9 +28,23 @@ class DriveRobots implements ShouldQueue
 
   public function __construct(private RobotService $robots) {}
 
+  /**
+   * `bridge.robot_delay_seconds`, but a robot's answer to a pending claim
+   * comes in time however long that is: a second before the claim expires
+   * at the latest (or at once with less left), since silence would reject it.
+   */
   public function withDelay(PlayingUpdated $event): int
   {
-    return (int) config('bridge.robot_delay_seconds');
+    $delay = (int) config('bridge.robot_delay_seconds');
+    $expiresAt = $event->playing['claim']['expires_at'] ?? null;
+
+    if ($expiresAt === null) {
+      return $delay;
+    }
+
+    $left = (int) floor(now()->diffInSeconds(Carbon::parse($expiresAt), false));
+
+    return max(0, min($delay, $left - 1));
   }
 
   public function handle(PlayingUpdated $event): void

@@ -266,10 +266,15 @@ class RobotService
   /**
    * The first robot that still has to answer the pending claim answers it.
    * A robot declarer whose human dummy plays for it leaves declarer's
-   * answer to that human.
+   * answer to that human. Nobody answers a claim whose time is up: it is
+   * rejected already.
    */
   private function answerClaim(Table $table, BoardTable $playing): bool
   {
+    if ($playing->claimExpired()) {
+      return false;
+    }
+
     $waiting = array_diff(
       ClaimService::responders($playing->claim_seat, $playing->declarer_seat),
       $playing->claim_accepted ?? [],
