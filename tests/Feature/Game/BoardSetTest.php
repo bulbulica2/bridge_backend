@@ -124,7 +124,7 @@ class BoardSetTest extends TestCase
 
     $this->start('N')
       ->assertStatus(409)
-      ->assertJsonPath('message', 'The board is finished: the same four players go on with the next board (POST /tables/{table}/playing/next).');
+      ->assertJsonPath('message', 'The board is finished: the next board of the set is dealt by itself shortly (POST /tables/{table}/playing/next deals it at once).');
   }
 
   public function test_the_set_records_its_four_players_and_size(): void

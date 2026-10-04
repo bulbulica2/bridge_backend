@@ -419,7 +419,9 @@ Fields:
 Lifecycle (`App\Services\BoardSelectionService`):
 - **Opened** when a full table's last Start is pressed (or a robot fills
   the fourth seat after every human pressed it) — as the first board of a
-  new set — or by the last Next, as the set's next board: the row is created
+  new set — or as the set's next board, by the timer (`dealNext()`,
+  `bridge.next_board_seconds` after the last one finished) or the last
+  human's Next: the row is created
   with `started_at`, `table_set_id` and `set_position`, and the four
   `table_seats` are copied into `board_table_seats`.
 - **Abandoned** when any player leaves before `finished_at` is set. The row is
@@ -452,8 +454,9 @@ and after the table itself is deleted, since `board_table.table_id` is
 Fields: `board_table_id` (FK, cascade delete), `user_id` (FK users), `seat`
 (enum `Seats::SEATS`), `ready_at` (nullable timestamp, cast `datetime`: once
 the playing is finished, when this player asked for the next board —
-`POST /tables/{table}/playing/next`; the next board is dealt when all four
-are set. Not to be confused with `table_seats.ready_at`, Start). All four
+`POST /tables/{table}/playing/next`; the next board is dealt at once when
+every human's is set (robots count as set), else by itself once
+`bridge.next_board_seconds` have passed since `finished_at`. Not to be confused with `table_seats.ready_at`, Start). All four
 are fillable.
 Unique `(board_table_id, seat)` and `(board_table_id, user_id)`; index
 `(user_id, seat)` for board selection ("has this user played board B?",

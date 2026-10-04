@@ -2,7 +2,9 @@
 
 namespace App\Models;
 
+use App\Jobs\DealNextBoard;
 use App\Services\CardPlayService;
+use App\Services\PlayingStateService;
 use App\Services\ScoringService;
 use Database\Factories\BoardTableFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -133,7 +135,9 @@ class BoardTable extends Model
    * `score` is stored from N-S's point of view, so it is turned round when
    * E-W declared. A passed out board scores 0 and has no `tricks_won`.
    *
-   * The last board of a set completes the set.
+   * The last board of a set completes the set; any other board of one
+   * queues `DealNextBoard`, which deals the set's next board once this one
+   * has been on show for `bridge.next_board_seconds`.
    *
    * @param  int|null  $tricksWon  tricks taken by declarer's side; null when passed out
    */
@@ -143,6 +147,12 @@ class BoardTable extends Model
 
     if ($this->tableSet !== null && $this->set_position >= $this->tableSet->size) {
       $this->tableSet->end(TableSet::ENDED_COMPLETED);
+    }
+
+    $nextBoardAt = app(PlayingStateService::class)->nextBoardAt($this);
+
+    if ($nextBoardAt !== null) {
+      DealNextBoard::dispatch($this->id)->delay($nextBoardAt)->afterCommit();
     }
   }
 

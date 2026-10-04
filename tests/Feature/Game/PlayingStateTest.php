@@ -68,6 +68,7 @@ class PlayingStateTest extends TestCase
           'result' => null,
           'deal' => null,
           'ready' => null,
+          'next_board_at' => null,
         ],
       ]);
   }

@@ -9,7 +9,9 @@ use App\Models\Board;
 use App\Models\BoardTable;
 use App\Models\Card;
 use App\Models\Table;
+use App\Models\TableSeat;
 use App\Models\User;
+use Illuminate\Support\Carbon;
 
 /**
  * The read side of a playing: which phase it is in, whose turn it is, and
@@ -266,6 +268,40 @@ class PlayingStateService
     $ready = $playing->seats->whereNotNull('ready_at')->pluck('seat')->all();
 
     return array_values(array_intersect(Seats::SEATS, $ready));
+  }
+
+  /**
+   * When the set's next board is dealt by itself (`DealNextBoard`):
+   * `bridge.next_board_seconds` after `$playing` finished. Null while it
+   * isn't finished, and whenever no automatic deal is coming: the set is
+   * over (its last board, or a forfeit), the playing has left its table, or
+   * the four seated now aren't the four who played it — a seat is empty, or
+   * somebody left and was replaced, and then the next board takes
+   * everyone's Start.
+   */
+  public function nextBoardAt(BoardTable $playing): ?Carbon
+  {
+    if ($playing->finished_at === null
+      || $playing->tableSet === null
+      || $playing->tableSet->isFinished()
+      || ! $this->seatedAsIn($playing)) {
+      return null;
+    }
+
+    return $playing->finished_at->copy()->addSeconds((int) config('bridge.next_board_seconds'));
+  }
+
+  /**
+   * Whether the four seated at `$playing`'s table now are the four who
+   * played it, each in the same seat. Never true of a playing that has left
+   * its table.
+   */
+  public function seatedAsIn(BoardTable $playing): bool
+  {
+    $now = TableSeat::query()->where('table_id', $playing->table_id)->pluck('user_id', 'seat')->sortKeys()->all();
+    $then = $playing->seats()->pluck('user_id', 'seat')->sortKeys()->all();
+
+    return $playing->table_id !== null && count($now) === count(Seats::SEATS) && $now == $then;
   }
 
   /**

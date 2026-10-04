@@ -62,7 +62,7 @@ lobby, profiles, histories, results — stays open.
 | POST | `/tables/{table}/heartbeat` | `Game\TableSeatController@heartbeat` | `auth` + seated at the table (`TablePolicy::play`) | "still here": keeps the caller's seat from being freed as idle (200, `{last_seen_at}`) |
 | GET | `/tables/{table}/playing` | `Game\PlayingController@show` | `auth` + seated at the table (`TablePolicy::play`) | the game state of the table's current board, with the caller's own hand |
 | POST | `/tables/{table}/calls` | `Game\CallController@store` | `auth` + seated at the table (`TablePolicy::play`) | make your call in the auction (201, the updated game state) |
-| POST | `/tables/{table}/playing/next` | `Game\PlayingController@next` | `auth` + seated at the table (`TablePolicy::play`) | once the board is finished, ask for the set's next one; the last of the four deals it (200, the game state; 409 after the set's last board) |
+| POST | `/tables/{table}/playing/next` | `Game\PlayingController@next` | `auth` + seated at the table (`TablePolicy::play`) | optional "deal now": the set's next board comes by itself at `next_board_at`; once every human has asked, it is dealt at once (200, the game state; 409 after the set's last board) |
 | POST | `/tables/{table}/cards` | `Game\CardPlayController@store` | `auth` + seated at the table (`TablePolicy::play`) | play the next card of the trick — yours, or dummy's as declarer (201, the updated game state) |
 | POST | `/tables/{table}/claim` | `Game\ClaimController@store` | `auth` + seated at the table (`TablePolicy::play`) | claim some of the remaining tricks for your side, 0 to concede (201, the updated game state) |
 | POST | `/tables/{table}/claim/response` | `Game\ClaimController@respond` | `auth` + seated at the table (`TablePolicy::play`) | accept or reject the pending claim (200, the updated game state) |
@@ -176,7 +176,7 @@ with `is_robot: true`, username `robot-<n>`, from a pool that grows as it is
 needed (`App\Services\RobotService`). Robots are seated by
 `POST /tables` with `robots: true` or by a manager with
 `POST /tables/{table}/seats/robots`; they bid, play, answer claims and ask
-for the next board on their own, through the same rules as a human, about a
+for the next board (they never hold it up: they count as asking) on their own, through the same rules as a human, about a
 second (`BRIDGE_ROBOT_DELAY_SECONDS`) after each move — see
 [`ROBOTS.md`](ROBOTS.md) for how they decide. They act **only while at least
 one human sits at the table**. A robot never becomes `moderated_by`, and
@@ -203,11 +203,14 @@ pressed it by then (only possible when a robot takes it: a human sitting down
 is never ready). The request that deals is the first to carry a non-null
 `board_id`. Dealing clears every human's Start. `board_id` goes back to null
 if a player leaves before the board is finished, and the refilled table needs
-everyone's Start again. Once a board is finished, the **same four** go on with
-[`POST /tables/{table}/playing/next`](#post-tablestableplayingnext); if one of
+everyone's Start again. Once a board is finished, the **same four** get the
+set's next board by themselves `BRIDGE_NEXT_BOARD_SECONDS` (10) later, at the
+state's `next_board_at` (or at once with
+[`POST /tables/{table}/playing/next`](#post-tablestableplayingnext)); if one of
 them was replaced meanwhile, it is Start again. Boards come in
-[sets](#sets) of four: Start deals a set's first board, Next the other
-three, and after the fourth it is everyone's Start again for the next set.
+[sets](#sets) of four: Start deals a set's first board, the other three
+follow by themselves, and after the fourth it is everyone's Start again for
+the next set.
 
 Start belongs to the seat: leaving, moving (to another table or another seat
 at this one), being kicked or being released as idle all drop it, and
@@ -615,10 +618,11 @@ which takes the table row lock like seat changes do.
 - **409** with the reason in `message`:
   - `"A board is already in progress at this table."` — in its auction or
     play;
-  - `"The board is finished: the same four players go on with the next board
-    (POST /tables/{table}/playing/next)."` — a finished board is on the table,
-    its set isn't over, and the four who played it are all still in their
-    seats. If one of them has been replaced, or the board was the set's last,
+  - `"The board is finished: the next board of the set is dealt by itself
+    shortly (POST /tables/{table}/playing/next deals it at once)."` — a
+    finished board is on the table, its set isn't over, and the four who
+    played it are all still in their seats (the state's `next_board_at` says
+    when the next board comes). If one of them has been replaced, or the board was the set's last,
     Start is what deals the next board, and this 409 goes away;
   - `"You are not seated at this table."` — you left between the policy
     check and the lock.
@@ -644,7 +648,9 @@ side; `POST /tables/{table}/calls` runs the auction,
 `POST /tables/{table}/cards` the play and `/tables/{table}/claim` ends the
 play early by agreement. A finished board carries its
 duplicate score in `result` and the whole deal in `deal`, and stays on the
-table until the players move on with `POST /tables/{table}/playing/next`.
+table until the set's next board is dealt — by itself at `next_board_at`, or
+earlier with `POST /tables/{table}/playing/next` — or, after the set's last
+board, until everyone's Start.
 
 ### `GET /tables/{table}/playing`
 One snapshot a client can render the table from scratch with, e.g. after a
@@ -688,6 +694,7 @@ page refresh or a reconnect. No body. Built by
     "result": null,
     "deal": null,
     "ready": null,
+    "next_board_at": null,
     "my_seat": "E",
     "hand": [
       {"id": 52, "suit": "S", "rank": 15, "rank_name": "Ace"},
@@ -718,6 +725,7 @@ page refresh or a reconnect. No body. Built by
 | `result` | `null` until the phase is `finished`. Then `{contract, doubled, declarer, tricks_won, score_ns, made_by, claimed}`: `contract` is the final bid (shaped as `bid` above), `doubled` 0/1/2, `declarer` its seat, `tricks_won` the tricks declarer's side took, `score_ns` the duplicate score (`GAME-RULES.md` §6) **from N-S's point of view** — positive when N-S scored, negative when E-W did, whichever side declared — `made_by` the overtricks (`+1`), `0` for just made, or undertricks (`-2`), and `claimed` whether the play ended by an accepted claim rather than at trick 13 (`tricks_won` then includes the claimed tricks). A **passed out** board has `score_ns: 0`, `claimed: false` and every other field `null`. Example: `{"contract": {"id": 22, "call": "4S", ...}, "doubled": 0, "declarer": "E", "tricks_won": 11, "score_ns": -650, "made_by": 1, "claimed": false}` — E-W vulnerable, 4♠ by East making 11 |
 | `deal` | `null` until the phase is `finished`. Then all four hands **as dealt** (from `board_card`, not what is left after the play): `{N: [...], E: [...], S: [...], W: [...]}`, each in `hand`'s order and card shape. Public — it is on the table channel too — since the board is over |
 | `ready` | `null` until the phase is `finished`. Then the seats whose players have asked for the next board (`POST /tables/{table}/playing/next`), in N, E, S, W order: `[]` right after the board ends |
+| `next_board_at` | when the set's next board is dealt **by itself** (ISO 8601, like `claim.expires_at`): `BRIDGE_NEXT_BOARD_SECONDS` (10) after the board finished. `null` until the phase is `finished`, and whenever no automatic deal is coming: the set is over (its last board, or a forfeit), a seat is empty, or the four seated aren't the four who played the board (everyone's Start deals the next one then). Count down from it, never from when the state arrived. Not in `GET /playings/{playing}` |
 | `my_seat` | the caller's seat in the snapshot |
 | `hand` | the caller's **own** cards only: the 13 `board_card` rows for their seat, less any card already in `cardplays`, sorted spades, hearts, diamonds, clubs and high to low within a suit. Card `rank` is 2–10, J=12, Q=13, K=14, A=15. Apart from this and `declarer_hand`, the only cards in the payload are face up: those in `tricks` / `current_trick`, after the opening lead `dummy_hand`, a pending claim's `claim.hand`, and once the board is finished `deal` |
 | `declarer_hand` | **only** for a human dummy whose declarer is a robot, who plays declarer's cards (see `acting_user_id`): declarer's **remaining** cards, in `hand`'s order and card shape, from the end of the auction (all 13, before the opening lead) to the end of the play. `null` for everyone else and at any other time, including once the board is `finished` (`deal` then shows it). Private to that player like `hand`: it is in their own answers only (this endpoint and the answers to calls, cards, claims, Start and Next), never on the table channel or in anyone else's state — the defenders see only dummy's cards after the lead. The auction usually ends on a robot's call, so it is also pushed as [`DeclarerHandShown`](#event-declarerhandshown) |
@@ -728,21 +736,28 @@ While `phase` is `waiting`, **every other field is null** (including `hand`,
 `declarer_hand`, `my_seat` and `auction`).
 
 ### `POST /tables/{table}/playing/next`
-Once the board is `finished` (13 tricks played, or passed out), ask for the
-next board of the [set](#sets). The finished board stays on the table — `result` and the whole
-`deal` on show — until **every** player has asked; the last one to ask deals
-the next board. Built by `App\Services\BoardSelectionService::moveOn()`.
+An optional **"deal now"**. Once a board is `finished` (13 tricks played, a
+claim accepted, or passed out) and its [set](#sets) isn't over, the set's
+next board is dealt **by itself** at the state's `next_board_at`,
+`BRIDGE_NEXT_BOARD_SECONDS` (default **10**) after the board finished — the
+finished board stays on the table, `result` and the whole `deal` on show,
+until then. Nobody has to press anything. This endpoint deals it **earlier**:
+once **every human** at the table has asked, the last one to ask deals it at
+once. Robots count as having asked, so a human alone with three robots skips
+the wait with one request. Built by
+`App\Services\BoardSelectionService::moveOn()`.
 
-No body. Every player asks for themselves (robots ask as soon as the board
-ends); nobody — not the moderator, not an admin — can ask for anyone else.
+No body. Every player asks for themselves (robots ask too, as soon as the
+board ends, though they never hold the deal up); nobody — not the moderator,
+not an admin — can ask for anyone else.
 The `everyone` field this endpoint used to take is **ignored**: sending it
 only asks for the caller, like any other request.
 
 - **200** with the game state, exactly what `GET /tables/{table}/playing`
   would now return:
-  - message `"Waiting for the other players."` while somebody has still to
+  - message `"Waiting for the other players."` while a human has still to
     ask — still the `finished` board, with the caller's seat now in `ready`;
-  - message `"Next board dealt."` once the last player asks — phase
+  - message `"Next board dealt."` once the last human asks — phase
     `auction` on the new board, with the caller's new `hand`.
   Asking again changes nothing (same 200, no broadcast).
 - **409** (`sendError`, `data: []`), nothing stored:
@@ -768,8 +783,20 @@ hold, else a freshly shuffled one; never a board this table has played),
 for the same four players in the same seats. `tables.board_id` moves to it
 and a new `board_table` row and seat snapshot are opened; the finished one
 stays as it is. It sends what the last Start sends:
-`TableUpdated`, `PlayingUpdated` and one `HandDealt` per player. A player
-newly asking sends `PlayingUpdated` (for `ready`).
+`TableUpdated`, `PlayingUpdated` and one `HandDealt` per player — whether the
+last human's request deals it or the timer does. A player newly asking sends
+`PlayingUpdated` (for `ready`).
+
+**The timer.** When a board of a set other than its last finishes,
+`BoardTable::finish()` queues the job `App\Jobs\DealNextBoard` with a delay up
+to `next_board_at` (so it needs `php artisan queue:work`). It deals through
+the same rules and lock as this endpoint
+(`BoardSelectionService::dealNext()`), and does **nothing** if by then the
+table has moved on (everyone asked, or it ran twice), a player left or the
+four seated aren't the ones who played the board (the next board then takes
+everyone's Start), or the set ended (a forfeit). It deals even while a seat
+is [away](#away-mid-set-and-the-forfeit): that player's turn simply waits,
+and being dealt to is not a sign of life, so the away clock runs on.
 
 Who has asked is `board_table_seats.ready_at` on the finished playing (not
 to be confused with `table_seats.ready_at`, Start). Leaving between boards
@@ -1065,7 +1092,7 @@ better contract. `{playing}` is a `board_table.id`: the `playing_id` on each
 `data` is exactly the public game state of
 [`GET /tables/{table}/playing`](#get-tablestableplaying)
 (`PlayingResource`) for that playing, with `phase: "finished"`, **less
-`ready`** (which only means something at a live table) and without the
+`ready` and `next_board_at`** (which only mean something at a live table) and without the
 viewer's `my_seat` / `hand`: `playing_id`, `board`, `players` (from the seat
 snapshot), `turn` and `acting_user_id` (both `null`), `auction` (every call
 in order), `contract`, `tricks` (the complete tricks in order),
@@ -1091,10 +1118,13 @@ Play at a table goes in **sets** of four boards (`bridge.set_size`, env
 
 1. everybody presses Start ([`POST /tables/{table}/start`](#post-tablestablestart))
    → the set's first board;
-2. after each board everybody asks for the next
-   ([`POST /tables/{table}/playing/next`](#post-tablestableplayingnext); robots
-   always do) → boards 2, 3 and 4;
-3. after the fourth the set is over: Next 409s, the board stays on show,
+2. after each board its result stays on show for `BRIDGE_NEXT_BOARD_SECONDS`
+   (10; the state's `next_board_at`) and then the next board is dealt by
+   itself — or at once when every human has asked for it
+   ([`POST /tables/{table}/playing/next`](#post-tablestableplayingnext)) →
+   boards 2, 3 and 4;
+3. after the fourth the set is over: no board comes by itself
+   (`next_board_at: null`), Next 409s, the board stays on show,
    the players read the set's results, and everybody's Start opens the next
    set (`number` 2, `board` 1).
 
@@ -1526,7 +1556,8 @@ sent only once the transaction commits, payload snapshotted at dispatch.
   `/tables/{table}/claim` endpoints), including the accept that finishes the
   board;
 - a player asks for the next board (`POST /tables/{table}/playing/next`) —
-  `ready` changes — and again when the last one deals it;
+  `ready` changes — and again when the last human deals it, or when the
+  timer (`DealNextBoard`, at `next_board_at`) does;
 - a **robot** does any of the above: its moves go through the same services,
   so each one sends `PlayingUpdated` exactly like a human's. Robot moves come
   about a second apart, so a board with robots streams one event per move.
@@ -1537,7 +1568,7 @@ It is **not** sent when a player leaving abandons the board; that shows up as
 **Payload** — `{playing}`, the **public** part of
 `GET /tables/{table}/playing`: `phase`, `playing_id`, `set`, `board`, `players`,
 `turn`, `acting_user_id`, `auction`, `contract`, `tricks`, `current_trick`,
-`tricks_won`, `dummy_hand`, `claim`, `result`, `deal`, `ready`. It never carries `hand`, `declarer_hand` or `my_seat`: the table
+`tricks_won`, `dummy_hand`, `claim`, `result`, `deal`, `ready`, `next_board_at`. It never carries `hand`, `declarer_hand` or `my_seat`: the table
 channel is only authorised at subscribe time, so a player who has left may
 still be listening. The only cards in it are face up — the ones played,
 after the opening lead dummy's, the claimer's while a claim is pending, and
@@ -1606,7 +1637,8 @@ rank_name}`, and a `GET /bids` entry exactly its bid.
     "claim": null,
     "result": null,
     "deal": null,
-    "ready": null
+    "ready": null,
+    "next_board_at": null
   }
 }
 ```
@@ -1746,8 +1778,10 @@ You can currently only:
     (`POST /tables/{table}/claim`), which the other non-dummy players accept
     or reject (`POST /tables/{table}/claim/response`); an accepted claim
     scores the board the same way.
-11. Move on to the next board with `POST /tables/{table}/playing/next`,
-    in sets of four: after a set's fourth board read its results
+11. Get the next board of the set by itself a few seconds after each one
+    ends (`next_board_at`), or at once once every human has asked with
+    `POST /tables/{table}/playing/next`, in sets of four: after a set's
+    fourth board read its results
     (`GET /sets/{set}`, the state's `set.id`) and press Start again for the
     next set.
 12. Keep your seat with `POST /tables/{table}/heartbeat` every ~30 s: a

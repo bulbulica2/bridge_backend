@@ -810,11 +810,15 @@ and the robot holds the ♠A: one sure winner → **rejects**.
 
 When a board is finished (played out, claimed or passed out), each robot asks
 for the next board — the same as a human's `POST /tables/{table}/playing/next`
-— one per event, straight away. The result stays on screen until the last
-human at the table presses Next too, which deals the next board with the same
-players in the same seats. If a human left and somebody else took the seat,
-Next is refused (the robot's attempt is dropped and logged) and the humans'
-Start deals the next board instead; the robots are ready already.
+— one per event, straight away. It no longer needs to: the next board of the
+set is dealt by itself `BRIDGE_NEXT_BOARD_SECONDS` (10) after the board ended
+(`DealNextBoard`), or at once when every **human** at the table has asked,
+robots counting as asked either way. So the robots' asking only fills in
+`ready`; it never deals and never holds the deal up. The board comes with the
+same players in the same seats. If a human left and somebody else took the
+seat, nothing is dealt by itself, Next is refused (the robot's attempt is
+dropped and logged) and the humans' Start deals the next board instead; the
+robots are ready already.
 
 After the **last board of a set** there is no Next to ask for: the robots
 don't ask (`ready` stays `[]`), and their Start (`table_seats.ready_at`,

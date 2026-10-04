@@ -95,6 +95,7 @@ class BroadcastSizeTest extends TestCase
     $this->assertCount(13, $playing['tricks']);
     $this->assertCount(52, array_merge(...array_values($playing['deal'])));
     $this->assertSame(['N', 'E', 'S', 'W'], $playing['ready']);
+    $this->assertNotNull($playing['next_board_at']);
 
     $this->assertFits(new PlayingUpdated($this->table));
   }

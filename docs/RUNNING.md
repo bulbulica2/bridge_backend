@@ -72,14 +72,19 @@ get one table per phase, named after it:
 | `Playing` | full, contract reached, between 1 and 51 cards played |
 | `Finished` | all 13 tricks played and scored, waiting for the next board |
 | `Claimed` | stopped mid-play by declarer's claim of a random share of the remaining tricks, which both defenders accepted; scored, waiting for the next board |
-| `Passed out` | four passes, finished with score 0 |
+| `Passed out` | four passes, finished with score 0, waiting for the next board |
 | `Set over` | a whole set of four boards played out: the fourth is on show, the set's result is up (`GET /sets/{set}`), and the next set waits for everyone's Start |
 | `Waiting for players` | 2 players, no board yet |
 
 Log in as the admin (`email@abc.com` / `pass`) to act at `Your call`.
 The other seeded users all have the password `password`. Calls, cards and
 dealt boards are random, so each `migrate:fresh --seed` gives a different
-game. The seeders don't queue any broadcasts.
+game. The seeders don't queue any broadcasts. They do queue one
+`DealNextBoard` job for each of `Finished`, `Claimed` and `Passed out` (each
+is the first board of its set, see [Sets](#sets)), so once `queue:work`
+runs, those three move on to their set's second board by themselves; to
+look at a finished board, seed again without a worker running, or open
+`Set over`, whose set is over and stays put.
 
 No seeded table has robots. To play against robots, log in and create one
 with `POST /tables` and `{"robots": true}` (the admin must leave `Your call`
@@ -131,7 +136,7 @@ What runs where:
 |---|---|---|
 | API | `php artisan serve --host=localhost` (or Apache, see [Local speed](#local-speed)) | HTTP, including `POST /broadcasting/auth` |
 | Websocket server | `php artisan reverb:start` (add `--debug` to log every frame) | holds the players' connections on port 8080 |
-| Queue worker | `php artisan queue:work --sleep=0.1` | broadcasts are queued jobs; the worker sends them to Reverb. It also runs the robots' moves (`DriveRobots`) and expires unanswered claims (`ExpireClaim`) |
+| Queue worker | `php artisan queue:work --sleep=0.1` | broadcasts are queued jobs; the worker sends them to Reverb. It also runs the robots' moves (`DriveRobots`), expires unanswered claims (`ExpireClaim`) and deals a set's next board when its pause is up (`DealNextBoard`) |
 
 Broadcast events implement `ShouldBroadcast`, so they go through the queue: a
 Reverb server that is down fails a queued job, not the player's request. The
@@ -217,7 +222,12 @@ stays until somebody kicks its robots.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `BRIDGE_SET_SIZE` | `4` | boards in a set (`config/bridge.php`): Start deals the first, Next the rest, and after the last it takes everyone's Start again. A set keeps the size it opened with |
+| `BRIDGE_SET_SIZE` | `4` | boards in a set (`config/bridge.php`): Start deals the first, the rest come by themselves (below), and after the last it takes everyone's Start again. A set keeps the size it opened with |
+| `BRIDGE_NEXT_BOARD_SECONDS` | `10` | seconds a finished board of a set (not its last) stays on show before the set's next board is dealt by itself (the state's `next_board_at`); every human pressing Next deals it sooner |
+
+The automatic deal is a delayed queued job (`App\Jobs\DealNextBoard`), so
+**`queue:work` must be running**, or a finished board stays on the table
+(past its `next_board_at`) until every human there presses Next.
 
 ### Claims
 

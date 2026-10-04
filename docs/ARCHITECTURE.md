@@ -92,7 +92,7 @@ the same pattern:
 | Service | Responsible for | Tests |
 |---|---|---|
 | `TableSeatService` | joining, moving, leaving and kicking (`seat()`, `leave()`, `remove()`), heartbeats (`touch()`), freeing idle seats (`releaseIdleSeats()`), the away rule and set forfeit (`checkAway()`, `costsTheSet()`) and deleting unattended tables (`deleteUnattendedTables()`) | `tests/Feature/Table*` |
-| `BoardSelectionService` | which board a table plays and when: Start (`start()`, `withdrawStart()`), deals once a full table's humans have all pressed it (`startIfReady()`) as the first board of a new set, moves on after a finished board within the set (`moveOn()`), detaches a board abandoned mid-play (`abandonPlaying()`) and ends a set one of its players left (`abandonSet()`) or a side lost by going away (`forfeitSet()`) | `tests/Feature/Table/StartBoardTest`, `AssignBoardTest`, `SetForfeitTest`, `tests/Feature/Game/NextBoardTest`, `BoardSetTest` |
+| `BoardSelectionService` | which board a table plays and when: Start (`start()`, `withdrawStart()`), deals once a full table's humans have all pressed it (`startIfReady()`) as the first board of a new set, moves on after a finished board within the set (by itself after `bridge.next_board_seconds`, `dealNext()` from the queued `App\Jobs\DealNextBoard`, or at once once every human asked, `moveOn()`), detaches a board abandoned mid-play (`abandonPlaying()`) and ends a set one of its players left (`abandonSet()`) or a side lost by going away (`forfeitSet()`) | `tests/Feature/Table/StartBoardTest`, `AssignBoardTest`, `SetForfeitTest`, `tests/Feature/Game/NextBoardTest`, `AutoNextBoardTest`, `BoardSetTest` |
 | `PlayingStateService` | the one place that works out a playing's phase, calls, cards, turn, who acts (`actingUserId()`, with `dummyPlaysForDeclarer()`: a human dummy plays a robot declarer's cards), the hands, dummy and a human dummy's `declarer_hand` | feature tests (`HumanDummyPlaysTest` for the human dummy) |
 | `AuctionService` | one call (`call()`); `nextToCall`, `illegalReason`, `isOver`, `result` | `tests/Unit/AuctionServiceTest` |
 | `CardPlayService` | one card (`play()`); `nextToPlay`, `actingSeat`, `illegalReason`, `trickWinner`, `tricks`, `tricksWon` | `tests/Unit/CardPlayServiceTest` |
@@ -128,12 +128,17 @@ Things worth knowing before you change them:
   ([`GAME-RULES.md` §8](GAME-RULES.md#8-game-flow-checklist-for-implementers))
   needs all four players' history. `startIfReady()` runs on every Start and
   every `seat()` (a robot can be the one that completes the table); dealing
-  clears the humans' Start. A finished board is followed by `moveOn()` while
-  the same four sit there (each player asks for themselves; nobody can ask
-  for the others), by everyone's Start once one was replaced.
+  clears the humans' Start. While the same four sit there, a finished board
+  of a set is followed by its next board `bridge.next_board_seconds` later
+  (`BoardTable::finish()` queues `App\Jobs\DealNextBoard`, which runs
+  `dealNext()`; `PlayingStateService::nextBoardAt()` is the state's
+  `next_board_at`), or at once by `moveOn()` once every human has asked
+  (each player asks for themselves; nobody can ask for the others; robots
+  count as asked). Both take the table row lock, so the board is dealt
+  once. Once one of the four was replaced it takes everyone's Start.
 - **Sets.** Boards come in sets of `bridge.set_size` (4): a Start's deal
   opens a `TableSet` (`openSet()`, which snapshots the four into
-  `table_set_seats`), each Next deals the set's next board
+  `table_set_seats`), the timer or the humans' Next deals the set's next board
   (`board_table.table_set_id`/`set_position`), and `BoardTable::finish()`
   completes the set on its last board — after which `moveOn()` 409s and
   `start()` accepts a Start even with the same four seated. `remove()` ends
@@ -309,10 +314,13 @@ payload that outgrows the budget still gets through while it's fixed.
 Three long-running processes sit next to `php artisan serve`:
 
 - `php artisan queue:work --sleep=0.1` sends the queued broadcasts to Reverb,
-  runs the robots' moves (`DriveRobots`) and expires unanswered claims
+  runs the robots' moves (`DriveRobots`), expires unanswered claims
   (`App\Jobs\ExpireClaim`, dispatched `afterCommit()` with a delay up to
   the claim's `claim_expires_at` — a delayed job, not a scheduled check,
-  since the 10-second schedule tick is as long as the whole deadline).
+  since the 10-second schedule tick is as long as the whole deadline) and
+  deals a set's next board when its pause is up (`App\Jobs\DealNextBoard`,
+  dispatched the same way from `BoardTable::finish()` with a delay up to
+  `next_board_at`).
 - `php artisan reverb:start` holds the players' websocket connections.
 - `php artisan schedule:work` runs what `routes/console.php` schedules, every
   minute: `tables:release-idle-seats`
@@ -350,7 +358,8 @@ whose set of boards is over
 The seeders play those tables through the real services —
 `TableSeatService::seat()` and `BoardSelectionService::start()` (every
 player of a full table presses Start, so the last one deals the board, and
-`moveOn()` for the next board of a set),
+`moveOn()` for the next board of a set, which leaves a `DealNextBoard`
+job queued for each finished first board — run by the next `queue:work`),
 `AuctionService` (via `AuctionSeeder`), `CardPlayService` (via
 `CardplaySeeder`) and `ClaimService` — so a seeded database only ever
 contains legal play. `TableSeeder` wraps it all in `Event::fakeFor()`, so
@@ -415,11 +424,12 @@ rules refuse (`RobotFallbackTest`).
   `jobs` and the table stalls on a robot's turn. A robot job that throws
   fails like any job (`queue:retry`). Claims need it too: without it an
   unanswered claim never expires (though no answer is taken after its
-  `expires_at`).
+  `expires_at`), and a set's next board waits for every human's Next.
 - **Delayed jobs run at once in the tests.** The `sync` queue ignores
-  `delay`, so `ExpireClaim` runs the moment its claim is made and, not due
-  yet, does nothing. Tests travel in time and run the job themselves
-  (`ClaimTest::runJob()`).
+  `delay`, so `ExpireClaim` runs the moment its claim is made and
+  `DealNextBoard` the moment its board finishes and, not due yet, they do
+  nothing. Tests travel in time and run the job themselves
+  (`ClaimTest::runJob()`, `AutoNextBoardTest::runJob()`).
 - **2-space indentation**, including PHP (`.editorconfig`). Pint can't indent
   with 2 spaces, so `pint.json` turns its indentation fixers off: Pint
   neither catches nor fixes bad indentation. Don't remove those rules, or a
