@@ -652,6 +652,17 @@ Rules the robots keep, and that keep them honest:
 - **No peeking.** A robot decides from what its own seat is served
   (`PlayingStateService::stateFor()`): its hand, dummy once face up, a
   claimer's face-up hand and the cards played — never the other hands.
+- **A defender looks at dummy.** On lead after the opening lead, a robot
+  defender doesn't lead a side suit dummy (or declarer, having shown out)
+  will ruff — not even a master — nor give a **ruff-and-discard** (a suit
+  both declarer and dummy are out of while either has a trump) unless
+  partner's over-ruff surely beats the contract, nor lead **up to** a
+  tenace in dummy (A-Q, K-J …) when dummy plays last; through it is fine.
+  It prefers a suit dummy is **weak** in, else a **trump** when dummy is
+  short in a suit the defence holds and could ruff it, and partner's
+  signals still come first unless dummy now ruffs that suit. **In code:**
+  `App\Robots\LeadSafety`, used by `DefenderPlay::lead()`; the full list
+  is in [`ROBOTS.md`](ROBOTS.md#a-defender-on-lead-later).
 - **Only with a human there.** Robots act only while at least one human is
   seated. When the last human leaves, the table is kept *unattended* and the
   robots wait; the first human to sit down runs it, and after 10 minutes
@@ -678,7 +689,8 @@ Stayman, transfers, a strong 2♣, weak twos, takeout, negative and penalty
 doubles, Blackwood and Gerber) and play (declarer counts winners and
 losers and plans a line — drawing trumps, ruffing in dummy, cross-ruffing,
 finesses, holding up, setting up long suits; defenders signal attitude,
-count and suit preference and read partner's; the last four tricks are
+count and suit preference and read partner's, and lead with dummy in
+view — away from its ruffs and tenaces; the last four tricks are
 searched double dummy over every layout of the unseen cards), and how they
 claim and answer claims, is in
 [`ROBOTS.md`](ROBOTS.md). **In code:** `app/Robots/` (the pure decision
