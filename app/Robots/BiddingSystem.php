@@ -396,7 +396,8 @@ class BiddingSystem
   /**
    * We asked for aces and partner answered: a grand slam with all of them
    * and 37 points, a small slam missing one at most, otherwise sign off at
-   * the five level (four for no trump after Gerber).
+   * the five level (four for no trump after Gerber) — in no trump only
+   * with the opponents' suits stopped, else in our strain even at six.
    */
   private function placeSlam(): void
   {
@@ -423,8 +424,15 @@ class BiddingSystem
 
       foreach ([$v->cheapest($strain), $v->cheapest('NT')] as $call) {
         if ($call !== null && AuctionView::level($call) <= 5) {
-          $this->add($call, $signoff, $is);
+          $this->add($call, $signoff, AuctionView::strain($call) === 'NT'
+            ? fn (RobotHand $h) => $is($h) && $h->stops($this->unstopped())
+            : $is);
         }
+      }
+
+      // no trump would leave their suit unstopped: our strain, even at six
+      if ($strain !== 'NT') {
+        $this->add($v->cheapest($strain), $signoff, $is);
       }
     }
   }
@@ -509,9 +517,9 @@ class BiddingSystem
     }
 
     $stopped = fn (RobotHand $h) => $h->isBalanced() && $h->stops($their);
-    $this->add($v->cheapest('NT'), new BidMeaning('Rebid', 12, 14, balanced: true, suit: 'NT'),
+    $this->add($v->cheapest('NT'), new BidMeaning('Rebid', 12, 14, balanced: true, suit: 'NT', stopped: $their),
       fn (RobotHand $h) => $stopped($h) && $h->hcp() <= 14);
-    $this->add($v->jump('NT'), new BidMeaning('Jump rebid', 18, 19, balanced: true, suit: 'NT'),
+    $this->add($v->jump('NT'), new BidMeaning('Jump rebid', 18, 19, balanced: true, suit: 'NT', stopped: $their),
       fn (RobotHand $h) => $stopped($h) && $h->hcp() >= 18);
 
     $this->add($v->jump($mine), new BidMeaning('Jump rebid', 16, 21, [$mine => 6], invite: true, suit: $mine),
@@ -591,10 +599,10 @@ class BiddingSystem
       $nt = $v->cheapest('NT');
 
       if ($balancing && $nt === '1NT') {
-        $this->add('1NT', new BidMeaning('Balancing 1NT', 11, 14, balanced: true, suit: 'NT', tag: 'nt-overcall'),
+        $this->add('1NT', new BidMeaning('Balancing 1NT', 11, 14, balanced: true, suit: 'NT', tag: 'nt-overcall', stopped: $their),
           fn (RobotHand $h) => $h->isBalanced() && $this->between($h, 11, 14) && $h->stops($their));
       } elseif (! $balancing && self::levelOf($nt) <= 2) {
-        $this->add($nt, new BidMeaning('Overcall', 15, 18, balanced: true, suit: 'NT', tag: 'nt-overcall'),
+        $this->add($nt, new BidMeaning('Overcall', 15, 18, balanced: true, suit: 'NT', tag: 'nt-overcall', stopped: $their),
           fn (RobotHand $h) => $h->isBalanced() && $this->between($h, 15, 18) && $h->stops($their));
       }
     }
@@ -660,7 +668,7 @@ class BiddingSystem
 
   /**
    * Partner's takeout double: we must bid — an unbid major first, then no
-   * trump with their suit stopped, then our longest suit — jumping with
+   * trump with their suit stopped (`naturalNt()`), then our longest suit — jumping with
    * 9–11, bidding game with 12+. Over an opponent's bid (or a round
    * later), bid only with something to say. A pass of their one-level bid
    * is for penalties.
@@ -715,17 +723,7 @@ class BiddingSystem
       $this->add("4$major", new BidMeaning('Game', $jump === "4$major" ? 9 : 12, lengths: [$major => 4], suit: $major), $is);
     }
 
-    $stopped = fn (RobotHand $h) => $h->stops($their);
-
-    if ($v->cheapest('NT') === '1NT') {
-      $this->add('1NT', new BidMeaning('Advance', 6, 10, suit: 'NT'),
-        fn (RobotHand $h) => $stopped($h) && $this->between($h, 6, 10));
-    }
-
-    $this->add('2NT', new BidMeaning('Advance', 11, 12, invite: true, suit: 'NT'),
-      fn (RobotHand $h) => $stopped($h) && $this->between($h, 11, 12));
-    $this->add('3NT', new BidMeaning('Game', 13, suit: 'NT'),
-      fn (RobotHand $h) => $stopped($h) && $h->hcp() >= 13);
+    $this->naturalNt($their, [[6, 10], [11, 12], [13, null]]);
 
     foreach ($unbid as $suit) {
       $is = fn (RobotHand $h) => $h->longest($unbid) === $suit;
@@ -738,8 +736,8 @@ class BiddingSystem
 
   /**
    * Partner overcalled in a suit: raise it (a jump invites, a major game
-   * with 14+), show a five-card suit, or bid no trump with their suit
-   * stopped.
+   * with 14+, 3NT over a minor with their suits stopped and no singleton),
+   * show a five-card suit, or bid no trump with their suit stopped.
    */
   private function advanceOvercall(string $suit): void
   {
@@ -760,8 +758,8 @@ class BiddingSystem
       $this->add("4$suit", new BidMeaning('Game', $jump === "4$suit" ? 11 : 14, lengths: [$suit => 3], suit: $suit),
         fn (RobotHand $h) => $support($h) && $h->hcp() >= 11);
     } else {
-      $this->add('3NT', new BidMeaning('Game', 14, suit: 'NT'),
-        fn (RobotHand $h) => $support($h) && $h->hcp() >= 14 && $h->stops($their));
+      $this->add('3NT', new BidMeaning('Game', 14, suit: 'NT', stopped: $their),
+        fn (RobotHand $h) => $support($h) && $h->hcp() >= 14 && $h->stops($their) && $h->isSemiBalanced());
       $this->add($jump, new BidMeaning('Jump raise', 11, lengths: [$suit => 3], invite: true, suit: $suit),
         fn (RobotHand $h) => $support($h) && $h->hcp() >= 11);
     }
@@ -782,7 +780,8 @@ class BiddingSystem
 
   /**
    * One-level no trump if still possible, the 2NT invitation and 3NT,
-   * with the opponents' suits stopped, over the given HCP ranges.
+   * with the opponents' suits stopped, over the given HCP ranges: balanced,
+   * or for 3NT a good six-card minor and no singleton.
    *
    * @param  list<string>  $their
    * @param  array{0: array{int, int}, 1: array{int, int}, 2: array{int, null}}  $ranges
@@ -790,16 +789,28 @@ class BiddingSystem
   private function naturalNt(array $their, array $ranges): void
   {
     [[$oneMin, $oneMax], [$twoMin, $twoMax], [$threeMin]] = $ranges;
+    $balanced = fn (RobotHand $h) => $h->isBalanced() && $h->stops($their);
 
     if ($this->v->cheapest('NT') === '1NT') {
-      $this->add('1NT', new BidMeaning('Natural', $oneMin, $oneMax, suit: 'NT'),
-        fn (RobotHand $h) => $h->stops($their) && $this->between($h, $oneMin, $oneMax));
+      $this->add('1NT', new BidMeaning('Natural', $oneMin, $oneMax, balanced: true, suit: 'NT', stopped: $their),
+        fn (RobotHand $h) => $balanced($h) && $this->between($h, $oneMin, $oneMax));
     }
 
-    $this->add('2NT', new BidMeaning('Invitation', $twoMin, $twoMax, invite: true, suit: 'NT'),
-      fn (RobotHand $h) => $h->stops($their) && $this->between($h, $twoMin, $twoMax));
-    $this->add('3NT', new BidMeaning('Game', $threeMin, suit: 'NT'),
-      fn (RobotHand $h) => $h->stops($their) && $h->hcp() >= $threeMin);
+    $this->add('2NT', new BidMeaning('Invitation', $twoMin, $twoMax, balanced: true, invite: true, suit: 'NT', stopped: $their),
+      fn (RobotHand $h) => $balanced($h) && $this->between($h, $twoMin, $twoMax));
+    $this->add('3NT', new BidMeaning('Game', $threeMin, suit: 'NT', stopped: $their),
+      fn (RobotHand $h) => $h->stops($their) && $h->hcp() >= $threeMin && $this->isNtGameShape($h));
+  }
+
+  /**
+   * A hand for game in no trump of our own choosing: balanced, or a good
+   * six-card (or longer) minor to run with no singleton or void.
+   */
+  private function isNtGameShape(RobotHand $h): bool
+  {
+    $minor = $h->longest(RobotHand::MINORS, 6);
+
+    return $h->isBalanced() || ($h->isSemiBalanced() && $minor !== null && $h->isGoodSuit($minor));
   }
 
   /**
@@ -816,7 +827,7 @@ class BiddingSystem
         fn (RobotHand $h) => $h->length($suit) >= 2 && $h->hcp() >= 16);
     }
 
-    $this->add('3NT', new BidMeaning('Game', 16, balanced: true, suit: 'NT', signoff: true),
+    $this->add('3NT', new BidMeaning('Game', 16, balanced: true, suit: 'NT', signoff: true, stopped: $others),
       fn (RobotHand $h) => $h->hcp() >= 16 && $h->isBalanced() && $h->stops($others));
     $this->add($this->v->cheapest($suit), new BidMeaning('Preemptive raise', 6, 15, [$suit => 3], suit: $suit, signoff: true),
       fn (RobotHand $h) => $h->length($suit) >= 3 && $this->between($h, 6, 15));
@@ -858,22 +869,23 @@ class BiddingSystem
 
   /**
    * An opponent bid over partner's no trump (so Stayman and transfers are
-   * off): double them with four of their suit, 3NT with it stopped, or a
-   * five-card suit of our own.
+   * off): double them with four of their suit, 3NT with their suits
+   * stopped, or a five-card suit of our own.
    */
   private function competeOverNt(): void
   {
     $v = $this->v;
     $last = $v->call($v->lastContract());
     $theirs = AuctionView::strain($last);
+    $their = $v->theirSuits();
 
     if ($theirs !== 'NT' && AuctionView::level($last) <= 3) {
       $this->add('X', new BidMeaning('Penalty double', 8, lengths: [$theirs => 4], tag: 'penalty'),
         fn (RobotHand $h) => $h->hcp() >= 8 && $h->length($theirs) >= 4);
     }
 
-    $this->add('3NT', new BidMeaning('Game', 10, suit: 'NT', signoff: true),
-      fn (RobotHand $h) => $h->hcp() >= 10 && ($theirs === 'NT' || $h->hasStopper($theirs)));
+    $this->add('3NT', new BidMeaning('Game', 10, suit: 'NT', signoff: true, stopped: $their),
+      fn (RobotHand $h) => $h->hcp() >= 10 && $h->stops($their));
 
     $mine = array_values(array_diff(RobotHand::SUITS, [$theirs]));
 
@@ -898,7 +910,7 @@ class BiddingSystem
       $this->add("4$suit", new BidMeaning('Game', 16, lengths: [$suit => 2], suit: $suit, signoff: true),
         fn (RobotHand $h) => $h->length($suit) >= 2 && $h->hcp() >= 16);
     } else {
-      $this->add('3NT', new BidMeaning('Game', 16, suit: 'NT', signoff: true),
+      $this->add('3NT', new BidMeaning('Game', 16, suit: 'NT', signoff: true, stopped: $others),
         fn (RobotHand $h) => $h->hcp() >= 16 && $h->stops($others));
     }
   }
@@ -1096,15 +1108,16 @@ class BiddingSystem
 
   /**
    * Partner answered in a new suit, which is forcing, so this never
-   * passes: raise their major with four, show a balanced hand in no trump,
-   * rebid a six-card suit, jump shift with 19+, show a new suit (a reverse
-   * needs 17+), then our five-card suit, 1NT, a raise with three, or our
-   * suit again.
+   * passes: raise their major with four, show a balanced hand in no trump
+   * (the opponents' suits stopped, if they bid), rebid a six-card suit,
+   * jump shift with 19+, show a new suit (a reverse needs 17+), then our
+   * five-card suit, 1NT, a raise with three, or our suit again.
    */
   private function rebidOverNewSuit(string $mine, string $theirs): void
   {
     $v = $this->v;
     $twoLevel = AuctionView::level($v->call($v->lastAction($v->partner()))) >= 2;
+    $opponents = $v->theirSuits();
 
     if (in_array($theirs, RobotHand::MAJORS, true)) {
       $four = fn (RobotHand $h) => $h->length($theirs) >= 4;
@@ -1121,10 +1134,10 @@ class BiddingSystem
     // a new suit at the 1 level comes before no trump: 1♣–1♦–1♥
     $this->newSuitRebids($mine, $new, 1, 1);
 
-    $balanced = fn (RobotHand $h) => $h->isBalanced();
-    $this->add($twoLevel ? '2NT' : '1NT', new BidMeaning('Rebid', 12, 14, balanced: true, suit: 'NT'),
+    $balanced = fn (RobotHand $h) => $h->isBalanced() && $h->stops($opponents);
+    $this->add($twoLevel ? '2NT' : '1NT', new BidMeaning('Rebid', 12, 14, balanced: true, suit: 'NT', stopped: $opponents),
       fn (RobotHand $h) => $balanced($h) && $h->hcp() <= 14);
-    $this->add($twoLevel ? '3NT' : '2NT', new BidMeaning('Rebid', 18, 19, balanced: true, suit: 'NT'),
+    $this->add($twoLevel ? '3NT' : '2NT', new BidMeaning('Rebid', 18, 19, balanced: true, suit: 'NT', stopped: $opponents),
       fn (RobotHand $h) => $balanced($h) && $this->between($h, 18, 19));
 
     $this->rebidOwnSuit($mine);
@@ -1148,7 +1161,8 @@ class BiddingSystem
     $opened = $v->meaning($v->opening())->lengths[$mine];
     $this->add($v->cheapest($mine), new BidMeaning('Rebid', 12, 18, [$mine => 5], suit: $mine),
       fn (RobotHand $h) => $h->length($mine) >= 5);
-    $this->add('1NT', new BidMeaning('Rebid', 12, 14, suit: 'NT'), fn (RobotHand $h) => $h->hcp() <= 14);
+    $this->add('1NT', new BidMeaning('Rebid', 12, 14, suit: 'NT', stopped: $opponents),
+      fn (RobotHand $h) => $h->hcp() <= 14 && $h->stops($opponents));
     $this->add($v->cheapest($theirs), new BidMeaning('Raise', 12, 18, [$theirs => 3], suit: $theirs),
       fn (RobotHand $h) => $h->length($theirs) >= 3);
     $this->add($v->cheapest($mine), new BidMeaning('Rebid', 12, 18, [$mine => $opened], suit: $mine), fn () => true);
@@ -1265,7 +1279,7 @@ class BiddingSystem
 
       // opposite a narrow no trump range only (12–14, 15–17, 18–19 …)
       if ($ntPartner && $p['max'] - $p['min'] <= 4) {
-        $this->add('4NT', new BidMeaning('Quantitative', max(0, self::SLAM - $p['max']), $min - 1, note: 'invites 6NT', asks: 'quantitative', suit: 'NT'),
+        $this->add('4NT', new BidMeaning('Quantitative', max(0, self::SLAM - $p['max']), $min - 1, note: 'invites 6NT', asks: 'quantitative', suit: 'NT', stopped: $this->unstopped()),
           fn (RobotHand $h) => $h->hcp() + $p['max'] >= self::SLAM && $this->gameStrain($h) === 'NT');
       }
     }
@@ -1295,7 +1309,8 @@ class BiddingSystem
       $invite = max(0, self::GAME - $p['max']);
 
       foreach (['S', 'H', 'NT'] as $strain) {
-        $this->add($strain === 'NT' ? '2NT' : "3$strain", new BidMeaning('Invitation', $invite, $game - 1, $this->fitLength($strain), invite: true, suit: $strain),
+        $this->add($strain === 'NT' ? '2NT' : "3$strain", new BidMeaning('Invitation', $invite, $game - 1, $this->fitLength($strain), invite: true, suit: $strain,
+          stopped: $strain === 'NT' ? $this->unstopped() : []),
           fn (RobotHand $h) => $this->gameStrain($h) === $strain && $h->hcp() >= $invite && $h->hcp() < $game);
       }
     }
@@ -1305,7 +1320,8 @@ class BiddingSystem
       $nt = $v->cheapest('NT');
 
       if ($nt !== null && AuctionView::level($nt) <= 3) {
-        $this->add($nt, new BidMeaning('Waiting', suit: 'NT'), fn () => true);
+        $this->add($nt, new BidMeaning('Waiting', suit: 'NT', stopped: $this->unstopped()),
+          fn (RobotHand $h) => $h->stops($this->unstopped()));
       }
 
       foreach ($v->suitsOf($v->partner()) as $suit) {
@@ -1316,7 +1332,8 @@ class BiddingSystem
 
   /**
    * Game in the strain our hands point to: four of a major we have eight
-   * of between us, else 3NT — five of a minor fit once 3NT has gone.
+   * of between us, else 3NT — five of a minor fit once 3NT has gone, or
+   * when the opponents' suits aren't stopped.
    *
    * @param  Closure(RobotHand): bool  $when
    */
@@ -1330,13 +1347,15 @@ class BiddingSystem
 
     foreach (RobotHand::MINORS as $minor) {
       $this->add("5$minor", $this->named($meaning, $minor),
-        fn (RobotHand $h) => $when($h) && $this->gameStrain($h) === 'NT' && $this->minorFit($h) === $minor && ! $this->v->isLegal('3NT'));
+        fn (RobotHand $h) => $when($h) && ($this->gameStrain($h) === $minor
+          || ($this->gameStrain($h) === 'NT' && $this->minorFit($h) === $minor && ! $this->v->isLegal('3NT'))));
     }
   }
 
   private function named(?BidMeaning $meaning, string $strain): BidMeaning
   {
-    return new BidMeaning($meaning?->label ?? 'Game', $meaning?->min, $meaning?->max, $this->fitLength($strain), suit: $strain);
+    return new BidMeaning($meaning?->label ?? 'Game', $meaning?->min, $meaning?->max, $this->fitLength($strain), suit: $strain,
+      stopped: $strain === 'NT' ? $this->unstopped() : []);
   }
 
   /**
@@ -1436,9 +1455,11 @@ class BiddingSystem
   /**
    * Where game should be played: the major with eight or more cards
    * between us (the more, the better; spades on a tie) or a seven-card
-   * major of our own, else no trump.
+   * major of our own, else no trump — when the opponents' suits are
+   * stopped (`unstopped()`); without that, a minor fit, else nowhere
+   * (null).
    */
-  private function gameStrain(RobotHand $h): string
+  private function gameStrain(RobotHand $h): ?string
   {
     $lengths = $this->v->shown($this->v->partner())['lengths'];
     $best = 'NT';
@@ -1454,7 +1475,22 @@ class BiddingSystem
       $best = $h->longest(RobotHand::MAJORS, 7) ?? 'NT';
     }
 
+    if ($best === 'NT' && ! $h->stops($this->unstopped())) {
+      return $this->minorFit($h);
+    }
+
     return $best;
+  }
+
+  /**
+   * The suits the opponents bid that a no trump of ours needs stopped:
+   * all of them but those partner's no trump has promised.
+   *
+   * @return list<string>
+   */
+  private function unstopped(): array
+  {
+    return array_values(array_diff($this->v->theirSuits(), $this->v->shown($this->v->partner())['stopped']));
   }
 
   /**
@@ -1481,9 +1517,9 @@ class BiddingSystem
    */
   private function slamStrain(RobotHand $h): string
   {
-    $major = $this->gameStrain($h);
+    $game = $this->gameStrain($h);
 
-    return $major !== 'NT' ? $major : ($this->minorFit($h) ?? $h->longest(RobotHand::SUITS, 6) ?? 'NT');
+    return $game !== null && $game !== 'NT' ? $game : ($this->minorFit($h) ?? $h->longest(RobotHand::SUITS, 6) ?? 'NT');
   }
 
   /**

@@ -152,6 +152,14 @@ class RobotHand
   }
 
   /**
+   * No void and no singleton: balanced, or 5-4-2-2, 6-3-2-2 and the like.
+   */
+  public function isSemiBalanced(): bool
+  {
+    return min(array_map(fn ($suit) => $this->length($suit), self::SUITS)) >= 2;
+  }
+
+  /**
    * Whether the suit is stopped for no trump: A, Kx, Qxx or Jxxx.
    */
   public function hasStopper(string $suit): bool

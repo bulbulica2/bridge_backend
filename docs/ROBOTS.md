@@ -112,13 +112,15 @@ say) is read as "Natural": it shows its suit and nothing else.
 
 A robot adds up what its partner has shown **through the whole auction**:
 each call's HCP range narrows the picture (a call that contradicts it
-replaces it), the longest length shown in each suit is kept, and so is
-whether the last call invites game. That is what "partner's minimum" and
-"partner's maximum" mean below.
+replaces it), the longest length shown in each suit is kept, and so are
+the suits partner's no trump promised stopped and whether the last call
+invites game. That is what "partner's minimum" and "partner's maximum"
+mean below.
 
 Each call's meaning has a short **explanation**, ready for bid alerts:
 "Stayman: 8–17 HCP, asks for a four-card major", "Weak two: 5–11 HCP,
-6+ ♥", "Takeout double: 12+ HCP, short in ♦, asks partner to pick a suit".
+6+ ♥", "Takeout double: 12+ HCP, short in ♦, asks partner to pick a suit",
+"Invitation: 11–12 HCP, balanced, ♠ stopped, invites game".
 `RobotBidder::bid()` returns it with the robot's call, and
 `RobotBidder::read()` explains every call of an auction. The API doesn't
 send explanations yet.
@@ -129,7 +131,25 @@ send explanations yet.
   added for length or shortness.
 - **Balanced**: no void, no singleton, at most one doubleton — 4-3-3-3,
   4-4-3-2 or 5-3-3-2.
-- **Stopper** in a suit (for no trump): A, K-x, Q-x-x or J-x-x-x.
+- **Semi-balanced**: no void and no singleton (5-4-2-2, 6-3-2-2 too).
+- **Stopper** in a suit (for no trump): A, K-x, Q-x-x or J-x-x-x — not a
+  bare K, Q-x or J-x-x.
+- **Their suits**: the suits the opponents have bid **naturally**. An
+  artificial call (Stayman, a strong 2♣, an answer to Blackwood…) shows
+  no suit, a transfer shows its major, and a **cue bid** — a suit our side
+  bid first — isn't theirs.
+- **No trump over their suits**: every natural no trump bid with the
+  opponents in the auction needs **their suits stopped** — by this hand,
+  or already promised by partner's no trump — and says so: partner reads
+  "♠ stopped" into it and may go on to 3NT on that. On the first round
+  (§5–§8) it also needs a **balanced** hand; only **3NT** may instead be
+  semi-balanced with a good six-card (or longer) minor to run. An answer to
+  partner's no trump needs no particular shape; where partner's long suit
+  is the source of tricks, 3NT opposite a minor preempt needs none either
+  (§4), and over partner's minor overcall only no singleton or void (§8).
+  Later bids (§10) check the stoppers, not the shape. Without the
+  stoppers or the shape the robot goes on to its next rule: a suit, a
+  raise, a double, or pass.
 - **Longest suit** among some suits: the one with the most cards; on a tie,
   the higher-ranking (♠ > ♥ > ♦ > ♣).
 - **Good suit** (to preempt in): two of the top three honours (A, K, Q) or
@@ -213,7 +233,7 @@ half of the range (16–17 over 1NT), else pass. 1NT–2NT: 3NT with 16–17.
 | Hand | Call |
 |---|---|
 | 8+ HCP and four of their suit (their bid at the 3 level or lower) | **Double**, for penalties |
-| 10+ HCP and their suit stopped | **3NT** |
+| 10+ HCP and their suits stopped | **3NT** |
 | 5+ HCP and a five-card suit, at the 3 level or lower | that suit, to play |
 | anything else | Pass |
 
@@ -264,7 +284,8 @@ takeout double changes nothing). Checked in this order:
 | a four-card or longer **major** biddable at the 1 level, 6–18 HCP | **1♥** with four of each major, else the longer (**1♠** with 5-5) |
 | partner opened 1♣, four diamonds, 6–18 HCP | **1♦** |
 | no overcall: balanced, 13–15 / 16–18 HCP | **2NT** / **3NT** |
-| after an overcall, their suit stopped: 6–10 / 11–12 / 13+ HCP | **1NT** (if still legal) / **2NT** (invites) / **3NT** |
+| after an overcall, their suit stopped and balanced: 6–10 / 11–12 HCP | **1NT** (if still legal) / **2NT** (invites) |
+| … 13+ HCP, balanced or semi-balanced with a good six-card minor | **3NT** |
 | 11–18 HCP and a four-card suit biddable at the 2 level | that suit (the longest; higher on a tie) |
 | partner opened a **minor**: 6–10 HCP with five clubs / four diamonds | **2** of the minor |
 | … 11–12 HCP with four of it | **3** of the minor (a limit raise) |
@@ -291,14 +312,14 @@ answer.
 |---|---|
 | partner's suit is a **major** and we hold four: 12–15 / 16–18 / 19+ HCP | the cheapest raise / a jump raise (invites) / game |
 | a new four-card suit biddable at the **1 level**, 12–18 HCP | that suit (the longest; higher on a tie) — 1♣–1♦–**1♥** |
-| balanced, 12–14 HCP | **1NT** (**2NT** over a two-level answer) |
-| balanced, 18–19 HCP | **2NT** (**3NT** over a two-level answer) |
+| balanced, 12–14 HCP, their suits stopped if they bid | **1NT** (**2NT** over a two-level answer) |
+| balanced, 18–19 HCP, their suits stopped | **2NT** (**3NT** over a two-level answer) |
 | a six-card suit: 12–15 / 16–18 / 19+ HCP in a major | our suit at the cheapest level / one higher (invites) / game (in a minor the jump is 16+) |
 | 19+ HCP and a new four-card suit | a **jump shift** in it: forcing to game |
 | a new four-card suit at the **2 level**, 12–18 HCP, ranking below our first — or above it (a **reverse**) with 17–18 | that suit — 1♦–1♥–**2♣**; a reverse (1♦–1♠–**2♥**) forces one more bid |
 | partner's suit is a **minor** and we hold four: 12–18 / 19+ HCP | the cheapest raise / a jump raise, forcing to game |
 | a five-card suit of our own | our suit at the cheapest level |
-| 12–14 HCP, 1NT still legal | **1NT** |
+| 12–14 HCP, their suits stopped, 1NT still legal | **1NT** |
 | three cards in partner's suit | the cheapest raise |
 | anything else | our suit at the cheapest level |
 
@@ -347,7 +368,8 @@ We haven't called anything but pass; the opponents opened.
 |---|---|
 | their bid is at the 1 level; five of it with two of its top three honours, 8+ HCP | Pass: a penalty pass |
 | a four-card major they haven't bid (the longest; ♠ on a tie): 0–8 / 9–11 / 12+ HCP | it at the cheapest level / a jump (invites) / **4** of it |
-| their suits stopped: 6–10 HCP (1NT still legal) / 11–12 / 13+ | **1NT** / **2NT** (invites) / **3NT** |
+| their suits stopped and balanced: 6–10 HCP (1NT still legal) / 11–12 | **1NT** / **2NT** (invites) |
+| … 13+ HCP, balanced or semi-balanced with a good six-card minor | **3NT** |
 | otherwise our longest suit they haven't bid: 0–8 / 9+ HCP | it at the cheapest level / a jump (invites) |
 
 When the opponent **bid over the double** — or the double was a round ago —
@@ -362,10 +384,11 @@ five of a minor) at the 3 level or lower; otherwise pass.
 | three of partner's suit, 6–10 HCP | the cheapest raise |
 | … a major, 11–13 HCP | a jump raise (invites) |
 | … a major, 14+ HCP | **4** of it |
-| … a minor, 14+ HCP and their suits stopped | **3NT** |
+| … a minor, 14+ HCP, their suits stopped, no singleton or void | **3NT** |
 | … a minor, 11+ HCP | a jump raise |
 | a five-card suit of our own, 8–15 HCP, at the 2 level at most | that suit |
-| their suits stopped: 8–11 HCP (1NT still legal) / 12–14 / 15+ | **1NT** / **2NT** (invites) / **3NT** |
+| their suits stopped and balanced: 8–11 HCP (1NT still legal) / 12–14 | **1NT** / **2NT** (invites) |
+| … 15+ HCP, balanced or semi-balanced with a good six-card minor | **3NT** |
 | anything else | Pass |
 
 **Partner's weak jump overcall**: as over a weak two
@@ -394,8 +417,15 @@ or when partner's last bid was a sign-off (a bid "to play").
 **Where to play.** Game is **4** of a major with eight or more cards
 between us (counting partner's shown length; ♠ on a tie) or with a
 seven-card major of our own; otherwise **3NT** — or **5** of a minor with
-an eight-card fit once 3NT is no longer legal. A slam goes in that major,
-else a minor fit, else a six-card suit of our own, else no trump.
+an eight-card fit once 3NT is no longer legal. With the opponents in the
+auction, no trump (3NT, the 2NT invitation, the quantitative 4NT, rule 8's
+cheapest no trump and the sign-off after aces) needs **their suits
+stopped**: by this hand, or promised by partner's no trump. Without that,
+game is **5** of a minor with an eight-card fit, and with no fit there is
+no game: the robot invites nothing, gives preference to partner's suit
+when it must bid, competes in a fit, or passes. A slam goes in that major,
+else a minor fit, else a six-card suit of our own, else no trump (a slam's
+strain isn't checked for stoppers).
 
 **Our side made the last bid**, checked in this order:
 
@@ -424,7 +454,8 @@ else a minor fit, else a six-card suit of our own, else no trump.
 7. **Nobody has invited** and game is possible (our HCP + partner's
    maximum ≥ 25): invite — **3** of the fit major, else **2NT**.
 8. **Partner's last bid forces one more** (a reverse): the cheapest no
-   trump up to 3NT, else the cheapest bid in partner's suit.
+   trump up to 3NT (their suits stopped), else the cheapest bid in
+   partner's suit.
 9. Otherwise pass.
 
 **Answering for aces.** Blackwood: **5♣** none or four, **5♦** one, **5♥**
@@ -433,7 +464,8 @@ asker counts the aces ("none or four" is four when it holds none), then:
 all four and 37+ HCP between us → a **grand slam**; one missing at most →
 a **small slam**; otherwise **sign off** — pass if partner's answer is our
 strain, else our strain at the cheapest level up to 5, else the cheapest no
-trump. Partner passes the sign-off.
+trump — with the opponents' suits stopped; otherwise our strain even at the
+six level (and in no trump, a pass). Partner passes the sign-off.
 
 **The opponents made the last bid** (competing), checked in this order:
 
@@ -743,14 +775,17 @@ on each side:
 
 | Declarer's side | Defenders | Contracts made | Declarer's tricks, average |
 |---|---|---|---|
-| v1 | v1 | 540 (55.6%) | 8.26 |
-| today's | v1 | 686 (70.6%) | 8.85 |
-| v1 | today's | 476 (49.0%) | 8.08 |
-| today's | today's | 631 (64.9%) | 8.64 |
+| v1 | v1 | 527 (54.2%) | 8.22 |
+| today's | v1 | 680 (70.0%) | 8.83 |
+| v1 | today's | 485 (49.9%) | 8.01 |
+| today's | today's | 656 (67.5%) | 8.62 |
 
-Today's declarer makes about 15 contracts in 100 more than v1 against the
-same defence, and today's defence beats about 7 in 100 more of v1's
-declarers. `tests/Unit/Robots/RobotSimulationTest` runs the same comparison
+Today's declarer makes about 16 contracts in 100 more than v1 against the
+same defence, and today's defence beats about 4 in 100 more of v1's
+declarers. (Measured with today's bidding: requiring stoppers and shape
+for no trump over the opponents' suits turned about 40 of these contracts
+from no trump into suits or part-scores, and cut the no trump contracts
+going down two or more from 61 to 54.) `tests/Unit/Robots/RobotSimulationTest` runs the same comparison
 on 60 deals and requires both.
 
 ## Claims
@@ -834,6 +869,10 @@ set — a human alone with three robots presses it once.
   two for a feature, no negative doubles above 2♠, no lead-directing
   doubles.
 - No competing above the 3 level except to bid a game that is sure.
+- No asking for a stopper: with game values, no fit and their suit
+  unstopped, a robot doesn't cue-bid it to ask partner for one — it plays
+  five of a minor fit, or a part-score, or passes. Slams in no trump don't
+  check stoppers.
 - A call's meaning is read from its rules alone: when several rules make
   the same call, partner sees the widest of their ranges, not the hands the
   earlier rules have already taken.

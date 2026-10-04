@@ -41,6 +41,8 @@ final class BidMeaning
    * @param  string|null  $tag  the kind of call, for the rules that read
    *                            it back (`one`, `new-suit`, `takeout` …)
    * @param  bool  $known  false for a call the system doesn't describe
+   * @param  list<string>  $stopped  the suits a no trump bid promises
+   *                                 stopped (the opponents')
    */
   public function __construct(
     public readonly string $label,
@@ -57,6 +59,7 @@ final class BidMeaning
     public readonly ?string $note = null,
     public readonly ?string $tag = null,
     public readonly bool $known = true,
+    public readonly array $stopped = [],
   ) {}
 
   /**
@@ -74,8 +77,8 @@ final class BidMeaning
 
   /**
    * What a call means when several rules make it: the union of their
-   * hands — the widest range and the shortest lengths — under the first
-   * rule's name.
+   * hands — the widest range, the shortest lengths and only the stoppers
+   * they all promise — under the first rule's name.
    *
    * @param  non-empty-list<self>  $meanings
    */
@@ -118,6 +121,7 @@ final class BidMeaning
       $first->note,
       $first->tag,
       $first->known,
+      array_values(array_intersect($first->stopped, ...array_map(fn ($meaning) => $meaning->stopped, $meanings))),
     );
   }
 
@@ -141,6 +145,10 @@ final class BidMeaning
 
     if ($this->balanced) {
       $parts[] = 'balanced';
+    }
+
+    if ($this->stopped !== []) {
+      $parts[] = implode('', array_map(self::symbol(...), $this->stopped)).' stopped';
     }
 
     if ($this->aces !== null) {

@@ -18,9 +18,10 @@ checks**: GitHub Actions (`.github/workflows/tests.yml`) runs `pint`,
 `tests` and `coverage` on every PR and push, so don't run the full suite,
 `composer coverage` or `pint --test` locally before opening the PR (locally
 coverage runs on Xdebug and takes many minutes); while working, run only the
-test classes you are changing. Then watch the checks (`gh pr checks`): if one
-is red, reproduce that failure locally, fix it and push again — `main`
-requires all three green.
+test classes you are changing. Don't watch the checks after opening the PR
+(no `gh pr checks` polling): hand the PR over and stop. If a check goes red
+the user says so and gives the failing command; then reproduce that failure
+locally, fix it and push again — `main` requires all three green.
 
 **Every issue and PR must keep line coverage of `app/` at or above 95%**
 (the whole suite's number, as `composer coverage` and the `coverage` check

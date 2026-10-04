@@ -237,6 +237,34 @@ class RobotBidderTest extends TestCase
     ];
   }
 
+  /**
+   * No trump with the opponents in the auction: their suits stopped (by
+   * this hand, or promised by partner's no trump), and a hand for it.
+   */
+  public static function stoppers(): array
+  {
+    return [
+      'board 4: 2C, not 2NT, with a singleton and six clubs' => [['1D', '1S'], 'Q64.8.K76.KQJT65', '2C'],
+      'no 1NT over their 1H with xx in hearts' => [['1D', '1H'], 'K32.32.Q432.KJ32', '2D'],
+      '1NT over their 1H with Kx in hearts' => [['1D', '1H'], 'Q32.K2.Q432.K32', '1NT'],
+      '2NT over an overcall, balanced and stopped' => [['1D', '1S'], 'Q64.K8.K76.KJ765', '2NT'],
+      '3NT over an overcall with a good six-card minor' => [['1D', '1S'], 'A64.K8.76.AKJ765', '3NT'],
+      'no 1NT advancing a double with a singleton' => [['1D', 'X', 'P'], 'K32.J.KJ32.Q5432', '3C'],
+      'opener rebids 2NT with their suit stopped' => [['1D', '1S', '2C', 'P'], 'Q32.AK3.KJ32.J32', '2NT'],
+      'and not without' => [['1D', '1S', '2C', 'P'], 'J32.AK3.KJ32.Q32', '3C'],
+      'game in 3NT over their bid with it stopped' => [['1D', '1S', '2C', '2S'], 'KJ2.AQ3.AQ32.K32', '3NT'],
+      'five of the minor fit without' => [['1D', '1S', '2C', '2S'], 'Q2.AK3.AQ32.K432', '5C'],
+      'pass with no stopper and no fit' => [['1D', '1S', '2C', '2S'], 'Q2.AK32.AQ32.K32', 'P'],
+      'the 2NT invitation with it stopped' => [['1D', '1S', '2C', 'P', '2D', 'P'], 'Q64.8.K76.KQJT65', '2NT'],
+      'no invitation without' => [['1D', '1S', '2C', 'P', '2D', 'P'], '864.Q8.K76.KQJT6', 'P'],
+      'a reverse answered in no trump with it stopped' => [['1C', '1D', '1S', 'P', '2H', 'P'], 'KJ432.32.Q32.432', '2NT'],
+      'and in partner\'s suit without' => [['1C', '1D', '1S', 'P', '2H', 'P'], 'KJ432.32.432.Q32', '3C'],
+      'partner\'s 1NT has stopped their suit' => [['1D', '1S', '1NT', 'P'], '32.AK2.AQ432.KQ2', '2NT'],
+      'the Blackwood sign-off in no trump with it stopped' => [['1D', '1S', '2C', 'P', '3C', 'P', '4NT', 'P', '5H', 'P'], 'KQ2.KQ.KQ2.KJ432', '5NT'],
+      'and in the minor fit without, even at six' => [['1D', '1S', '2C', 'P', '3C', 'P', '4NT', 'P', '5H', 'P'], '432.KQ.KQ2.KQJ32', '6C'],
+    ];
+  }
+
   #[DataProvider('openings')]
   #[DataProvider('noTrumpResponses')]
   #[DataProvider('noTrumpContinuations')]
@@ -249,6 +277,7 @@ class RobotBidderTest extends TestCase
   #[DataProvider('rebids')]
   #[DataProvider('laterBids')]
   #[DataProvider('competition')]
+  #[DataProvider('stoppers')]
   public function test_the_call(array $names, string $hand, string $expected): void
   {
     $calls = $this->calls('N', $names);
@@ -271,6 +300,7 @@ class RobotBidderTest extends TestCase
       'a negative double' => [['1C', '1S', 'X'], 'Negative double: 6+ HCP, 4+ ♥'],
       'an answer to Blackwood' => [['1H', 'P', '3H', 'P', '4NT', 'P', '5D'], 'Aces: one ace'],
       'a jump shift' => [['1C', 'P', '2S'], 'Jump shift: 19+ HCP, 4+ ♠, forcing to game'],
+      'no trump over their suit' => [['1D', '1S', '2NT'], 'Invitation: 11–12 HCP, balanced, ♠ stopped, invites game'],
       'a call the system doesn\'t make' => [['5C'], 'Natural'],
     ];
   }
@@ -319,6 +349,23 @@ class RobotBidderTest extends TestCase
     // a transfer shows the major, not the suit bid
     $transfer = RobotBidder::shown($this->calls('N', ['1NT', 'P', '2D']), 'S');
     $this->assertSame([5, 0], [$transfer['lengths']['H'], $transfer['lengths']['D']]);
+  }
+
+  public function test_a_natural_no_trump_promises_their_suits_stopped(): void
+  {
+    $this->assertSame(['S'], RobotBidder::shown($this->calls('N', ['1D', '1S', '1NT']), 'S')['stopped']);
+    $this->assertSame([], RobotBidder::shown($this->calls('N', ['1NT']), 'N')['stopped']);
+  }
+
+  public function test_their_suits_are_the_ones_they_bid_naturally(): void
+  {
+    $view = fn (array $names, string $seat) => new AuctionView($this->calls('N', $names), RobotBidder::read($this->calls('N', $names)), $seat);
+
+    $this->assertSame(['S'], $view(['1H', '2S'], 'S')->theirSuits());
+    $this->assertSame([], $view(['1H', '2H'], 'S')->theirSuits(), 'a cue bid of our suit');
+    $this->assertSame([], $view(['1H', 'X'], 'S')->theirSuits(), 'a takeout double');
+    $this->assertSame([], $view(['1NT', 'P', '2C'], 'W')->theirSuits(), 'Stayman');
+    $this->assertSame(['H'], $view(['1NT', 'P', '2D'], 'W')->theirSuits(), 'a transfer shows the major');
   }
 
   public function test_legal_calls(): void

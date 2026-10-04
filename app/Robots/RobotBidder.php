@@ -81,7 +81,7 @@ class RobotBidder
    * game (`AuctionView::shown()`).
    *
    * @param  list<array{seat: string, call: string}>  $calls
-   * @return array{known: bool, min: int, max: int, lengths: array<string, int>, balanced: bool, invite: bool}
+   * @return array{known: bool, min: int, max: int, lengths: array<string, int>, balanced: bool, stopped: list<string>, invite: bool}
    */
   public static function shown(array $calls, string $seat): array
   {
