@@ -10,10 +10,10 @@ use App\Events\PlayingUpdated;
 use App\Exceptions\IllegalCallException;
 use App\Models\Auction;
 use App\Models\Bid;
+use App\Models\BoardMessage;
 use App\Models\BoardTable;
 use App\Models\Table;
 use App\Models\User;
-use App\Robots\RobotBidder;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -29,11 +29,13 @@ use Illuminate\Support\Facades\DB;
  * Alerts (`GAME-RULES.md` §4) are self-alerts: the bidder marks their own
  * call and may say what it means. The two opponents learn it on their own
  * channels (`CallAlerted`), never partner, and may ask about any call of
- * the other side (`ask()`), which its bidder answers (`explain()`).
+ * the other side (`ask()`), which its bidder answers (`explain()`). The
+ * question and the answer go into the board's chat as well
+ * (`BoardChatService`), to the bidder's opponents.
  */
 class AuctionService
 {
-  public function __construct(private PlayingStateService $state) {}
+  public function __construct(private PlayingStateService $state, private BoardChatService $chat) {}
 
   /**
    * Make `$user`'s call at the table's current playing, alerted when
@@ -105,8 +107,9 @@ class AuctionService
   /**
    * `$user` asks what the call at `$index` of the auction (from 0) means: a
    * call of the other side, until the board is finished, one open question
-   * per call. A robot bidder answers at once with what its system reads
-   * into that call (`RobotBidder::read()`); a human gets `CallQuestioned`.
+   * per call. The question goes into the board's chat. A robot bidder
+   * answers at once with what its system reads into that call
+   * (`BoardChatService::robotReading()`); a human gets `CallQuestioned`.
    * Returns whether the question was answered at once.
    *
    * @throws IllegalCallException
@@ -124,15 +127,12 @@ class AuctionService
         throw new IllegalCallException("{$call->question_seat} has asked about that call already: wait for the answer.");
       }
 
+      $this->chat->post($playing, $user, $seat, BoardMessage::TO_OPPONENTS, self::question($call->bid), $index);
+
       $bidder = $playing->seats->firstWhere('seat', $call->seat)->user;
 
       if ($bidder->is_robot) {
-        $calls = array_map(
-          fn ($made) => ['seat' => $made['seat'], 'call' => $made['bid']->suit],
-          $this->state->calls($playing),
-        );
-
-        $this->answer($playing, $call, $index, RobotBidder::read($calls)[$index]->explanation());
+        $this->answer($playing, $call, $index, $this->chat->robotReading($playing, $index));
 
         return true;
       }
@@ -205,13 +205,31 @@ class AuctionService
 
   /**
    * Alert `$call` with `$explanation`, close its question and tell both
-   * opponents.
+   * opponents, on their channels and in the board's chat.
    */
   private function answer(BoardTable $playing, Auction $call, int $index, string $explanation): void
   {
     $call->update(['alerted' => true, 'explanation' => $explanation, 'question_seat' => null]);
 
     $this->alertTo($playing, $call->seat, $index, $explanation);
+
+    $bidder = $playing->seats->firstWhere('seat', $call->seat)->user;
+    $this->chat->post($playing, $bidder, $call->seat, BoardMessage::TO_OPPONENTS, $explanation, $index);
+  }
+
+  /**
+   * A question about `$bid` as the chat shows it: "What does 2H mean?".
+   */
+  private static function question(Bid $bid): string
+  {
+    $call = match (true) {
+      $bid->isPass() => 'Pass',
+      $bid->isDouble() => 'Double',
+      $bid->isRedouble() => 'Redouble',
+      default => $bid->suit,
+    };
+
+    return "What does $call mean?";
   }
 
   /**

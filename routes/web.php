@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Game\BidController;
 use App\Http\Controllers\Game\BoardController;
+use App\Http\Controllers\Game\BoardMessageController;
 use App\Http\Controllers\Game\CallController;
 use App\Http\Controllers\Game\CardController;
 use App\Http\Controllers\Game\CardPlayController;
@@ -78,6 +79,12 @@ Route::middleware('auth')->group(function () {
         ->whereNumber('index')->name('tables.calls.question');
       Route::put('tables/{table}/calls/{index}/explanation', [CallController::class, 'explain'])
         ->whereNumber('index')->name('tables.calls.explanation');
+
+      // the board's chat: the messages you may read, and a message to the
+      // opponents (never partner) or, between boards, to the whole table
+      Route::get('tables/{table}/messages', [BoardMessageController::class, 'index'])->name('tables.messages.index');
+      Route::post('tables/{table}/messages', [BoardMessageController::class, 'store'])
+        ->middleware('throttle:board-messages')->name('tables.messages.store');
 
       // the next card of the trick, from your own hand or, as declarer, dummy's
       Route::post('tables/{table}/cards', [CardPlayController::class, 'store'])->name('tables.cards.store');

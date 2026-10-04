@@ -352,6 +352,22 @@ deleted, so the log is removed explicitly instead: with the table
 on `board_table`.
 Relations: `bid` (belongsTo).
 
+### BoardMessage (`board_messages`)
+Fields: `board_table_id`, `user_id` (both FK), `seat` (enum `Seats::SEATS`,
+the sender's seat), `to` (enum `BoardMessage::TO`: `opponents` — the sender
+and both opponents, never partner — or `table`, all four), `call_index`
+(nullable unsigned small integer, cast: the call of the auction the message
+is about, from 0) and `body` (string, at most `BoardMessage::BODY_MAX` = 500
+characters). One message of a board's chat (`BoardChatService`,
+[`API.md`](API.md#chat)), against the playing the table was on.
+`visibleTo($seat, $finished)` says who may read it: everyone once the board
+is finished or for a `table` message, otherwise everyone but the sender's
+partner. Messages are **kept**: unlike `auctions` and `cardplays`,
+`discardLogs()` leaves them, so an abandoned playing keeps its chat, and a
+banned user's messages stay. `board_table_id` is `cascadeOnDelete`, but
+`board_table` rows are never deleted. No factory; no relations (it is read
+through `BoardTable::messages()`).
+
 ### Cardplay (`cardplays`, model class `Cardplay`)
 Fields: `user_id`, `board_table_id`, `card_id` (all FK), `seat` (enum
 `Seats::SEATS` — the hand the card came from), `round` (integer — trick
@@ -444,7 +460,9 @@ An unfinished playing is therefore the one row with this `table_id` and a null
 
 Relations: `board`, `table`, `tableSet`, `contractBid` (Bid), `declarer`
 (User) (all belongsTo), `seats` (hasMany BoardTableSeat), `auctions` / `cardPlays`
-(hasMany on `board_table_id`; eager-loadable). `discardLogs()` deletes both.
+(hasMany on `board_table_id`; eager-loadable), `messages` (hasMany
+BoardMessage, the board's chat). `discardLogs()` deletes `auctions` and
+`cardPlays`, never `messages`.
 `BoardTableFactory` has `auctionEnded()` (needs bids seeded) and `finished()`
 states, and makes playings with no set. `finish()` also completes the set
 when the board is its last (`set_position` reaches the set's `size`). Rows are written by `BoardSelectionService` (a full table's Start or
@@ -528,6 +546,7 @@ Board ──< BoardTable >── Table        (history: one row per playing,
              │   │                      └──< TableSetSeat >── User
              │   ├── contract_bid_id ──> Bid, declarer_id ──> User
              │   ├──< Auction >── Bid, User       (one row per call)
-             │   └──< Cardplay >── Card, User     (+seat, +won_trick)
+             │   ├──< Cardplay >── Card, User     (+seat, +won_trick)
+             │   └──< BoardMessage >── User       (the chat: +seat, +to)
              └──< BoardTableSeat >── User   (who sat where)
 ```

@@ -148,7 +148,24 @@ double, no trump bids, the quantitative 4NT, passes — nor is a call that
 fell back to a pass. Asked about **any** of its calls
 (`POST /tables/{table}/calls/{index}/question`), a robot answers at once,
 with `RobotBidder::read()`'s explanation of that call ("Natural" for one
-no rule makes), which alerts the call and goes to both opponents.
+no rule makes), which alerts the call and goes to both opponents — and,
+like the question, into the board's chat.
+
+### Answering in the chat
+
+A message in the board's chat ([`API.md`](API.md#chat)) with a
+`call_index` about a robot's call, from one of its **opponents**, is a
+question: the robot answers it at once in the chat
+(`BoardChatService::send()`, through `robotReading()`, the same
+`RobotBidder::read()` explanation), from its own seat, to whoever the
+question went to (`opponents` during the board), with the same
+`call_index` — after 1NT, 2♥ comes back as "Transfer: 0–17 HCP, 5+ ♠, asks
+partner to bid ♠". Unlike the question endpoint, this changes nothing on
+the call itself: it isn't alerted by it.
+
+Robots don't otherwise chat: a message without `call_index`, one about a
+human's call, or one about a robot's call from its own partner gets no
+reply, and nothing a robot decides reads the chat.
 
 ### Hand evaluation
 
@@ -964,9 +981,9 @@ set — a human alone with three robots presses it once.
 - A call's meaning is read from its rules alone: when several rules make
   the same call, partner sees the widest of their ranges, not the hands the
   earlier rules have already taken.
-- A robot never asks about the opponents' calls, nor reads their alerts:
-  it reads every call through its own system (a call it doesn't know is
-  "Natural").
+- A robot never asks about the opponents' calls, nor reads their alerts
+  or the chat: it reads every call through its own system (a call it
+  doesn't know is "Natural").
 - No inferences from the auction in the play: nobody places an honour or
   a long suit from the bidding, and the ending search takes every layout
   as equally likely.

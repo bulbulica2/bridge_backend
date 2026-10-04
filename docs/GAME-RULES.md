@@ -136,6 +136,13 @@ opponent may also **ask** about any call of the other side, alerted or not,
 and its bidder answers them the same way. Once the board is over nothing is
 hidden: every alert is shown to all.
 
+**Table talk.** For the same reason partners may not talk to each other
+while a board is bid or played: anything partner says beyond the calls and
+cards is unauthorised information. A player may talk to the **opponents**
+— to ask what a call shows and hear the answer in the bidder's own words,
+which partner must not read along — and the whole table may talk once the
+board is over. After the board, everything said at it is open to all.
+
 **In code:**
 - `bids` is a static list of the 38 possible calls (`BidSeeder`): `P` Pass,
   `X` Double, `XX` Redouble (`special = true`), then `1C`, `1D`, `1H`, `1S`,
@@ -191,7 +198,20 @@ hidden: every alert is shown to all.
   fixes an explanation or alerts late), and a robot answers at once (§9).
   Not enforced: nothing checks that an alert is made, or that it is true —
   a missing or wrong explanation is left to the players, as there is no
-  director.
+  director. The question and the answer are also written into the board's
+  chat (below).
+- **Table talk** (implemented): the board's chat, `board_messages`
+  (`BoardChatService`, `GET`/`POST /tables/{table}/messages`). During the
+  auction and the play a message may only go `to: opponents` — the sender
+  and both opponents read it, never partner (`BoardMessage::visibleTo()`),
+  and it is pushed only on those players' own channels
+  (`BoardMessageSent`), never the table channel; `to: table` (all four) is
+  a 409 until the board is `finished`. Once it is, every message of the
+  board is visible to all four and in the review (`GET /playings/{playing}`).
+  A message with `call_index` about the other side's call is a question; a
+  robot bidder answers it at once (§9). Not enforced: what is said — a
+  player could tell the opponents something meant for partner's ears, who
+  reads it once the board is over; there is no director.
 - `AuctionSeeder` bids through `AuctionService`, picking random calls among
   the legal ones, so seeded auctions are legal and their results saved the
   same way. `AuctionFactory` still makes a **random, non-legal** call: test
@@ -681,7 +701,9 @@ Rules the robots keep, and that keep them honest:
 - **Robots alert.** A robot alerts its conventional calls to the
   opponents, with its system's explanation, and answers a question about
   any of its calls at once (`RobotBidder::read()`, "Natural" for a call no
-  rule makes) — the list is in [`ROBOTS.md`](ROBOTS.md#alerts).
+  rule makes), through the question endpoint or in the board's chat — the
+  list is in [`ROBOTS.md`](ROBOTS.md#alerts). Robots don't otherwise
+  chat.
 - **No peeking.** A robot decides from what its own seat is served
   (`PlayingStateService::stateFor()`): its hand, dummy once face up, a
   claimer's face-up hand and the cards played — never the other hands.
