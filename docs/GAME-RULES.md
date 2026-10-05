@@ -852,7 +852,7 @@ Rules the robots keep, and that keep them honest:
 
 How robots bid (a SAYC-style system — Standard American Yellow Card — with
 Stayman, transfers, a strong 2♣, weak twos, takeout, negative and penalty
-doubles, Blackwood and Gerber) and play (declarer counts winners and
+doubles, the advancer's cue bid, Blackwood and Gerber) and play (declarer counts winners and
 losers and plans a line — drawing trumps, ruffing in dummy, cross-ruffing,
 finesses, holding up, setting up long suits; defenders signal attitude,
 count and suit preference and read partner's, and lead with dummy in
