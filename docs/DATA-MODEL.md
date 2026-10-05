@@ -572,10 +572,18 @@ Fields (all fillable):
   `TableSeatService::remove()`). A player walking out doesn't end it: a
   robot takes their seat (see `TableSetSeat`). There is no forfeit (the
   `forfeit` ending, `forfeited_by` and `forfeit_reason` were dropped).
+- `ended_by` (FK users, nullable, cast `integer`): the player who left an
+  `abandoned` set, which counts against them in their stats
+  (`PlayerStatsService`, `GET /users/{user}/stats`). Set by
+  `abandonSet($table, $leaver)` from `remove()` for anyone's own going (a
+  Leave, running out of time, a move, a ban, a kick while away); null for
+  a `completed` set, for one ended by a manager kicking a player who was
+  there, for the guards (`openSet()`, `Table::deleting`) and for sets that
+  ended before the column existed.
 - timestamps.
 A table has at most one unfinished set at a time. Relations: `seats`
 (hasMany TableSetSeat), `playings` (hasMany BoardTable,
-by `set_position`). `end($ended)` closes it (a no-op once closed),
+by `set_position`). `end($ended, $endedBy = null)` closes it (a no-op once closed),
 `hasPlayer($userId)` (one of its four, or replaced by a robot in it),
 `replacements()` (the `replaced` list of the payloads: `{seat, user_id,
 reason}` per seat a robot took over). No factory: sets are opened by

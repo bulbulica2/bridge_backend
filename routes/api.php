@@ -13,6 +13,9 @@ Route::middleware(['auth:sanctum'])->group(function () {
   // your own finished playings, latest first, paginated
   Route::get('/user/playings', [UserController::class, 'ownPlayings'])->name('user.playings');
 
+  // your own stats, like GET /users/{user}/stats
+  Route::get('/user/stats', [UserController::class, 'ownStats'])->name('user.stats');
+
   // edit your own name and description
   Route::patch('/user', [UserController::class, 'update'])->name('user.update');
 });

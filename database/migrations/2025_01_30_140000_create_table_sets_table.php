@@ -30,6 +30,10 @@ return new class extends Migration
       // set once the set is over, however it ended
       $table->timestamp('finished_at')->nullable();
       $table->enum('ended', TableSet::ENDINGS)->nullable();
+      // who ended it `abandoned` by leaving mid-set with no robot to take
+      // their seat: null for a completed set, for one ended by kicking a
+      // player who was there, and for every set ended before this column
+      $table->foreignId('ended_by')->nullable()->constrained('users');
       $table->timestamps();
 
       $table->unique(['table_id', 'number']);

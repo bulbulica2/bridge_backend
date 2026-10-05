@@ -32,6 +32,7 @@ class TableSet extends Model
     'started_at',
     'finished_at',
     'ended',
+    'ended_by',
   ];
 
   protected function casts(): array
@@ -41,6 +42,7 @@ class TableSet extends Model
       'size' => 'integer',
       'started_at' => 'datetime',
       'finished_at' => 'datetime',
+      'ended_by' => 'integer',
     ];
   }
 
@@ -65,15 +67,16 @@ class TableSet extends Model
   /**
    * End the set, unless it already has. `completed` once its last board is
    * finished (`BoardTable::finish()`), `abandoned` when one of its four
-   * leaves before that.
+   * leaves before that, by `$endedBy` (the player who left, if the set
+   * is theirs to answer for: `ended_by`).
    */
-  public function end(string $ended): void
+  public function end(string $ended, ?int $endedBy = null): void
   {
     if ($this->isFinished()) {
       return;
     }
 
-    $this->update(['finished_at' => now(), 'ended' => $ended]);
+    $this->update(['finished_at' => now(), 'ended' => $ended, 'ended_by' => $endedBy]);
   }
 
   /**

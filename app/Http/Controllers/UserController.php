@@ -8,6 +8,7 @@ use App\Http\Resources\UserBanResource;
 use App\Http\Resources\UserResource;
 use App\Models\User;
 use App\Services\BoardResultsService;
+use App\Services\PlayerStatsService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -78,6 +79,24 @@ class UserController extends BaseController
   public function ownPlayings(Request $request, BoardResultsService $results): JsonResponse
   {
     return $this->playings($request->user(), $results);
+  }
+
+  /**
+   * How a user plays: their boards, sets and the sets they walked out on,
+   * worked out now (`PlayerStatsService`). Anyone logged in may look, a
+   * robot's included.
+   */
+  public function stats(User $user, PlayerStatsService $stats): JsonResponse
+  {
+    return $this->sendResponse($stats->stats($user), 'Stats retrieved successfully.');
+  }
+
+  /**
+   * The caller's own stats, like `stats()`.
+   */
+  public function ownStats(Request $request, PlayerStatsService $stats): JsonResponse
+  {
+    return $this->stats($request->user(), $stats);
   }
 
   /**
