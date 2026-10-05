@@ -168,6 +168,46 @@ class DdsSolver implements DoubleDummySolver
   }
 
   /**
+   * A PBN deal as the solver takes it, the other way round from `pbn()`:
+   * each seat's cards as `Card` models, not saved, with ids of their own
+   * (unique within the deal, not `cards.id`). The first hand is the seat
+   * before the colon, the others follow clockwise.
+   *
+   * @return array<string, list<Card>>
+   */
+  public static function deal(string $pbn): array
+  {
+    [$seat, $hands] = explode(':', $pbn);
+    $ranks = array_flip(self::RANK_CHARS);
+    $deal = [];
+
+    foreach (explode(' ', $hands) as $hand) {
+      $deal[$seat] = [];
+
+      foreach (array_combine(array_slice(self::STRAINS, 0, 4), explode('.', $hand)) as $suit => $chars) {
+        // a void is an empty suit, which str_split() makes no cards of
+        foreach (str_split($chars) as $char) {
+          $card = new Card(['suit' => $suit, 'rank' => $ranks[$char] ?? (int) $char]);
+          $card->id = self::strain($suit) * 16 + $card->rank;
+          $deal[$seat][] = $card;
+        }
+      }
+
+      $seat = Seats::next($seat);
+    }
+
+    return $deal;
+  }
+
+  /**
+   * A card as PBN writes it: its suit, then its rank (`SQ`, `HT`, `C2`).
+   */
+  public static function cardName(Card $card): string
+  {
+    return $card->suit.(self::RANK_CHARS[$card->rank] ?? (string) $card->rank);
+  }
+
+  /**
    * The library, bound the first time and its resources set then, once.
    *
    * @return FFI

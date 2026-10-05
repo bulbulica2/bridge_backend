@@ -47,6 +47,8 @@ php artisan schedule:work         # runs tables:release-idle-seats and tables:de
 php artisan tables:release-idle-seats  # free idle players' seats once, by hand
 php artisan tables:check-away     # mark quiet players away mid-set and hand overdue turns' seats to robots, once, by hand
 php artisan tables:delete-unattended   # delete tables only robots have kept, once, by hand
+php -d extension=ffi -d xdebug.mode=off artisan dds:check  # does the double dummy solver work here? names what's missing (XAMPP flags; plain `php artisan` on Linux)
+php artisan dds:solve-missing     # queue the double dummy analysis of boards/contracts played without it
 php artisan migrate:fresh --seed  # rebuild DB with sample data
 php artisan route:list            # actual registered routes
 php artisan test                  # all tests (PHPUnit 11)
@@ -633,7 +635,14 @@ vendor/bin/pint --test            # check formatting without changing files
   `App\Solvers\DoubleDummySolver` interface: `DdsSolver` (DDS through FFI,
   capped with DDS's `SetResources` at `bridge.dds_memory_mb`/`dds_threads`
   when it loads the library) is bound only when `DDS_LIBRARY` is set, else
-  the analysis is `unavailable`. Served by `GET /boards/{board}/double-dummy` and the
+  the analysis is `unavailable` (the server has no solver: the same for
+  every board). Xdebug in any mode but `off` breaks FFI, so the worker
+  runs with `-d xdebug.mode=off` (and `-d extension=ffi` on XAMPP;
+  Windows uses the `dds.dll` from the `endplay` wheel, `RUNNING.md`).
+  `dds:check` (`CheckDds`, over `App\Solvers\PhpRuntime`) names every
+  missing piece and solves DDS's example deal against its published
+  result; `dds:solve-missing` (`DoubleDummyService::queueMissing()`)
+  queues what has none. Served by `GET /boards/{board}/double-dummy` and the
   review's `double_dummy`, behind `BoardPolicy::view`. Tests bind
   `Tests\Support\FakeDoubleDummySolver` (`phpunit.xml` forces
   `DDS_LIBRARY` empty); `tests/Unit/DdsSolverTest` runs the real library
