@@ -331,7 +331,9 @@ class TableSeatService
    * the four who started it are no longer the four sitting there. See
    * `BoardSelectionService::abandonPlaying`. So is an unfinished set, even
    * between boards: it ends `abandoned` (`BoardSelectionService::abandonSet`),
-   * and the next board opens a new one.
+   * and the next board opens a new one. The set records `$user` as having
+   * ended it (`ended_by`) unless somebody else kicked them while they were
+   * there.
    * The leaver's Start goes with their seat row; whoever takes the seat next
    * has to press it.
    *
@@ -360,6 +362,9 @@ class TableSeatService
 
       // read before the seat goes: whether an admin there is away
       $reason = $this->replacementReason($table, $seat, $walkOut);
+      // whose abandon it is, should the set end here: anyone's own going,
+      // not a player who was there being kicked
+      $leaver = $walkOut !== null || $seat->away_since !== null || $by === null || $by->id === $user->id ? $user : null;
 
       $seat->delete();
 
@@ -368,7 +373,7 @@ class TableSeatService
       } else {
         // whoever is left is not the four who started the board, nor the set
         $this->boardSelection->abandonPlaying($table);
-        $this->boardSelection->abandonSet($table);
+        $this->boardSelection->abandonSet($table, $leaver);
       }
 
       // the human seated here longest, if any: a robot never runs a table

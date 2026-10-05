@@ -214,15 +214,18 @@ class BoardSelectionService
    * the set is `abandoned` and has no winner. The board on the table is
    * dealt with by `abandonPlaying()` as before; a set is never resumed, so
    * the next board waits for everyone's Start and opens a new set.
+   * `$leaver` is the player who walked out on it, kept as `ended_by` so
+   * their stats count it against them (`PlayerStatsService`); null when
+   * nobody is to blame.
    *
    * Does nothing once the set is over.
    */
-  public function abandonSet(Table $table): void
+  public function abandonSet(Table $table, ?User $leaver = null): void
   {
     TableSet::query()
       ->where('table_id', $table->id)
       ->whereNull('finished_at')
-      ->each(fn (TableSet $set) => $set->end(TableSet::ENDED_ABANDONED));
+      ->each(fn (TableSet $set) => $set->end(TableSet::ENDED_ABANDONED, $leaver?->id));
 
     $table->unsetRelation('latestSet');
   }

@@ -102,7 +102,8 @@ vendor/bin/pint --test            # check formatting without changing files
   (stock Breeze, API-only — no views) is `require`d from `web.php`.
   `routes/api.php` only has `GET`/`PATCH /api/user` (the caller's own record,
   email included; `UserController@update` edits `name`/`description`) and
-  `GET /api/user/playings` (the caller's own board history), plus the
+  `GET /api/user/playings` (the caller's own board history) and
+  `GET /api/user/stats` (their own stats), plus the
   public `GET /api/health` (`HealthController`, whether a queue worker is
   running, from the heartbeat `BeatQueueHeartbeat` writes on `Looping`
   through `QueueHealthService`). Sanctum's
@@ -249,8 +250,10 @@ vendor/bin/pint --test            # check formatting without changing files
   (`turn_started_at`), and `PlayingUpdated` gets the robots moving.
   `seat()` refuses the replaced human at that table until the set is over;
   `seatedAsIn()` compares the table with the set's seats, so the robot is
-  one of the four. Counting a walk-out against the player (an "abandon")
-  is #121's.
+  one of the four. Each replaced seat is an "abandon" in the human's
+  stats (see Player stats), as is a set that ended `abandoned` as they
+  left: `abandonSet($table, $leaver)` records `table_sets.ended_by`, the
+  player `remove()` took out unless a manager kicked them while there.
 - **Boards**: `App\Services\BoardSelectionService` owns which board a table
   plays and when. Filling the table deals nothing by itself: each human
   presses **Start** (`start()`, `POST /tables/{table}/start`, sets
@@ -596,6 +599,19 @@ vendor/bin/pint --test            # check formatting without changing files
   `BoardPolicy::view` (auto-discovered; for a playing, on its board): only
   a player who has **finished** that board (`hasFinished()`) — no admin
   override, since anyone else may still be dealt it.
+- **Player stats**: `App\Services\PlayerStatsService::stats()` serves
+  `GET /users/{user}/stats` (anyone logged in, robots answered too) and
+  `GET /api/user/stats` (`UserController@stats`/`ownStats`): `boards`
+  (finished playings in `board_table_seats` under the user's own id;
+  `compared` = some other table finished the board, `won` = > 50 % of the
+  matchpoints, `average_percent`), `sets` (ended `completed` with the user
+  still in the `table_set_seats` row, `won` by `GET /sets/{set}`'s total
+  score rule, `average_percent` of the set's top) and `leaving`
+  (`abandoned` = rows with `replaced_user_id` = the user, by
+  `replaced_reason`, plus `left` = sets `abandoned` with `ended_by` = the
+  user; `left_rate` = `abandoned / (sets played + abandoned)`). Matchpoints
+  move as more tables play a board, so it is computed on every read in a
+  few queries, never stored; a percentage with nothing to average is null.
 - **Double dummy**: `App\Services\DoubleDummyService` solves a board's
   double dummy table (queued on the deal, `SolveDoubleDummyTable`) and a
   contract's opening leads (queued by `BoardTable::finish()`,

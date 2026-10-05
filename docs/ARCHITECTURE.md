@@ -100,6 +100,7 @@ the same pattern:
 | `ClaimService` | claims and concessions (`claim`, `respond`, `withdraw`, and `expire`, which the queued `App\Jobs\ExpireClaim` runs `bridge.claim_seconds` after a claim: silence rejects it); a claim ended without an accept locks claims until the next card (`claim_locked`) | `tests/Unit/ClaimServiceTest`, `tests/Feature/Game/ClaimTest` |
 | `ScoringService` | duplicate scoring (`score()`, from declarer's side) and matchpoints (`matchpoints()`), pure static functions | `tests/Unit/ScoringTest` |
 | `BoardResultsService` | reads finished playings back for results across tables, a set's results (`set()`, `maySeeSet()`) and a player's history | feature tests (`BoardResultsTest`, `BoardSetTest`) |
+| `PlayerStatsService` | a player's stats (`stats()`, `GET /users/{user}/stats`): boards played and compared, won and mean matchpoint %, completed sets and won, sets walked out on by reason — worked out on every read in a handful of queries, never stored | `tests/Feature/User/PlayerStatsTest` |
 | `DoubleDummyService` | double dummy analysis: queues a board's table when it is dealt (`queueTable()`, from `deal()`) and a contract's opening leads when a playing finishes (`queueLeads()`, from `BoardTable::finish()`), solves and stores each once (`solveTable()`, `solveLeads()`, run by `App\Jobs\SolveDoubleDummyTable` / `SolveOpeningLeads`), and reads them back (`forBoard()`, `forPlaying()`: `ready`, `pending` — queueing what is missing — or `unavailable`) | `tests/Feature/Game/DoubleDummyTest` (fake solver), `tests/Unit/DdsSolverTest` (real DDS) |
 | `RobotPool` | the robots seats are filled from: an idle one, made when every robot is busy (`idle()`); used by `RobotService::seatRobot()` and `TableSeatService::remove()` | through the seating tests |
 | `RobotService` | robot players: seating one on a manager's say-so (`seatRobot()`), and one robot move at a time (`act()`: a call, a card or a claim, the robots' claim answers, ready) through the services above | `tests/Feature/Game/RobotPlayTest`, `tests/Feature/Table/RobotSeatingTest` |
@@ -145,7 +146,8 @@ Things worth knowing before you change them:
   (`board_table.table_set_id`/`set_position`), and `BoardTable::finish()`
   completes the set on its last board — after which `moveOn()` 409s and
   `start()` accepts a Start even with the same four seated. `remove()` ends
-  an unfinished set as `abandoned` (`abandonSet()`), even between boards —
+  an unfinished set as `abandoned` (`abandonSet()`, which records the
+  leaver as `ended_by` unless a manager kicked them while there), even between boards —
   unless the leaver walked out on it (ran out of time on their turn, moved
   to another table, was kicked while away or banned) and another human
   stays: then `replaceWithRobot()` sits a `RobotPool` robot in the seat,

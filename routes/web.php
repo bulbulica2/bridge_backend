@@ -109,6 +109,9 @@ Route::middleware('auth')->group(function () {
   // a user's finished playings, latest first, paginated
   Route::get('users/{user}/playings', [UserController::class, 'playings'])->name('users.playings');
 
+  // how a user plays: boards, sets, win rates and the sets they walked out on
+  Route::get('users/{user}/stats', [UserController::class, 'stats'])->name('users.stats');
+
   // a board after the fact, only for players who have finished it: its deal,
   // its results at every table with matchpoints, its double dummy table, and
   // each finished playing's auction and tricks (the results' playing_id)

@@ -76,6 +76,7 @@ lobby, profiles, histories, results — stays open.
 | POST | `/users/{user}/ban` | `UserBanController@store` | `auth` + admin (`UserPolicy::ban`) | ban that user for some days: frees their seat (mid-set a robot takes it), logs them out (201) |
 | DELETE | `/users/{user}/ban` | `UserBanController@destroy` | `auth` + admin | lift their ban at once (200; 404 if not banned) |
 | GET | `/users/{user}/playings` | `UserController@playings` | `auth` | that user's finished playings, latest first, paginated |
+| GET | `/users/{user}/stats` | `UserController@stats` | `auth` | that user's stats: boards, sets, win rates, sets walked out on |
 | GET | `/boards/{board}` | `Game\BoardController@show` | `auth` + finished that board (`BoardPolicy::view`) | the board with all four hands as dealt |
 | GET | `/boards/{board}/results` | `Game\BoardController@results` | `auth` + finished that board (`BoardPolicy::view`) | every finished playing of the board, with matchpoints |
 | GET | `/boards/{board}/double-dummy` | `Game\BoardController@doubleDummy` | `auth` + finished that board (`BoardPolicy::view`) | the board's double dummy table (tricks for each declarer and strain), or `pending` until the queue has solved it |
@@ -84,6 +85,7 @@ lobby, profiles, histories, results — stays open.
 | GET | `/api/user` | closure | `auth:sanctum` | current authenticated `User` (the caller's own record, email, `is_admin` and `ban` included) |
 | PATCH | `/api/user` | `UserController@update` | `auth:sanctum` | edit your own `name` / `description` |
 | GET | `/api/user/playings` | `UserController@ownPlayings` | `auth:sanctum` | your own finished playings, as `GET /users/{user}/playings` |
+| GET | `/api/user/stats` | `UserController@ownStats` | `auth:sanctum` | your own stats, as `GET /users/{user}/stats` |
 | GET | `/api/health` | `HealthController@show` | none | whether a queue worker is running (`data.queue.running`, `last_seen_at`) — see [below](#get-apihealth) |
 | GET, POST | `/broadcasting/auth` | Laravel's `BroadcastController@authenticate` | session (`web` group) | signs a websocket subscription to a private channel, or 403 — see [Realtime](#realtime-websocket) and [`AUTH.md`](AUTH.md#websocket-channels-reverb) |
 
@@ -1752,6 +1754,56 @@ and each row's auction and play behind `GET /playings/{playing_id}`.
 Matchpoints aren't in the history; read them from
 `GET /boards/{board}/results`.
 
+### `GET /users/{user}/stats` and `GET /api/user/stats`
+How a user plays: their boards, their sets and the sets they walked out on.
+`/users/{user}/stats` is anyone's (any logged-in user may read it, a robot's
+included — a client may hide it for robots; **404** for an unknown user
+id); `/api/user/stats` (in `routes/api.php`, `auth:sanctum`) is the
+caller's own. **401** for guests. Built by
+`App\Services\PlayerStatsService::stats()` from `board_table_seats`,
+`table_set_seats` and `table_sets`, so tables being deleted loses nothing.
+Matchpoints change as more tables finish a board, so the stats are worked
+out on **every read** and never stored; that is also why they aren't part
+of `GET /users/{user}`. Admins are counted like anyone.
+
+```json
+{
+  "status": 200,
+  "message": "Stats retrieved successfully.",
+  "data": {
+    "user_id": 3,
+    "boards": {"played": 5, "compared": 4, "won": 2, "win_rate": 0.5, "average_percent": 56.25},
+    "sets": {"played": 3, "won": 1, "win_rate": 0.3333, "average_percent": 62.5},
+    "leaving": {
+      "abandoned": 1,
+      "abandoned_by_reason": {"turn_timeout": 1, "away": 0, "moved": 0, "kicked": 0, "left": 0},
+      "left_rate": 0.25
+    }
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `boards.played` | finished boards the user played in their own seat, passed out included (a board whose hand a robot took over is the robot's) |
+| `boards.compared` | those with matchpoints: at least one other table has finished the same board |
+| `boards.won` | compared boards where the user's side got **more than 50 %** of the matchpoints |
+| `boards.win_rate` | `won / compared` (0–1, 4 decimals) |
+| `boards.average_percent` | the side's mean matchpoint percentage (0–100, 2 decimals) over the compared boards |
+| `sets.played` | sets that ended `completed` with the user still in their seat — not one a robot finished for them |
+| `sets.won` | those whose `winner` (as in `GET /sets/{set}`: the higher total score) is the user's side |
+| `sets.win_rate` | `won / played` |
+| `sets.average_percent` | the mean, over those sets with any board another table has played, of the side's matchpoints as a percentage of the set's top |
+| `leaving.abandoned` | sets the user walked out on: each set where a robot took their seat (`table_set_seats.replaced_user_id`, whatever became of the set), plus each set that ended `abandoned` as they left (`table_sets.ended_by`: no robot stepped in — an admin's own Leave, while an admin was away, or with no other human left). Never counted against the partner they left |
+| `leaving.abandoned_by_reason` | the same by why: `turn_timeout`, `away`, `moved`, `kicked` (the robot's `replaced_reason`) and `left` (the set ended `abandoned`) |
+| `leaving.left_rate` | `abandoned / (sets.played + abandoned)` |
+
+A rate or percentage with nothing to divide by is `null`; whole numbers come
+as JSON integers (`1`, `100`). A set kicked out of shape by a manager
+removing a player **who was there** ends `abandoned` with nobody to blame
+(`ended_by` null), so it counts against nobody. Sets that ended `abandoned`
+before `ended_by` existed aren't attributed to anyone.
+
 ### `PATCH /api/user`
 The logged-in user edits their **own** profile (in `routes/api.php`, behind
 `auth:sanctum`, next to `GET /api/user`). There is no user id in the URL, so
@@ -2242,7 +2294,8 @@ You can currently only:
 14. Once you have finished a board, compare its results at every table
     by matchpoints (`GET /boards/{board}/results`) and see all four hands
     (`GET /boards/{board}`); list any player's finished boards
-    (`GET /users/{user}/playings`, yours at `GET /api/user/playings`); and
+    (`GET /users/{user}/playings`, yours at `GET /api/user/playings`) and
+    their stats (`GET /users/{user}/stats`, yours at `GET /api/user/stats`); and
     review any finished playing of it call by call and trick by trick
     (`GET /playings/{playing}`), even after its table is gone, with what
     each hand could make double dummy and what each opening lead would have
