@@ -162,8 +162,10 @@ double, no trump bids, the quantitative 4NT, passes — nor is a call that
 fell back to a pass. Asked about **any** of its calls
 (`POST /tables/{table}/calls/{index}/question`), a robot answers at once,
 with `RobotBidder::read()`'s explanation of that call ("Natural" for one
-no rule makes), which alerts the call and goes to both opponents — and,
-like the question, into the board's chat.
+no rule makes), which alerts the call and goes to both opponents (to all
+four humans once the auction is over) — and, like the question, into the
+board's chat. A robot's alerts reach its human partner when the auction
+ends (`AuctionAlertsShown`), as a human's do.
 
 ### Answering in the chat
 

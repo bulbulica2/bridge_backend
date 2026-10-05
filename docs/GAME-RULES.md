@@ -133,8 +133,12 @@ from anything but the calls themselves is *unauthorised information*. Online
 bridge therefore uses **self-alerts**: the bidder marks their own call as
 alerted and types its meaning, which goes to the two opponents only. An
 opponent may also **ask** about any call of the other side, alerted or not,
-and its bidder answers them the same way. Once the board is over nothing is
-hidden: every alert is shown to all.
+and its bidder answers them the same way. Once the auction is over its
+meaning is no longer unauthorised information — declarer and dummy may
+know what each other's calls meant while they play — so every alert is
+shown to the four players; questions and answers in the play still go to
+the bidder's opponents first. Once the board is over nothing is hidden:
+every alert is shown to all.
 
 **Table talk.** Players at a table are often strangers, so the whole
 table may talk at any time — greet each other, wish good luck, apologise,
@@ -189,10 +193,13 @@ open to all.
   an `explanation` (up to 200 characters; a non-empty one alerts the call),
   stored as `auctions.alerted`/`explanation`. `AuctionService::alertTo()`
   pushes it to the bidder's two opponents (`CallAlerted`, their own
-  channels); `PlayingStateService::alerts()` shows each call's alert in a
-  player's own state for their own and the opponents' calls, never
-  partner's, and to everyone once the board is finished
-  (`GET /playings/{playing}` too). `PlayingUpdated`, on the table channel,
+  channels) during the auction, to all four from its end;
+  `PlayingStateService::alerts()` shows each call's alert in a
+  player's own state for their own and the opponents' calls, partner's
+  only once the auction is over (when `AuctionService` sends each human
+  partner's alerts as `AuctionAlertsShown`), and to everyone once the board
+  is finished (`GET /playings/{playing}` too). A question stays hidden from
+  the bidder's partner until the board is finished. `PlayingUpdated`, on the table channel,
   carries none. An opponent asks with
   `POST /tables/{table}/calls/{index}/question` (`AuctionService::ask()`:
   the other side's calls only, until the board is finished, one open

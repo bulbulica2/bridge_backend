@@ -243,25 +243,29 @@ class PlayingStateService
    * What `$seat`'s player may see of each call's alert, in `calls()`'s
    * order: `alert` (`{explanation}`, null when the call isn't alerted) and
    * `question` (`{asked_by}`, the opponent whose question about it is still
-   * open) for their own calls and the opponents', but null for partner's:
-   * seeing those would be unauthorised information. Once the board is
-   * finished every alert is public, to anyone (`$seat` null too), and no
-   * question is open any more.
+   * open) for their own calls and the opponents', but null for partner's
+   * during the auction: seeing those would be unauthorised information.
+   * Once the auction is over every alert is open to the four players, while
+   * partner's questions stay hidden; once the board is finished every alert
+   * is public, to anyone (`$seat` null too), and no question is open any
+   * more.
    *
    * @return list<array{alert: array{explanation: string|null}|null, question: array{asked_by: string}|null}>
    */
   public function alerts(BoardTable $playing, ?string $seat): array
   {
     $finished = $playing->finished_at !== null;
+    $ended = $playing->auction_ended_at !== null;
 
     return $playing->auctions
       ->sortBy('id')
-      ->map(function ($call) use ($seat, $finished) {
-        $sees = $finished || ($seat !== null && $call->seat !== Seats::partner($seat));
+      ->map(function ($call) use ($seat, $finished, $ended) {
+        $notPartners = $seat !== null && $call->seat !== Seats::partner($seat);
+        $sees = $finished || $notPartners || ($ended && $seat !== null);
 
         return [
           'alert' => $sees && $call->alerted ? ['explanation' => $call->explanation] : null,
-          'question' => $sees && ! $finished && $call->question_seat !== null ? ['asked_by' => $call->question_seat] : null,
+          'question' => $notPartners && ! $finished && $call->question_seat !== null ? ['asked_by' => $call->question_seat] : null,
         ];
       })
       ->values()
