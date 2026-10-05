@@ -89,6 +89,9 @@ class CardPlayService
         throw new IllegalPlayException($reason);
       }
 
+      // whoever's time for the set ran while this card was awaited
+      $playing->chargeTurn();
+
       $count = count($plays);
       $round = intdiv($count, 4) + 1;
 

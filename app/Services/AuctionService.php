@@ -86,6 +86,9 @@ class AuctionService
         throw new IllegalCallException($reason);
       }
 
+      // the caller's time for the set, up to this call
+      $playing->chargeTurn();
+
       $playing->auctions()->create([
         'user_id' => $user->id,
         'bid_id' => $bid->id,

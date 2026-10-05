@@ -17,6 +17,10 @@ return new class extends Migration
       $table->foreignId('created_by')->nullable()->constrained('users');
       $table->foreignId('moderated_by')->nullable()->constrained('users');
       $table->foreignId('board_id')->nullable()->constrained('boards');
+      // each player's time bank for a set's boards, in minutes (one of
+      // Table::SET_MINUTES; bridge.set_minutes when the request names none):
+      // a set copies it when it opens (table_sets.minutes)
+      $table->unsignedTinyInteger('set_minutes')->default(16);
       // set when the last human left and only robots remain: nobody runs the
       // table, and tables:delete-unattended deletes it after
       // bridge.unattended_table_minutes unless a human sits down first

@@ -30,6 +30,12 @@ class PlayingStateService
 
   public const PHASE_FINISHED = 'finished';
 
+  /** `turn_deadline_by`: the turn clock (`bridge.turn_seconds`) ends the turn. */
+  public const DEADLINE_BY_MOVE = 'move';
+
+  /** `turn_deadline_by`: the player's time bank for the set ends it first. */
+  public const DEADLINE_BY_SET = 'set';
+
   /**
    * Suits in the order a hand is shown: spades first, alternating colours.
    */
@@ -111,21 +117,58 @@ class PlayingStateService
   }
 
   /**
-   * When the turn clock of the player the board waits for runs out:
-   * `bridge.turn_seconds` after the board began waiting for them
-   * (`turn_started_at`: the deal, the last call or card, or a claim
-   * cleared). Being there isn't playing: only a move resets it, never a
-   * heartbeat or a chat line.
+   * When the turn of the player the board waits for runs out: the earlier of
+   * their turn clock, `bridge.turn_seconds` after the board began waiting
+   * for them (`turn_started_at`: the deal, the last call or card, a claim
+   * made or cleared), and the end of their time bank for the set
+   * (`TableSetSeat::time_left_ms`, as of `turn_started_at`). Being there
+   * isn't playing: only a move resets it, never a heartbeat or a chat line.
    *
-   * Only a human who is not an admin has a clock (`actingUserId()`:
-   * declarer on dummy's turn, a robot declarer's human dummy on
-   * declarer's), only in the auction and the play of a set's board, and
-   * not while a claim is pending (it expires by itself). Null whenever
-   * nobody's clock runs. Once it has passed, `tables:check-away` takes
-   * them out and a robot plays their seat for the rest of the set
-   * (`TableSeatService::checkAway()`).
+   * Only a human who is not an admin has a clock (`clockedUser()`), only in
+   * the auction and the play of a set's board, and not while a claim is
+   * pending (it expires by itself). Null whenever nobody's clock runs. Once
+   * it has passed, `tables:check-away` takes them out and a robot plays
+   * their seat for the rest of the set (`TableSeatService::checkAway()`).
    */
   public function turnDeadline(?BoardTable $playing): ?Carbon
+  {
+    return $this->turnClock($playing)['deadline'] ?? null;
+  }
+
+  /**
+   * `turnDeadline()` and what sets it: `by` is DEADLINE_BY_SET when the
+   * player's time bank for the set runs out first (or with the turn clock),
+   * DEADLINE_BY_MOVE otherwise. Null whenever nobody's clock runs.
+   *
+   * @return array{deadline: Carbon, by: string}|null
+   */
+  public function turnClock(?BoardTable $playing): ?array
+  {
+    $user = $this->clockedUser($playing);
+
+    if ($user === null) {
+      return null;
+    }
+
+    $move = (int) config('bridge.turn_seconds');
+    $bank = $playing->tableSet->seats->firstWhere('user_id', $user->id)?->time_left_ms;
+
+    if ($bank !== null && intdiv($bank, 1000) <= $move) {
+      return ['deadline' => $playing->turn_started_at->copy()->addSeconds(intdiv($bank, 1000)), 'by' => self::DEADLINE_BY_SET];
+    }
+
+    return ['deadline' => $playing->turn_started_at->copy()->addSeconds($move), 'by' => self::DEADLINE_BY_MOVE];
+  }
+
+  /**
+   * The player whose turn clock and time bank run now: the human, not an
+   * admin, who acts for the board (`actingUserId()`: declarer on dummy's
+   * turn, a robot declarer's human dummy on declarer's), in the auction or
+   * the play of a set still going on, with no claim pending. Null whenever
+   * nobody's runs: in `waiting`, between boards, during a claim, for a
+   * robot or an admin.
+   */
+  public function clockedUser(?BoardTable $playing): ?User
   {
     if ($playing?->turn_started_at === null
       || $playing->tableSet === null
@@ -138,11 +181,7 @@ class PlayingStateService
     $actingUserId = $this->actingUserId($playing);
     $user = $actingUserId === null ? null : $playing->seats->firstWhere('user_id', $actingUserId)?->user;
 
-    if ($user === null || $user->is_robot || $user->is_admin) {
-      return null;
-    }
-
-    return $playing->turn_started_at->copy()->addSeconds((int) config('bridge.turn_seconds'));
+    return $user === null || $user->is_robot || $user->is_admin ? null : $user;
   }
 
   /**

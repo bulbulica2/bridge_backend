@@ -60,6 +60,21 @@ return [
 
   /*
   |--------------------------------------------------------------------------
+  | Set clock
+  |--------------------------------------------------------------------------
+  |
+  | Each human (not an admin) gets a time bank for a whole set, like a chess
+  | clock: it only runs down while the board waits for them. A table picks
+  | it (`tables.set_minutes`, one of `Table::SET_MINUTES`: 8, 12, 16 or 20);
+  | this is what a new table gets when it names none. Running out is a turn
+  | timeout: a robot takes the seat for the rest of the set (`set_time`).
+  |
+  */
+
+  'set_minutes' => (int) env('BRIDGE_SET_MINUTES', 16),
+
+  /*
+  |--------------------------------------------------------------------------
   | Claims
   |--------------------------------------------------------------------------
   |

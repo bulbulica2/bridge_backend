@@ -24,6 +24,8 @@ class StoreTableRequest extends FormRequest
       'seat' => ['sometimes', 'string', Rule::in(Seats::SEATS)],
       // robots take the other three seats, and the first board is dealt at once
       'robots' => ['sometimes', 'boolean'],
+      // each player's time for a set, in minutes (bridge.set_minutes if absent)
+      'set_minutes' => ['sometimes', 'integer', Rule::in(Table::SET_MINUTES)],
     ];
   }
 }

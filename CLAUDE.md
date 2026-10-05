@@ -128,7 +128,9 @@ vendor/bin/pint --test            # check formatting without changing files
   `sendError($message, $code, $errors = [])` both return
   `{status, message, data}` — use them for new endpoints. Validation goes in
   `app/Http/Requests/<Area>/` form requests. `TableController` has
-  `index/store/show` and `TableSeatController` has `store`/`destroy`
+  `index/store/show/update` (`PATCH /tables/{table}`: a manager changes
+  `set_minutes` between sets, 409 mid-set) and `TableSeatController` has
+  `store`/`destroy`
   (join/leave a seat) plus `storeUser` (`POST /tables/{table}/seats/users`,
   a manager seats someone else) and `destroyUser`
   (`DELETE /tables/{table}/seats/{user}`, quit if it's your own seat,
@@ -237,10 +239,23 @@ vendor/bin/pint --test            # check formatting without changing files
   `bridge.away_seconds` (60) of silence; away changes nothing about the
   turn clock. `checkAway()` also finds playings with no move for
   `turn_seconds` and takes the player whose clock ran out through
-  `remove(..., walkOut: turn_timeout|away)`; once a set is over it frees
-  anyone still away. Sets are never forfeited: `remove()` calls
+  `remove(..., walkOut: turn_timeout|set_time|away)`; once a set is over it frees
+  anyone still away. **Set clock**: each human non-admin also has a time
+  bank for the whole set (`tables.set_minutes`, one of `Table::SET_MINUTES`
+  8/12/16/20, default `bridge.set_minutes` 16, changed by a manager with
+  `PATCH /tables/{table}` only between sets; copied to `table_sets.minutes`
+  by `openSet()`, which fills `table_set_seats.time_left_ms`, null for
+  robots and admins). `BoardTable::chargeTurn()` takes the time since
+  `turn_started_at` off `PlayingStateService::clockedUser()`'s bank on
+  every call, card, claim and robot takeover, before `turn_started_at` is
+  reset — so the bank is always as of `turn_started_at` — and
+  `turnClock()` makes `turn_deadline` the earlier of the two clocks
+  (`turn_deadline_by`: `move`/`set`); `checkAway()` replaces a player
+  whose bank ran out with `set_time`. `set` shows `minutes` and
+  `time_left` (seconds per seat), the state `turn_started_at`, and
+  `GET /sets/{set}` `time_used`. Sets are never forfeited: `remove()` calls
   `replaceWithRobot()` instead of abandoning when `$walkOut` says so
-  (`turn_timeout`/`away` from the check, `moved` from `seat()`, `kicked`
+  (`turn_timeout`/`set_time`/`away` from the check, `moved` from `seat()`, `kicked`
   from a ban) or the player is away (a kick: `kicked`), as decided by
   `replacementReason()`/`walksOut()`: never a robot or an admin, only while
   another human stays at the table, and, except for running out of time,
@@ -288,7 +303,7 @@ vendor/bin/pint --test            # check formatting without changing files
   then. `remove()` ends an unfinished set as `abandoned` (`abandonSet()`),
   even between boards, unless a robot takes over (see Turn clock). Sets
   outlive their table; `PlayingResource` and `TableResource` show
-  `set: {id, number, board, of, finished, ended, replaced}`.
+  `set: {id, number, board, of, finished, ended, replaced, minutes, time_left}`.
   After a board finishes it stays on the table (the state then shows the
   whole `deal` and `ready`) until that timer, or until `moveOn()`
   (`POST /tables/{table}/playing/next`, `Game\PlayingController@next`, an

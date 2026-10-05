@@ -148,7 +148,7 @@ Things worth knowing before you change them:
   `start()` accepts a Start even with the same four seated. `remove()` ends
   an unfinished set as `abandoned` (`abandonSet()`, which records the
   leaver as `ended_by` unless a manager kicked them while there), even between boards —
-  unless the leaver walked out on it (ran out of time on their turn, moved
+  unless the leaver walked out on it (ran out of time on their turn or for the set, moved
   to another table, was kicked while away or banned) and another human
   stays: then `replaceWithRobot()` sits a `RobotPool` robot in the seat,
   hands it the set's seat (`table_set_seats.replaced_user_id`/`_reason`)
@@ -166,8 +166,17 @@ Things worth knowing before you change them:
   `PlayingStateService::turnDeadline()`, the state's `turn_deadline`, null
   for a robot or an admin, between boards and while a claim is pending.
   Being stored on the playing and moved only by moves, it rides on the
-  `PlayingUpdated` each move sends anyway. `checkAway()` takes the player
-  whose clock ran out through `remove(..., walkOut: turn_timeout|away)`,
+  `PlayingUpdated` each move sends anyway. Each player also has a **set
+  clock**, a time bank for the whole set (`table_sets.minutes`, from
+  `tables.set_minutes`; `table_set_seats.time_left_ms`, filled by
+  `openSet()`, null for robots and admins): `BoardTable::chargeTurn()`
+  takes the time since `turn_started_at` off the bank of
+  `PlayingStateService::clockedUser()` (the same player the turn clock
+  runs for) on every call, card, claim and robot takeover, before
+  `turn_started_at` is reset in the same transaction, so the stored bank
+  is always as of `turn_started_at`. `turnClock()` makes the deadline the
+  earlier of the two (`turn_deadline_by`: `move` or `set`). `checkAway()` takes the player
+  whose clock ran out through `remove(..., walkOut: turn_timeout|set_time|away)`,
   which hands their seat to a robot. `replacementReason()` and
   `walksOut()` hold the exceptions: robots are never away, an admin is
   never replaced, while an admin is away a Leave or move is immediate and

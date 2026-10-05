@@ -47,6 +47,8 @@ class BoardSetTest extends TestCase
   public function test_a_set_is_four_boards_dealt_by_start_then_next_and_stops_after_the_fourth(): void
   {
     $this->assertSame(4, config('bridge.set_size'));
+    // nobody takes any time: every bank stays full
+    $this->freezeSecond();
     $this->actingAs($this->players['N'])->getJson("/tables/{$this->table->id}")->assertJsonPath('data.set', null);
 
     $this->startAll()->assertJsonPath('data.playing.set.board', 1);
@@ -55,7 +57,7 @@ class BoardSetTest extends TestCase
     $boards = [];
 
     for ($board = 1; $board <= 4; $board++) {
-      $expected = ['id' => $set->id, 'number' => 1, 'board' => $board, 'of' => 4, 'finished' => false, 'ended' => null, 'replaced' => []];
+      $expected = ['id' => $set->id, 'number' => 1, 'board' => $board, 'of' => 4, 'finished' => false, 'ended' => null, 'replaced' => [], 'minutes' => 16, 'time_left' => ['N' => 960, 'E' => 960, 'S' => 960, 'W' => 960]];
 
       $this->state('N')->assertJsonPath('data.phase', 'auction')->assertJsonPath('data.set', $expected);
       $this->actingAs($this->players['E'])->getJson("/tables/{$this->table->id}")->assertJsonPath('data.set', $expected);

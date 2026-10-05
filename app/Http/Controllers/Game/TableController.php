@@ -2,11 +2,14 @@
 
 namespace App\Http\Controllers\Game;
 
+use App\Events\TableUpdated;
 use App\Exceptions\SeatUnavailableException;
 use App\Http\Controllers\BaseController;
 use App\Http\Requests\Table\StoreTableRequest;
+use App\Http\Requests\Table\UpdateTableRequest;
 use App\Http\Resources\TableResource;
 use App\Models\Table;
+use App\Services\BoardSelectionService;
 use App\Services\PlayingStateService;
 use App\Services\RobotService;
 use App\Services\TableSeatService;
@@ -57,6 +60,8 @@ class TableController extends BaseController
           'created_by' => $user->id,
           'moderated_by' => $user->id,
           'board_id' => null,
+          // null: Table's creating hook puts bridge.set_minutes in
+          'set_minutes' => $request->validated('set_minutes'),
         ]);
 
         $seatService->seat($table, $user, $request->validated('seat', 'N'));
@@ -82,6 +87,40 @@ class TableController extends BaseController
       'Table created successfully.',
       201
     );
+  }
+
+  /**
+   * A manager changes the table's settings: `set_minutes`, each player's
+   * time for a set. Only between sets: a set going on keeps the time it
+   * opened with anyway (`table_sets.minutes`), and changing it under the
+   * players' feet would only mislead them, so that is a 409.
+   */
+  public function update(UpdateTableRequest $request, Table $table, BoardSelectionService $boards): JsonResponse
+  {
+    $updated = DB::transaction(function () use ($request, $table, $boards) {
+      // the lock Start takes, so a set can't open between the check and the
+      // change
+      Table::whereKey($table->getKey())->lockForUpdate()->firstOrFail();
+      $table->refresh();
+
+      if ($boards->currentSet($table) !== null) {
+        return false;
+      }
+
+      $table->update(['set_minutes' => $request->validated('set_minutes')]);
+
+      TableUpdated::dispatch($table);
+
+      return true;
+    });
+
+    if (! $updated) {
+      return $this->sendError('A set is going on at this table: change its settings once it is over.', 409);
+    }
+
+    $table->load('seats.user');
+
+    return $this->sendResponse(new TableResource($table), 'Table updated successfully.');
   }
 
   public function show(Table $table): JsonResponse

@@ -26,8 +26,18 @@ class Table extends Model
    */
   public const NAME_MAX = 50;
 
+  /**
+   * The time banks a table may give each player for a set, in minutes
+   * (`set_minutes`).
+   */
+  public const SET_MINUTES = [8, 12, 16, 20];
+
   protected static function booted(): void
   {
+    static::creating(function (Table $table) {
+      $table->set_minutes ??= (int) config('bridge.set_minutes');
+    });
+
     // a finished playing keeps its call-by-call and card-by-card logs, so
     // the board can be reviewed after the table is gone (GET
     // /playings/{playing}); an unfinished one has no result to review and
@@ -52,11 +62,13 @@ class Table extends Model
     'moderated_by',
     'board_id',
     'unattended_since',
+    'set_minutes',
   ];
 
   protected function casts(): array
   {
     return [
+      'set_minutes' => 'integer',
       'unattended_since' => 'datetime',
     ];
   }
@@ -132,6 +144,6 @@ class Table extends Model
    */
   public static function latestSetWithBoards(): array
   {
-    return ['latestSet' => fn ($set) => $set->withMax('playings', 'set_position')];
+    return ['latestSet' => fn ($set) => $set->withMax('playings', 'set_position')->with('seats')];
   }
 }

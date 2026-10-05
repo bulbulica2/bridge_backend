@@ -64,7 +64,17 @@ class ClaimService
       // stored deadline are the same instant
       $expiresAt = now()->addSeconds((int) config('bridge.claim_seconds'))->startOfSecond();
 
-      $playing->update(['claim_seat' => $seat, 'claim_tricks' => $tricks, 'claim_accepted' => [], 'claim_expires_at' => $expiresAt]);
+      // the acting player's time for the set runs up to the claim, and
+      // nobody's while it is pending
+      $playing->chargeTurn();
+
+      $playing->update([
+        'claim_seat' => $seat,
+        'claim_tricks' => $tricks,
+        'claim_accepted' => [],
+        'claim_expires_at' => $expiresAt,
+        'turn_started_at' => now(),
+      ]);
 
       ExpireClaim::dispatch($playing->id, $expiresAt->getTimestamp())->delay($expiresAt)->afterCommit();
 
