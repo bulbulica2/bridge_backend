@@ -195,8 +195,30 @@ decides reads the chat.
 
 ### Hand evaluation
 
-- **HCP** (high-card points): ace 4, king 3, queen 2, jack 1. Nothing is
-  added for length or shortness.
+- **HCP** (high-card points): ace 4, king 3, queen 2, jack 1. Every range
+  and every sum between partners is in HCP; only whether a 10–11 HCP hand
+  opens (below) also looks at its shape and honours.
+- **Very good suit** (to open on with 10 HCP): two of the top three
+  honours **and** three of the top five — A-K-J, A-Q-10, K-Q-J and the
+  like. A-Q-9-x-x-x is only a good suit.
+- **Losers** (the losing trick count): in each suit, the top three cards —
+  two of a doubleton, one of a singleton — that aren't the A, K or Q (in a
+  doubleton A or K, in a singleton the A only). A queen without the ace or
+  king counts **half a loser more** unless the jack is with it. So a bare Q
+  or Q-x is no better than small cards, Q-x-x is 2½ losers, and Q-J-10-x 2:
+  honours that make tricks count, honours that fall don't.
+- **Quick tricks** (defence): A-K 2, A-Q 1½, A 1, K-Q 1, a K with
+  another card ½.
+- **Opening strength** for one of a suit:
+  - **12+ HCP**: always opens.
+  - **11 HCP**: opens when the hand has a **continuation** — a second
+    four-card suit to bid next (1♣, then 1♠ over partner's 1♦/1♥), or a
+    six-card suit to rebid — balanced or not. 11 with one long suit
+    (5-3-3-2, 4-3-3-3) passes.
+  - **10 HCP**: only on a **very good** six-card (or longer) suit, with at
+    most **7 losers** and **2+ quick tricks**. A balanced 10 never opens.
+
+  Partner reads every opening of one of a suit as 10+ HCP.
 - **Balanced**: no void, no singleton, at most one doubleton — 4-3-3-3,
   4-4-3-2 or 5-3-3-2.
 - **Semi-balanced**: no void and no singleton (5-4-2-2, 6-3-2-2 too).
@@ -234,14 +256,38 @@ Checked in this order:
 | 22+ HCP | **2♣**: strong, artificial, forcing |
 | 20–21 HCP, balanced | **2NT** |
 | 15–17 HCP, balanced | **1NT** |
-| 12+ HCP with a five-card major | **1♠** or **1♥**, the longer; **1♠** with 5-5 |
-| 12+ HCP, no five-card major | **1♦** with more diamonds than clubs, or four of each; else **1♣** |
+| opening strength (12+, or 10–11, see above) with a five-card major | **1♠** or **1♥**, the longer; **1♠** with 5-5 |
+| opening strength, no five-card major | **1♦** with more diamonds than clubs, or four of each; else **1♣** |
 | 5–11 HCP, exactly six cards in ♠, ♥ or ♦, a good suit, no four-card side major | a **weak two** (2♠/2♥/2♦) |
 | 5–10 HCP, eight or more cards in a major, a good suit | **4♥** / **4♠** |
 | 5–10 HCP, seven or more cards in a suit, a good suit | **three** of it (a preempt) |
 | anything else | Pass (shows 0–11) |
 
-Nobody preempts or opens a weak two in fourth seat.
+Nobody preempts or opens a weak two in fourth seat. One of a suit shows
+**10–21** HCP ([opening strength](#hand-evaluation)). It is checked before
+the weak twos and preempts, so a hand that opens one of a suit never
+preempts; a 10 HCP hand with a suit that is good but not very good still
+opens a weak two, and a good seven-card suit under 10 HCP still bids three.
+
+Examples:
+
+| Hand | HCP | Call |
+|---|---|---|
+| ♠KJ32 ♥Q2 ♦K32 ♣Q432 | 11, two four-card suits | **1♣**, then 1♠ over 1♦/1♥ |
+| ♠KJ32 ♥Q32 ♦K32 ♣Q32 | 11, 4-3-3-3 | Pass |
+| ♠K2 ♥KJ9876 ♦Q32 ♣Q2 | 11, a six-card suit | **1♥** |
+| ♠AQT876 ♥A32 ♦54 ♣32 | 10, very good suit, 7 losers | **1♠** |
+| ♠AQ9876 ♥A32 ♦54 ♣32 | 10, good suit only | **2♠** (weak two) |
+| ♠Q ♥AKJ876 ♦432 ♣432 | 10, but the ♠Q is a loser: 8 | **2♥** (weak two) |
+| ♠AK32 ♥K432 ♦32 ♣432 | 10, no six-card suit | Pass |
+
+**Board 10** (dealer East): East's ♠Q ♥AT76532 ♦65 ♣A64 is 10 HCP
+without a very good suit (A-10 only) — and the ♠Q, a singleton, is worth
+nothing — so East passes, as does West (third seat, ♠AJ984 ♥KJ4 ♦42
+♣QT2: 11 HCP and no second suit). North (fourth seat, ♠K652 ♥Q8 ♦KT98
+♣K75: 11 HCP with two four-card suits) now opens **1♦**, so the board is
+no longer passed out. A fourth-seat rule (the Rule of 15) isn't
+implemented.
 
 ### 2. Partner opened no trump
 
@@ -374,18 +420,24 @@ since. A no trump or preempt opener goes straight to
 [later bids](#10-later-bids), and so does opener after a raise or a 2NT/3NT
 answer.
 
+A suit rebid's range starts at **10**, as the opening's does: partner
+adds its points to 10, not 12 (so 1♣–1♥–2♥ needs 15 for responder to bid
+game, and 14 invites). The no trump rebids keep their 12–14 and need 12+
+HCP, so an 11 HCP opener goes on to its continuation instead: its second
+suit (1♦–1♠–**2♣**), or its own suit again.
+
 **Partner bid a new suit** (forcing, so this never passes):
 
 | Hand | Call |
 |---|---|
-| partner's suit is a **major** and we hold four: 12–15 / 16–18 / 19+ HCP | the cheapest raise / a jump raise (invites) / game |
-| a new four-card suit biddable at the **1 level**, 12–18 HCP | that suit (the longest; higher on a tie) — 1♣–1♦–**1♥** |
+| partner's suit is a **major** and we hold four: 10–15 / 16–18 / 19+ HCP | the cheapest raise / a jump raise (invites) / game |
+| a new four-card suit biddable at the **1 level**, 10–18 HCP | that suit (the longest; higher on a tie) — 1♣–1♦–**1♥** |
 | balanced, 12–14 HCP, their suits stopped if they bid | **1NT** (**2NT** over a two-level answer) |
 | balanced, 18–19 HCP, their suits stopped | **2NT** (**3NT** over a two-level answer) |
-| a six-card suit: 12–15 / 16–18 / 19+ HCP in a major | our suit at the cheapest level / one higher (invites) / game (in a minor the jump is 16+) |
+| a six-card suit: 10–15 / 16–18 / 19+ HCP in a major | our suit at the cheapest level / one higher (invites) / game (in a minor the jump is 16+) |
 | 19+ HCP and a new four-card suit | a **jump shift** in it: forcing to game |
-| a new four-card suit at the **2 level**, 12–18 HCP, ranking below our first — or above it (a **reverse**) with 17–18 | that suit — 1♦–1♥–**2♣**; a reverse (1♦–1♠–**2♥**) forces one more bid |
-| partner's suit is a **minor** and we hold four: 12–18 / 19+ HCP | the cheapest raise / a jump raise, forcing to game |
+| a new four-card suit at the **2 level**, 10–18 HCP, ranking below our first — or above it (a **reverse**) with 17–18 | that suit — 1♦–1♥–**2♣**; a reverse (1♦–1♠–**2♥**) forces one more bid |
+| partner's suit is a **minor** and we hold four: 10–18 / 19+ HCP | the cheapest raise / a jump raise, forcing to game |
 | a five-card suit of our own | our suit at the cheapest level |
 | 12–14 HCP, their suits stopped, 1NT still legal | **1NT** |
 | three cards in partner's suit | the cheapest raise |
@@ -399,12 +451,12 @@ on to [later bids](#10-later-bids) (pass, invite with 2NT, or 3NT).
 
 | Hand | Call |
 |---|---|
-| four of the unbid major: 12–15 / 16–18 / 19+ HCP | it at the cheapest level / a jump (invites) / game |
+| four of the unbid major: 10–15 / 16–18 / 19+ HCP | it at the cheapest level / a jump (invites) / game |
 | four of their suit with two of its top three honours | Pass, turning the double into a penalty double |
 | balanced with their suit stopped: 12–14 / 18–19 HCP | the cheapest no trump / a jump in no trump |
 | six of our suit and 16+ HCP | a jump in our suit (invites) |
-| five of our suit, 12–15 HCP | our suit at the cheapest level |
-| a new four-card suit up to the 2 level, below ours, 12–18 HCP | that suit |
+| five of our suit, 10–15 HCP | our suit at the cheapest level |
+| a new four-card suit up to the 2 level, below ours, 10–18 HCP | that suit |
 | anything else | our suit at the cheapest level |
 
 ### 7. Overcalls and balancing

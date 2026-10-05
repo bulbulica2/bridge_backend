@@ -437,7 +437,12 @@ vendor/bin/pint --test            # check formatting without changing files
   ordered rule list in `BiddingSystem` (`BidRule` → `BidMeaning`, over an
   `AuctionView`): a robot makes the first legal rule its hand fits, and
   every call is read back through the same rules — change a rule there,
-  never a separate "what partner means" table. Tests run the queue on
+  never a separate "what partner means" table. Every range and partner
+  sum is in HCP; only `BiddingSystem::opens()` (one of a suit: always
+  with 12+ HCP, with 11 given a second four-card or a six-card suit, with
+  10 only on `RobotHand::isVeryGoodSuit()` with `losers()` ≤ 7 and
+  `quickTricks()` ≥ 2) looks past it, and one of a suit and opener's suit
+  rebids show `BiddingSystem::OPENING` (10)+. Tests run the queue on
   `sync`, so the listener trampolines (a nested run only queues its table)
   instead of nesting 52 deep past xdebug's limit; fake `PlayingUpdated` to
   hold robots back while setting a table up. What they bid and play is in
