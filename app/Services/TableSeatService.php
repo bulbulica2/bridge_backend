@@ -25,7 +25,10 @@ class TableSeatService
   /** leave(): mid-set, so the seat is held and its player marked away. */
   public const HELD = 'held';
 
-  public function __construct(private BoardSelectionService $boardSelection) {}
+  public function __construct(
+    private BoardSelectionService $boardSelection,
+    private PlayingStateService $playingState,
+  ) {}
 
   /**
    * Seat a user at a table, holding every availability check.
@@ -171,10 +174,11 @@ class TableSeatService
    *
    * In the middle of a set, when leaving would cost their side the set
    * (costsTheSet()), that is going away: the seat is **held** — they stay
-   * seated, `away_since` set to now — and their side forfeits the set once
-   * they have been away `bridge.set_forfeit_minutes` (checkAway()), unless
-   * a sign of life (touch()) brings them back first. Leaving again changes
-   * nothing. Otherwise the seat is freed at once through remove().
+   * seated, `away_since` set to now — and once the board waits for them
+   * their forfeit clock runs (syncForfeitClock()): their side forfeits the
+   * set when it runs out (checkAway()), unless a sign of life (touch())
+   * brings them back first. Leaving again changes nothing. Otherwise the
+   * seat is freed at once through remove().
    *
    * Returns LEFT, DELETED (the table went with the seat) or HELD.
    * Broadcasts `TableUpdated` when the seat is newly held, besides what
@@ -195,6 +199,8 @@ class TableSeatService
         // gone that long
         if ($seat->away_since === null) {
           $seat->update(['away_since' => now()]);
+          // their clock starts at once if it is their turn
+          $this->syncForfeitClock($table);
 
           TableUpdated::dispatch($table);
         }
@@ -266,6 +272,71 @@ class TableSeatService
   }
 
   /**
+   * Bring the forfeit clocks (`table_seats.forfeit_at`) at `$table` up to
+   * date with whose turn it is. Only the player the board is waiting for
+   * can have one: the playing's acting user (`actingUserId()`: declarer on
+   * dummy's turn, a robot declarer's human dummy on declarer's), when they
+   * are away and their going would cost their side the set
+   * (costsTheSet()). Their clock is set to `bridge.set_forfeit_minutes`
+   * from now when it starts, and left alone while it runs; every other
+   * seat's is cleared. Nobody is on turn in `waiting`, between boards or
+   * while a claim is pending, so no clock runs then.
+   *
+   * Run under the table's lock; whoever calls it tells the table. Returns
+   * whether any clock started or stopped.
+   */
+  public function syncForfeitClock(Table $table): bool
+  {
+    $seats = $table->seats()->with('user')->get();
+
+    // the usual case: nobody away, so there is nothing to look up
+    if ($seats->every(fn (TableSeat $seat) => $seat->away_since === null && $seat->forfeit_at === null)) {
+      return false;
+    }
+
+    $playing = $this->playingState->currentPlaying($table);
+    $onTurn = $playing === null || $playing->hasPendingClaim() ? null : $this->playingState->actingUserId($playing);
+    $changed = false;
+
+    foreach ($seats as $seat) {
+      $runs = $seat->away_since !== null && (int) $seat->user_id === $onTurn && $this->costsTheSet($table, $seat);
+
+      if ($runs !== ($seat->forfeit_at !== null)) {
+        $seat->update(['forfeit_at' => $runs ? now()->addMinutes(config('bridge.set_forfeit_minutes')) : null]);
+        $changed = true;
+      }
+    }
+
+    return $changed;
+  }
+
+  /**
+   * syncForfeitClock() for the table with id `$tableId`, under its lock,
+   * telling the table (`TableUpdated`) when a clock started or stopped.
+   * Run after every move (`App\Listeners\RunForfeitClock`), since that is
+   * what moves the turn.
+   */
+  public function syncForfeitClockAt(int $tableId): void
+  {
+    $away = TableSeat::query()
+      ->where('table_id', $tableId)
+      ->where(fn ($seat) => $seat->whereNotNull('away_since')->orWhereNotNull('forfeit_at'))
+      ->exists();
+
+    if (! $away) {
+      return;
+    }
+
+    DB::transaction(function () use ($tableId) {
+      $table = Table::whereKey($tableId)->lockForUpdate()->first();
+
+      if ($table !== null && $this->syncForfeitClock($table)) {
+        TableUpdated::dispatch($table);
+      }
+    });
+  }
+
+  /**
    * Free the seat a user holds at a table, whether they quit or a manager
    * kicked them out.
    *
@@ -333,6 +404,9 @@ class TableSeatService
       $this->boardSelection->abandonPlaying($table);
       $this->boardSelection->abandonSet($table);
 
+      // with no set on, no clock runs for whoever else is away
+      $this->syncForfeitClock($table);
+
       // the human seated here longest, if any: a robot never runs a table
       $next = $table->seats()
         ->whereHas('user', fn ($user) => $user->humans())
@@ -370,9 +444,11 @@ class TableSeatService
   /**
    * Record a sign of life from a player at a table (`last_seen_at`), so the
    * idle-seat sweeper leaves them alone. A player marked away (checkAway(),
-   * or a Leave mid-set) is back: `away_since` is cleared, and the table told
-   * (`TableUpdated`). A no-op for somebody who doesn't sit there. Leaves
-   * `updated_at` alone: nothing about the seat changed.
+   * or a Leave mid-set) is back: `away_since` and their forfeit clock are
+   * cleared, and the table told (`TableUpdated`); an admin back starts the
+   * clock of whoever away the board waits for (syncForfeitClock()). A no-op
+   * for somebody who doesn't sit there. Leaves `updated_at` alone: nothing
+   * about the seat changed.
    */
   public function touch(Table $table, User $user): void
   {
@@ -383,7 +459,12 @@ class TableSeatService
 
     $seat()->update(['last_seen_at' => now()]);
 
-    if ($seat()->whereNotNull('away_since')->update(['away_since' => null]) > 0) {
+    if ($seat()->whereNotNull('away_since')->update(['away_since' => null, 'forfeit_at' => null]) > 0) {
+      DB::transaction(function () use ($table) {
+        Table::whereKey($table->getKey())->lockForUpdate()->firstOrFail();
+        $this->syncForfeitClock($table->refresh());
+      });
+
       TableUpdated::dispatch($table);
     }
   }
@@ -427,10 +508,13 @@ class TableSeatService
    * in the middle of a set:
    * - a human with no sign of life for `bridge.away_seconds` is marked away,
    *   `away_since` being that last sign of life; their seat stays theirs;
-   * - a human away for `bridge.set_forfeit_minutes` is taken out through
-   *   remove(), which forfeits the set for their side — unless
-   *   costsTheSet() lets them off (an admin, or anyone while an admin there
-   *   is away), in which case the table just waits.
+   * - the forfeit clocks are brought up to date (syncForfeitClock()): the
+   *   away player the board waits for, if any, has one running;
+   * - the player whose clock has run out is taken out through remove(),
+   *   which forfeits the set for their side. Nobody else away is: the board
+   *   isn't waiting for them. costsTheSet() never starts a clock for an
+   *   admin, nor for anyone while an admin there is away: the table just
+   *   waits then.
    * At a table whose set is over (completed, abandoned or forfeited),
    * nobody is held for it any more: the seats of players still away are
    * freed, as a leave (an admin's is kept, and only stops being away).
@@ -443,7 +527,6 @@ class TableSeatService
   public function checkAway(): array
   {
     $awayCutoff = now()->subSeconds(config('bridge.away_seconds'));
-    $forfeitCutoff = now()->subMinutes(config('bridge.set_forfeit_minutes'));
 
     $tables = TableSeat::query()
       ->whereHas('user', fn ($user) => $user->humans())
@@ -459,7 +542,7 @@ class TableSeatService
     $counts = ['away' => 0, 'forfeited' => 0, 'freed' => 0];
 
     foreach ($tables as $tableId) {
-      foreach ($this->checkAwayAt($tableId, $awayCutoff, $forfeitCutoff) as $key => $count) {
+      foreach ($this->checkAwayAt($tableId, $awayCutoff) as $key => $count) {
         $counts[$key] += $count;
       }
     }
@@ -472,9 +555,9 @@ class TableSeatService
    *
    * @return array{away: int, forfeited: int, freed: int}
    */
-  private function checkAwayAt(int $tableId, Carbon $awayCutoff, Carbon $forfeitCutoff): array
+  private function checkAwayAt(int $tableId, Carbon $awayCutoff): array
   {
-    return DB::transaction(function () use ($tableId, $awayCutoff, $forfeitCutoff) {
+    return DB::transaction(function () use ($tableId, $awayCutoff) {
       $counts = ['away' => 0, 'forfeited' => 0, 'freed' => 0];
       $table = Table::whereKey($tableId)->lockForUpdate()->first();
 
@@ -492,17 +575,16 @@ class TableSeatService
           }
         }
 
-        // the one away longest whose time is up, if it costs their side
-        $gone = $humans()
-          ->filter(fn ($seat) => $seat->away_since?->lte($forfeitCutoff))
-          ->sortBy('away_since')
-          ->first(fn ($seat) => $this->costsTheSet($table, $seat));
+        $clocks = $this->syncForfeitClock($table);
+
+        // the one the board waits for, if their time is up
+        $gone = $humans()->first(fn ($seat) => $seat->forfeit_at?->lte(now()));
 
         if ($gone !== null) {
           // remove() tells the table
           $this->remove($table, $gone->user);
           $counts['forfeited']++;
-        } elseif ($counts['away'] > 0) {
+        } elseif ($counts['away'] > 0 || $clocks) {
           TableUpdated::dispatch($table);
         }
 

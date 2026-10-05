@@ -212,21 +212,27 @@ vendor/bin/pint --test            # check formatting without changing files
   seat under its table lock. Reverb can't report disconnects back to
   Laravel, which is why this is a heartbeat and not a presence channel.
 - **Away mid-set / set forfeit**: in the middle of a set a player's going
-  costs their side the set, after 3 minutes. `table_seats.away_since` marks
+  costs their side the set, once the board has waited 3 minutes for them.
+  `table_seats.away_since` marks
   a held seat: `TableSeatService::leave()` (every player's own Leave, both
   `DELETE` seat routes, answering 202) sets it to now mid-set instead of
   freeing the seat, `touch()` clears it (with a `TableUpdated`), and
   `checkAway()` (`tables:check-away`, `CheckAwayPlayers`, scheduled
   `everyTenSeconds()`) sets it to `last_seen_at` after
-  `bridge.away_seconds` (60) of silence and, `bridge.set_forfeit_minutes`
-  (3) after it, takes the player out through `remove()`; once a set is over
+  `bridge.away_seconds` (60) of silence. Only the away player **on turn**
+  (`actingUserId()`; nobody between boards or while a claim is pending)
+  has a clock, `table_seats.forfeit_at`, set to now +
+  `bridge.set_forfeit_minutes` (3) by `syncForfeitClock()` when the board
+  begins waiting for them and cleared when it stops; `leave()`,
+  `remove()`, `touch()`, `checkAway()` and the `RunForfeitClock` listener
+  (after every `PlayingUpdated`, not queued) run it. `checkAway()` takes
+  the player whose clock ran out through `remove()`; once a set is over
   it frees anyone still away. `remove()` forfeits
   (`BoardSelectionService::forfeitSet()`, `ended: forfeit`, `forfeited_by`
   the side from `Seats::side()`) instead of abandoning when the player is
   away (a sweep or a kick) or `$walkOut` (a move from `seat()`), as decided
   by `costsTheSet()`: never a robot or an admin, and nobody while an admin
-  at the table is away. `TableSeatResource` adds `forfeit_at` (null for
-  those); build seats with `TableSeatResource::forTable()`.
+  at the table is away (no clock runs for those either).
 - **Boards**: `App\Services\BoardSelectionService` owns which board a table
   plays and when. Filling the table deals nothing by itself: each human
   presses **Start** (`start()`, `POST /tables/{table}/start`, sets

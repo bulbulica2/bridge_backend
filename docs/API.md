@@ -135,8 +135,8 @@ Every table payload — from index, store, show or leave — is built by
 (`id`, `name`, `created_by`, `moderated_by`, `board_id`, `unattended_since`,
 timestamps), plus
 `seats` (`TableSeat` rows — `id`, `table_id`, `user_id`, `seat`,
-`last_seen_at`, `ready_at`, `away_since`, timestamps — each with its `user`,
-`ready` and `forfeit_at`),
+`last_seen_at`, `ready_at`, `away_since`, `forfeit_at`, timestamps — each
+with its `user` and `ready`),
 `free_seats` (the unoccupied seats in `N, E, S, W` order), `set` and
 `can_manage`.
 `set` is where the table is in its [set of boards](#sets): the set it is on
@@ -146,9 +146,12 @@ boards have been dealt — and `null` before the table's first Start.
 A seat's `away_since` and `forfeit_at` are null unless its player is
 [away mid-set](#away-mid-set-and-the-forfeit): `away_since` is since when
 (their last sign of life, or their Leave), `forfeit_at` when their side
-forfeits the set if they aren't back by then — show it as a countdown. An
-away seat with `forfeit_at: null` has no deadline (an admin's, or anyone's
-while an admin at the table is away).
+forfeits the set if they aren't back by then — show it as a countdown. Only
+the away player the board is **waiting for** (on turn) has a `forfeit_at`,
+so at most one seat at a table has one. An away seat with
+`forfeit_at: null` is away with nothing at stake yet: not on turn, nobody on
+turn (between boards, a claim pending), an admin's, or anyone's while an
+admin at the table is away.
 A seat's `ready` (boolean, from `ready_at`) is whether its player has pressed
 **Start** (see [`POST /tables/{table}/start`](#post-tablestablestart)); a
 robot's is always true. It is public: everyone at the table sees who is
@@ -353,13 +356,14 @@ Give up the seat you hold at this table. No body.
 - **202** in the **middle of a set** (a board of it in progress, or between
   its boards): leaving is going away, and your seat is **held** rather than
   freed — see [Away mid-set](#away-mid-set-and-the-forfeit). You stay
-  seated with `away_since` set to now and `forfeit_at` three minutes later;
-  any request at the table before then (heartbeat, `GET .../playing`, …)
+  seated with `away_since` set to now; once the board waits for you (at
+  once if it is your turn) `forfeit_at` is set three minutes on. Any
+  request at the table before then (heartbeat, `GET .../playing`, …)
   brings you back, otherwise your side forfeits the set and the seat is
   freed then. The body is the table (same shape as `GET /tables/{table}`),
-  message `"You left in the middle of a set: your seat is held for 3
-  minutes. Come back to the table before then, or your side forfeits the
-  set."`. Leaving again changes nothing. The SPA should confirm before a
+  message `"You left in the middle of a set: your seat is held. Once the
+  table is waiting for you, come back within 3 minutes, or your side
+  forfeits the set."`. Leaving again changes nothing. The SPA should confirm before a
   Leave mid-set, and stop its heartbeat afterwards (a heartbeat brings you
   back). Not for an admin, nor while an admin at the table is away: then
   the seat is freed at once (below) and the set ends `abandoned`.
@@ -556,21 +560,37 @@ player), does it:
 
 1. **Away.** A human with no sign of life for `BRIDGE_AWAY_SECONDS`
    (default 60, two missed heartbeats) is marked away: their seat's
-   `away_since` is set to their `last_seen_at`, and `forfeit_at` to
-   `BRIDGE_SET_FORFEIT_MINUTES` (default 3) after it. A `TableUpdated` tells
-   the table. Their seat is **held** — nobody else can take it — and the
-   board waits on them. Pressing **Leave** (`DELETE /tables/{table}/seats`)
-   mid-set marks them away at once (`away_since` now).
-2. **Back in time.** Any sign of life before `forfeit_at` — a heartbeat or a
-   playing request — clears `away_since`, with a `TableUpdated`; play
-   continues where it was.
-3. **Forfeit.** Still away at `forfeit_at`, their side (`NS` or `EW`) loses
+   `away_since` is set to their `last_seen_at`. A `TableUpdated` tells
+   the table. Their seat is **held** — nobody else can take it. Pressing
+   **Leave** (`DELETE /tables/{table}/seats`) mid-set marks them away at
+   once (`away_since` now).
+2. **The clock runs for the player on turn only.** The board waits on one
+   player at a time: the game state's `acting_user_id` (declarer on
+   dummy's turn, a robot declarer's human dummy on declarer's). Only that
+   seat, when away, gets a `forfeit_at`: `BRIDGE_SET_FORFEIT_MINUTES`
+   (default 3) from when the board began waiting for them — when they were
+   marked away or pressed Leave if it was already their turn, or when the
+   turn reached them if they were away already — so they always get the
+   full three minutes. Every other away seat has `forfeit_at: null`. Nobody
+   is on turn, so no clock runs, between boards (the next board comes by
+   itself at `next_board_at`), while a claim is pending (it expires by
+   itself) or with no board; once the turn moves on — the next board dealt,
+   the claim settled — the player then on turn gets one if they are away.
+   The clock moves with the turn at once: every accepted call, card, claim
+   action and deal brings it up to date (a `TableUpdated` when a clock
+   starts or stops), and each check does too.
+3. **Back in time.** Any sign of life before `forfeit_at` — a heartbeat or a
+   playing request — clears `away_since` and `forfeit_at`, with a
+   `TableUpdated`; play continues where it was.
+4. **Forfeit.** Still away at `forfeit_at`, their side (`NS` or `EW`) loses
    the set: it ends with `ended: "forfeit"` and `forfeited_by` that side
    (`GET /sets/{set}`'s `winner` is the other side), the board in progress
    is abandoned unscored (detached, as on any leave), and their seat is
    freed through the normal leave path — `TableUpdated` carries the new
-   `set` and the free seat. With two away, the one away longest forfeits.
-4. **After the set.** Once a set is over, however it ended, nobody is held
+   `set` and the free seat. Only the player whose clock ran out forfeits:
+   another player away, not on turn, costs nothing however long they stay
+   away (once the set is over their seat is freed, below).
+5. **After the set.** Once a set is over, however it ended, nobody is held
    for it: the next check frees the seat of anyone still away (a Leave
    that was never taken back, say).
 
@@ -580,9 +600,10 @@ never away; a human whose partner is a robot forfeits for that side all the
 same.
 
 **Admins** never cost their side the set: an admin who goes quiet is shown
-away, but with `forfeit_at: null`, their seat is never freed for it, and the
-table just waits for them. While an admin at the table is away, nobody
-forfeits: every other away seat's `forfeit_at` is null too, and a Leave or a
+away, but with `forfeit_at: null` even on turn, their seat is never freed for
+it, and the table just waits for them. While an admin at the table is away,
+nobody forfeits: no clock runs (the one on turn stops, and starts again with
+a full three minutes when the admin is back), and a Leave or a
 move is immediate and ends the set `abandoned`. An admin's own Leave or move
 is immediate as well. Once the set is over an away admin just stops being
 away, and keeps the seat: the idle timeout above skips admins too.
@@ -1681,7 +1702,9 @@ Event name on the wire: `App\Events\TableUpdated` (Echo:
   /tables/{table}/start`), changing their seat's `ready`;
 - mid-set, a player is marked **away** (`tables:check-away`, or their
   Leave) or comes **back** (a heartbeat or playing request), changing their
-  seat's `away_since`/`forfeit_at`; and their side **forfeits** the set
+  seat's `away_since`/`forfeit_at`; the turn reaches an away player or
+  leaves them (a call, card, claim action or deal), starting or stopping
+  their `forfeit_at`; and their side **forfeits** the set
   (`set.ended: "forfeit"`, `set.forfeited_by`, their seat free) — see
   [Away mid-set](#away-mid-set-and-the-forfeit);
 - a board is dealt — by the last Start, by a robot taking the fourth seat

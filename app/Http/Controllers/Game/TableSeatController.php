@@ -178,8 +178,8 @@ class TableSeatController extends BaseController
 
     return $this->sendResponse(
       new TableResource($table),
-      "You left in the middle of a set: your seat is held for $minutes ".($minutes === 1 ? 'minute' : 'minutes')
-        .'. Come back to the table before then, or your side forfeits the set.',
+      'You left in the middle of a set: your seat is held. Once the table is waiting for you, come back within '
+        .$minutes.' '.($minutes === 1 ? 'minute' : 'minutes').', or your side forfeits the set.',
       202
     );
   }

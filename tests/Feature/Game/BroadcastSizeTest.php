@@ -151,7 +151,7 @@ class BroadcastSizeTest extends TestCase
     $this->longestAuction();
     $this->play(52);
     $this->finish();
-    $this->table->seats()->update(['ready_at' => now(), 'away_since' => now(), 'last_seen_at' => now()]);
+    $this->table->seats()->update(['ready_at' => now(), 'away_since' => now(), 'forfeit_at' => now(), 'last_seen_at' => now()]);
 
     $table = (new TableUpdated($this->table))->table;
     $this->assertNotNull($table['set']);
