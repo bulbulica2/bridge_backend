@@ -75,6 +75,62 @@ class RobotHand
     return count($this->bySuit[$suit]);
   }
 
+  /**
+   * One point for every card past the fourth in each suit.
+   */
+  public function lengthPoints(): int
+  {
+    return array_sum(array_map(fn ($suit) => max(0, $this->length($suit) - 4), self::SUITS));
+  }
+
+  /**
+   * The losing trick count: in each suit, the top three cards (fewer in a
+   * shorter suit) that aren't the ace, king or queen. A singleton queen is
+   * a loser, a queen without the ace or king counts half a loser more
+   * unless the jack backs it (Q-x-x 2½, Q-J-x 2).
+   */
+  public function losers(): float
+  {
+    $losers = 0.0;
+
+    foreach (self::SUITS as $suit) {
+      $top = array_slice(array_column($this->bySuit[$suit], 'rank'), 0, 3);
+      $winners = array_intersect($top, array_slice([self::ACE, self::KING, self::QUEEN], 0, count($top)));
+      $losers += count($top) - count($winners);
+
+      if (in_array(self::QUEEN, $winners, true) && count($winners) === 1 && ! in_array(self::JACK, $top, true)) {
+        $losers += 0.5;
+      }
+    }
+
+    return $losers;
+  }
+
+  /**
+   * Defensive tricks: A-K 2, A-Q 1½, A 1, K-Q 1, a guarded K ½.
+   */
+  public function quickTricks(): float
+  {
+    $tricks = 0.0;
+
+    foreach (self::SUITS as $suit) {
+      $ace = $this->holds($suit, self::ACE);
+      $king = $this->holds($suit, self::KING);
+      $queen = $this->holds($suit, self::QUEEN);
+
+      $tricks += match (true) {
+        $ace && $king => 2,
+        $ace && $queen => 1.5,
+        $ace => 1,
+        $king && $queen => 1,
+        $king && $this->length($suit) >= 2 => 0.5,
+        default => 0,
+      };
+    }
+
+    return $tricks;
+  }
+
   public function aces(): int
   {
     return count(array_filter(self::SUITS, fn ($suit) => $this->holds($suit, self::ACE)));

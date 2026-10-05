@@ -39,6 +39,18 @@ class RobotBidderTest extends TestCase
       'a three-level preempt with seven' => [[], '2.32.KQJT932.432', '3D'],
       'no preempt in fourth seat' => [['P', 'P', 'P'], '2.32.KQJT932.432', 'P'],
       'under 12 passes' => [['P', 'P', 'P'], 'AK32.K32.432.432', 'P'],
+      'board 10: 1H with seven hearts and two aces' => [[], 'Q.AT76532.65.A64', '1H'],
+      'board 10: West passes, eight losers' => [['P', 'P'], 'AJ984.KJ4.42.QT2', 'P'],
+      'board 10: North passes, 11 balanced' => [['P', 'P', 'P'], 'K652.Q8.KT98.K75', 'P'],
+      'a light opening: 10, a six-card major, two quick tricks' => [[], 'AQ9876.A32.54.32', '1S'],
+      'a light opening in a minor' => [[], '32.A2.32.AQ98765', '1C'],
+      'Q-J-10 is a trick: a light opening' => [[], 'QJT.AK8765.32.32', '1H'],
+      'Q-x-x is not: a weak two instead' => [[], 'Q32.AK8765.32.J2', '2H'],
+      'a singleton queen is a loser: pass' => [[], 'Q.KJ9876.K32.J32', 'P'],
+      'no light opening on a five-card suit and 10' => [[], 'AK432.K432.32.32', 'P'],
+      'no light opening balanced' => [[], 'AK32.K32.J32.432', 'P'],
+      'no light opening without two quick tricks' => [[], 'KQJ876.K32.Q2.32', '2S'],
+      'a seven-card good suit with 7 still preempts' => [[], '2.32.AKT9832.432', '3D'],
     ];
   }
 
@@ -217,7 +229,8 @@ class RobotBidderTest extends TestCase
       'decline it with the bottom half' => [['1H', 'P', '2H', 'P', '3H', 'P'], 'K32.Q432.J432.32', 'P'],
       'pass 1NT with a minimum' => [['1S', 'P', '1NT', 'P'], 'AK432.Q32.K32.32', 'P'],
       'game in 3NT opposite a 1NT rebid with 13+' => [['1C', 'P', '1H', 'P', '1NT', 'P'], 'K32.AQ432.K32.Q2', '3NT'],
-      'game in the fit opposite a raise with 13+' => [['1C', 'P', '1H', 'P', '2H', 'P'], 'K32.AQ432.K32.Q2', '4H'],
+      'game in the fit opposite a raise with 15+' => [['1C', 'P', '1H', 'P', '2H', 'P'], 'K32.AQ432.K32.K2', '4H'],
+      'an invitation with 14: the raise may be a light opener' => [['1C', 'P', '1H', 'P', '2H', 'P'], 'K32.AQ432.K32.Q2', '3H'],
       'the partner of a 6-card rebid finds the fit' => [['1S', 'P', '1NT', 'P', '2S', 'P', '3S', 'P'], 'AK9654.K.QT4.K96', '4S'],
       'fourth suit forcing: game values, no fit, no stopper' => [['1D', 'P', '1H', 'P', '1S', 'P'], 'A32.AQ432.KQ2.32', '2C'],
       'fourth suit answered with a stopper' => [['1D', 'P', '1H', 'P', '1S', 'P', '2C', 'P'], 'KQ32.K2.AJ32.Q32', '2NT'],
@@ -293,6 +306,7 @@ class RobotBidderTest extends TestCase
   {
     return [
       'an opening' => [['1NT'], 'Opening: 15–17 HCP, balanced'],
+      'one of a suit, light openings included' => [['1H'], 'Opening: 10–21 HCP, 5+ ♥'],
       'Stayman' => [['1NT', 'P', '2C'], 'Stayman: 8–17 HCP, asks for a four-card major'],
       'a transfer' => [['1NT', 'P', '2D'], 'Transfer: 0–17 HCP, 5+ ♥, asks partner to bid ♥'],
       'a weak two' => [['2S'], 'Weak two: 5–11 HCP, 6+ ♠'],
