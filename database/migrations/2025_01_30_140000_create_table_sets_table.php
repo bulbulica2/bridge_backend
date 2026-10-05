@@ -2,6 +2,7 @@
 
 use App\auxiliary\Seats;
 use App\Models\TableSet;
+use App\Models\TableSetSeat;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
@@ -29,11 +30,6 @@ return new class extends Migration
       // set once the set is over, however it ended
       $table->timestamp('finished_at')->nullable();
       $table->enum('ended', TableSet::ENDINGS)->nullable();
-      // the side that lost the set by forfeit, and why: a player of it let
-      // their turn clock run out (turn_timeout, or away if they were away
-      // then), moved to another table, or was kicked while away or banned
-      $table->enum('forfeited_by', TableSet::SIDES)->nullable();
-      $table->enum('forfeit_reason', TableSet::FORFEIT_REASONS)->nullable();
       $table->timestamps();
 
       $table->unique(['table_id', 'number']);
@@ -43,8 +39,16 @@ return new class extends Migration
     Schema::create('table_set_seats', function (Blueprint $table) {
       $table->id();
       $table->foreignId('table_set_id')->constrained('table_sets')->onDelete('cascade');
+      // who plays the seat now: a robot once its human walked out mid-set
       $table->foreignId('user_id')->constrained('users');
       $table->enum('seat', Seats::SEATS);
+      // the human a robot (user_id) took over from mid-set, and why: their
+      // turn clock ran out (turn_timeout, or away if they were away then),
+      // they moved to another table, or were kicked while away or banned.
+      // They may not sit down at the table again until the set is over
+      $table->foreignId('replaced_user_id')->nullable()->constrained('users');
+      $table->enum('replaced_reason', TableSetSeat::REASONS)->nullable();
+      $table->timestamp('replaced_at')->nullable();
       $table->timestamps();
 
       $table->unique(['table_set_id', 'seat']);

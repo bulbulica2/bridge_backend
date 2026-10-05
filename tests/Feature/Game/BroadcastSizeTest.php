@@ -19,7 +19,7 @@ use App\Models\BoardMessage;
 use App\Models\BoardTable;
 use App\Models\Card;
 use App\Models\Table;
-use App\Models\TableSet;
+use App\Models\TableSetSeat;
 use App\Models\User;
 use App\Models\UserBan;
 use App\Services\AuctionService;
@@ -165,10 +165,15 @@ class BroadcastSizeTest extends TestCase
     $this->play(52);
     $this->finish();
     $this->table->seats()->update(['ready_at' => now(), 'away_since' => now(), 'last_seen_at' => now()]);
-    $this->table->sets()->sole()->update(['ended' => TableSet::ENDED_FORFEIT, 'forfeited_by' => 'NS', 'forfeit_reason' => TableSet::FORFEIT_TURN_TIMEOUT]);
+    // robots took three seats over: the longest `replaced` a set can have
+    // while a human is left to play with them
+    TableSetSeat::query()->where('seat', '!=', 'N')->each(fn (TableSetSeat $seat) => $seat->update([
+      'replaced_user_id' => $seat->user_id,
+      'replaced_reason' => TableSetSeat::REASON_TURN_TIMEOUT,
+    ]));
 
     $table = (new TableUpdated($this->table))->table;
-    $this->assertSame(TableSet::FORFEIT_TURN_TIMEOUT, $table['set']['forfeit_reason']);
+    $this->assertCount(3, $table['set']['replaced']);
     $this->assertNotNull($table['seats'][0]['away_since']);
 
     $this->assertFits(new TableUpdated($this->table));

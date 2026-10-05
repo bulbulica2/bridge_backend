@@ -28,6 +28,13 @@ version of this page).
 **Getting robots.** `POST /tables` with `{"robots": true}` puts a robot in
 each of the three seats the creator didn't take. A table manager can also
 fill any free seat: `POST /tables/{table}/seats/robots {"seat": "E"}`.
+And a robot **steps in by itself** for a human who walks out on a set (their
+turn clock runs out, they move tables, are kicked while away or banned:
+`TableSeatService::remove()`, see `API.md` "Away mid-set, and the turn
+clock"): it sits in their seat, ready, and takes their hand over where the
+board is — the auction so far, the cards left — so their partner plays the
+set out with it. It decides from its own state as any robot does: nothing
+it does depends on having taken over.
 
 **Ready to start.** A robot is ready from the moment it sits down: its
 seat's `ready_at` is set then (`TableSeatService::seat()`), so it shows as
@@ -39,7 +46,8 @@ pressed it deals at once. A table only robots are keeping is never dealt to.
 Filling the table deals nothing by itself, so the robots don't call before
 the human has reached the table. Robots are `users` rows
 with `is_robot: true`, named `Robot <n>` / `robot-<n>`, from a pool that
-reuses idle robots and makes a new one when all are busy. They can't log in.
+reuses idle robots and makes a new one when all are busy (`RobotPool`).
+They can't log in.
 
 **When they act.** Only while **at least one human** sits at the table.
 After every change to the game (every `PlayingUpdated`), and

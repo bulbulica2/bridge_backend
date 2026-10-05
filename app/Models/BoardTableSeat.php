@@ -11,6 +11,7 @@ class BoardTableSeat extends Model
     'board_table_id',
     'user_id',
     'seat',
+    'replaced_user_id',
     'ready_at',
   ];
 

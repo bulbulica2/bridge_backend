@@ -142,7 +142,7 @@ class IdleSeatsTest extends TestCase
     [$table] = $this->fullTable();
 
     // long past the idle timeout: tables:check-away decides here
-    // (SetForfeitTest), not this sweeper
+    // (AwayMidSetTest), not this sweeper
     $this->travel(20)->minutes();
 
     $this->assertSame(0, $this->seats->releaseIdleSeats());

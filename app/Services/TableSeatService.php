@@ -3,12 +3,15 @@
 namespace App\Services;
 
 use App\auxiliary\Seats;
+use App\Events\DeclarerHandShown;
+use App\Events\PlayingUpdated;
 use App\Events\TableUpdated;
 use App\Exceptions\SeatUnavailableException;
 use App\Models\BoardTable;
 use App\Models\Table;
 use App\Models\TableSeat;
 use App\Models\TableSet;
+use App\Models\TableSetSeat;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\QueryException;
@@ -29,6 +32,7 @@ class TableSeatService
   public function __construct(
     private BoardSelectionService $boardSelection,
     private PlayingStateService $playingState,
+    private RobotPool $robots,
   ) {}
 
   /**
@@ -53,8 +57,11 @@ class TableSeatService
    * table a board and opens its playing; this mutates `$table` (`board_id`).
    * Changing seat at the same table clears a human's Start too. A human
    * sitting down at an unattended table (only robots left there) becomes its
-   * moderator. Moving off a table in the middle of a set forfeits that set
-   * for the mover's side at once (see remove(), `$forfeit`).
+   * moderator. Moving off a table in the middle of a set hands the mover's
+   * seat there to a robot at once (see remove(), `$walkOut`). A player a
+   * robot took over from in the set going on here
+   * (`table_set_seats.replaced_user_id`) may not sit down here again until
+   * it is over.
    *
    * Broadcasts `TableUpdated` for the table sat at (and, through remove(), for
    * the table a move left), once the transaction commits.
@@ -96,6 +103,12 @@ class TableSeatService
           throw new SeatUnavailableException("Seat $seat is already taken.");
         }
 
+        if (! $user->is_robot && $this->boardSelection->currentSet($table)?->seats()->where('replaced_user_id', $user->id)->exists()) {
+          throw new SeatUnavailableException($self
+            ? 'You walked out on the set going on at this table: you may sit down here again once it is over.'
+            : 'That user walked out on the set going on at this table.');
+        }
+
         // changing seat at the table they already sit at: move the row rather
         // than leave and rejoin, which would delete the table under them if
         // they were its only player, and would lose their place in the
@@ -120,8 +133,8 @@ class TableSeatService
           // through remove(), so leaving has all its usual consequences: the
           // old table goes if this was its last player, moderation is handed
           // on, and an unfinished playing is detached. Walking out on a set
-          // there for another table costs the mover's side that set
-          $this->remove($held->table, $user, forfeit: TableSet::FORFEIT_MOVED);
+          // there for another table hands the mover's seat to a robot
+          $this->remove($held->table, $user, walkOut: TableSetSeat::REASON_MOVED);
         }
 
         // a human presses Start; a robot is ready from the start
@@ -173,14 +186,14 @@ class TableSeatService
    * `$user` leaves their seat themselves (Leave, or a quit through
    * `DELETE /tables/{table}/seats/{user}`).
    *
-   * In the middle of a set, when leaving would cost their side the set
-   * (costsTheSet()), that is going away: the seat is **held** — they stay
+   * In the middle of a set, when leaving would be walking out on it
+   * (walksOut()), that is going away: the seat is **held** — they stay
    * seated, `away_since` set to now — and once the board waits for them
    * their turn clock runs as anyone's does
-   * (`PlayingStateService::turnDeadline()`): their side forfeits the set
-   * when it runs out (checkAway()), unless they come back (touch()) and
-   * play first. Leaving again changes nothing. Otherwise the seat is freed
-   * at once through remove().
+   * (`PlayingStateService::turnDeadline()`): when it runs out (checkAway())
+   * a robot takes their seat for the rest of the set, unless they come back
+   * (touch()) and play first. Leaving again changes nothing. Otherwise the
+   * seat is freed at once through remove().
    *
    * Returns LEFT, DELETED (the table went with the seat) or HELD.
    * Broadcasts `TableUpdated` when the seat is newly held, besides what
@@ -196,7 +209,7 @@ class TableSeatService
 
       $seat = $table->seats()->with('user')->where('user_id', $user->id)->first();
 
-      if ($seat !== null && $this->costsTheSet($table, $seat)) {
+      if ($seat !== null && $this->walksOut($table, $seat)) {
         // somebody already away keeps their earlier start: they have been
         // gone that long
         if ($seat->away_since === null) {
@@ -213,57 +226,64 @@ class TableSeatService
   }
 
   /**
-   * Whether seating `$user` at `$table` would forfeit a set at the table
-   * they sit at now (see seat()). Read without a lock, for the response's
-   * wording: seat() decides again under it.
+   * Whether seating `$user` at `$table` would hand their seat at the table
+   * they sit at now to a robot, walking out on a set there (see seat()).
+   * Read without a lock, for the response's wording: seat() decides again
+   * under it.
    */
-  public function moveForfeits(Table $table, User $user): bool
+  public function moveReplaces(Table $table, User $user): bool
   {
     $held = $user->seats()->with('table')->first();
 
     return $held !== null
       && (int) $held->table_id !== (int) $table->getKey()
-      && $this->removalForfeits($held->table, $user, TableSet::FORFEIT_MOVED);
+      && $this->removalReplaces($held->table, $user, TableSetSeat::REASON_MOVED);
   }
 
   /**
-   * Whether remove() taking `$user` out of `$table` (with `$forfeit`, as
-   * remove() takes it) would forfeit the set there for their side. Read
-   * without a lock, for the response's wording: remove() decides again
-   * under it.
+   * Whether remove() taking `$user` out of `$table` (with `$walkOut`, as
+   * remove() takes it) would hand their seat to a robot for the rest of the
+   * set. Read without a lock, for the response's wording: remove() decides
+   * again under it.
    */
-  public function removalForfeits(Table $table, User $user, ?string $forfeit = null): bool
+  public function removalReplaces(Table $table, User $user, ?string $walkOut = null): bool
   {
     $seat = $table->seats()->with('user')->where('user_id', $user->id)->first();
 
-    return $seat !== null && $this->forfeitReason($table, $seat, $forfeit) !== null;
+    return $seat !== null && $this->replacementReason($table, $seat, $walkOut) !== null;
   }
 
   /**
-   * Why `$seat` going costs its side the set, or null when it doesn't.
-   * Mid-set it does when its player ran out of time on their turn
-   * (`$forfeit` `turn_timeout` or `away`), walks out on the set (`moved`,
-   * or `kicked` for a ban), or is taken out while away (`kicked`), as far
-   * as costsTheSet() lets it.
+   * Why a robot takes `$seat` over when its player goes, or null when it
+   * doesn't. Mid-set it does when they ran out of time on their turn
+   * (`$walkOut` `turn_timeout` or `away`), walk out on the set (`moved`, or
+   * `kicked` for a ban), or are taken out while away (`kicked`), as far as
+   * walksOut() says so — and only while a human stays at the table for the
+   * robot to play with.
    */
-  private function forfeitReason(Table $table, TableSeat $seat, ?string $forfeit): ?string
+  private function replacementReason(Table $table, TableSeat $seat, ?string $walkOut): ?string
   {
-    $outOfTime = in_array($forfeit, [TableSet::FORFEIT_TURN_TIMEOUT, TableSet::FORFEIT_AWAY], true);
-    $reason = $forfeit ?? ($seat->away_since !== null ? TableSet::FORFEIT_KICKED : null);
+    $outOfTime = in_array($walkOut, [TableSetSeat::REASON_TURN_TIMEOUT, TableSetSeat::REASON_AWAY], true);
+    $reason = $walkOut ?? ($seat->away_since !== null ? TableSetSeat::REASON_KICKED : null);
 
-    return $reason !== null && $this->costsTheSet($table, $seat, $outOfTime) ? $reason : null;
+    $othersStay = $table->seats()
+      ->whereKeyNot($seat->getKey())
+      ->whereHas('user', fn ($user) => $user->humans())
+      ->exists();
+
+    return $reason !== null && $othersStay && $this->walksOut($table, $seat, $outOfTime) ? $reason : null;
   }
 
   /**
-   * Whether `$seat`'s player going away costs their side the set: a human
-   * in the middle of a set does, except an admin, whose absence never costs
-   * their side anything, and except while an admin at the table is away
-   * themselves: the set can't go on then through nobody else's fault, so the
-   * others may leave it without penalty (it ends `abandoned`). Running out
-   * of time on one's own turn (`$outOfTime`) is one's own doing, admin away
-   * or not. A robot is never away.
+   * Whether `$seat`'s player going away is walking out on the set, which
+   * hands their seat to a robot for the rest of it: a human in the middle of
+   * a set is, except an admin, and except while an admin at the table is
+   * away themselves: the set can't go on then through nobody else's fault,
+   * so the others may leave it as they like (it ends `abandoned`). Running
+   * out of time on one's own turn (`$outOfTime`) is one's own doing, admin
+   * away or not. A robot is never away.
    */
-  private function costsTheSet(Table $table, TableSeat $seat, bool $outOfTime = false): bool
+  private function walksOut(Table $table, TableSeat $seat, bool $outOfTime = false): bool
   {
     if ($seat->user->is_robot || $seat->user->is_admin) {
       return false;
@@ -289,11 +309,14 @@ class TableSeatService
    * This frees the seat at once, whoever asked: a player's own Leave goes
    * through leave(), which holds the seat instead in the middle of a set.
    * Mid-set, a player taken out for running out of time on their turn
-   * (`$forfeit` `turn_timeout` or `away`, from checkAway()), walking out on
+   * (`$walkOut` `turn_timeout` or `away`, from checkAway()), walking out on
    * the set (`moved`: a move to another table from seat(); `kicked`: a ban
-   * from `UserBanService::ban()`) or kicked while away costs their side the
-   * set (`BoardSelectionService::forfeitSet()`, with that reason), unless
-   * costsTheSet() lets them off; anyone else leaving mid-set abandons it.
+   * from `UserBanService::ban()`) or kicked while away has a **robot take
+   * their seat** for the rest of the set (replaceWithRobot(), with that
+   * reason), unless walksOut() lets them off or no human would be left:
+   * the set and the board in progress go on, and they may not sit down
+   * here again until the set is over. Anyone else leaving mid-set abandons
+   * it.
    *
    * A table lives only while somebody sits at it, so removing the last player
    * deletes it. If a human is left and the leaver was the moderator, the role
@@ -304,11 +327,11 @@ class TableSeatService
    * to sit down runs it (see seat()). `created_by` never moves and grants
    * nothing: it is what the per-creator active-table limit counts.
    *
-   * A playing that was under way is dropped: the four who started it are no
-   * longer the four sitting there. See `BoardSelectionService::abandonPlaying`.
-   * So is an unfinished set, even between boards: it ends `abandoned`
-   * (`BoardSelectionService::abandonSet`) or `forfeit`, and the next board
-   * opens a new one.
+   * Short of a robot taking over, a playing that was under way is dropped:
+   * the four who started it are no longer the four sitting there. See
+   * `BoardSelectionService::abandonPlaying`. So is an unfinished set, even
+   * between boards: it ends `abandoned` (`BoardSelectionService::abandonSet`),
+   * and the next board opens a new one.
    * The leaver's Start goes with their seat row; whoever takes the seat next
    * has to press it.
    *
@@ -317,9 +340,9 @@ class TableSeatService
    *
    * @throws SeatUnavailableException
    */
-  public function remove(Table $table, User $user, ?User $by = null, ?string $forfeit = null): bool
+  public function remove(Table $table, User $user, ?User $by = null, ?string $walkOut = null): bool
   {
-    return DB::transaction(function () use ($table, $user, $by, $forfeit) {
+    return DB::transaction(function () use ($table, $user, $by, $walkOut) {
       // serialize seat changes on this table, then reread it: who runs it
       // may have changed since it was loaded
       Table::whereKey($table->getKey())->lockForUpdate()->firstOrFail();
@@ -336,18 +359,17 @@ class TableSeatService
       }
 
       // read before the seat goes: whether an admin there is away
-      $reason = $this->forfeitReason($table, $seat, $forfeit);
+      $reason = $this->replacementReason($table, $seat, $walkOut);
 
       $seat->delete();
 
       if ($reason !== null) {
-        $this->boardSelection->forfeitSet($table, Seats::side($seat->seat), $reason);
+        $this->replaceWithRobot($table, $seat, $reason);
+      } else {
+        // whoever is left is not the four who started the board, nor the set
+        $this->boardSelection->abandonPlaying($table);
+        $this->boardSelection->abandonSet($table);
       }
-
-      // whoever is left is not the four who started the board, nor the set
-      // (which abandonSet() ends unless the forfeit just has)
-      $this->boardSelection->abandonPlaying($table);
-      $this->boardSelection->abandonSet($table);
 
       // the human seated here longest, if any: a robot never runs a table
       $next = $table->seats()
@@ -381,6 +403,76 @@ class TableSeatService
 
       return false;
     });
+  }
+
+  /**
+   * Sit a robot in the seat `$gone` just freed, for the rest of the set, and
+   * write down whom it took over from and why (`$reason`) on the set's seat
+   * (`table_set_seats.replaced_user_id`). It is ready at once.
+   *
+   * On a board in progress it takes the hand over where it is: the
+   * snapshot's seat (`board_table_seats`) becomes the robot's, keeping the
+   * human as `replaced_user_id` since they have seen the deal, and the
+   * board waits afresh (`turn_started_at`): who acts may have changed. A
+   * finished board keeps its four: it is theirs, and the robot plays from
+   * the next one. A human dummy whose declarer the robot now is plays both
+   * hands from here (`DeclarerHandShown`). `PlayingUpdated` tells the table
+   * and gets the robots moving.
+   *
+   * Run by remove(), under the table lock.
+   */
+  private function replaceWithRobot(Table $table, TableSeat $gone, string $reason): void
+  {
+    $robot = $this->sitRobot($table, $gone->seat);
+
+    $this->boardSelection->currentSet($table)->seats()->where('seat', $gone->seat)->update([
+      'user_id' => $robot->id,
+      'replaced_user_id' => $gone->user_id,
+      'replaced_reason' => $reason,
+      'replaced_at' => now(),
+    ]);
+
+    $open = $this->boardSelection->openPlaying($table);
+    $open?->seats()->where('seat', $gone->seat)->update(['user_id' => $robot->id, 'replaced_user_id' => $gone->user_id]);
+    $open?->update(['turn_started_at' => now()]);
+
+    $playing = $this->playingState->currentPlaying($table);
+
+    if ($playing === null) {
+      return;
+    }
+
+    if ($open !== null && $this->playingState->declarerHandFor($playing, Seats::partner($gone->seat)) !== null) {
+      DeclarerHandShown::dispatch($playing, (int) $playing->seats->firstWhere('seat', Seats::partner($gone->seat))->user_id, Seats::partner($gone->seat));
+    }
+
+    PlayingUpdated::dispatch($table);
+  }
+
+  /**
+   * Sit an idle robot from the pool in `$seat`, ready. Another table may
+   * seat the same robot at the same moment (`unique(user_id)`): then the
+   * next one is tried.
+   */
+  private function sitRobot(Table $table, string $seat): User
+  {
+    $tried = [];
+
+    for ($attempt = 1; ; $attempt++) {
+      $robot = $this->robots->idle($tried);
+      $tried[] = $robot->id;
+
+      try {
+        // a savepoint, so a refused insert leaves the outer transaction usable
+        DB::transaction(fn () => $table->seats()->create(['user_id' => $robot->id, 'seat' => $seat, 'ready_at' => now()]));
+
+        return $robot;
+      } catch (QueryException $e) {
+        if ((string) $e->getCode() !== '23000' || $attempt >= RobotPool::ATTEMPTS) {
+          throw $e;
+        }
+      }
+    }
   }
 
   /**
@@ -447,18 +539,19 @@ class TableSeatService
    *   `away_since` being that last sign of life; their seat stays theirs;
    * - the player the board waits for, once their turn clock has run out
    *   (`PlayingStateService::turnDeadline()`), is taken out through
-   *   remove(), which forfeits the set for their side (`turn_timeout`, or
-   *   `away` if they were away). Nobody else is: the board isn't waiting
-   *   for them. No clock runs for a robot or an admin: the table just waits
-   *   for an admin.
-   * At a table whose set is over (completed, abandoned or forfeited),
+   *   remove(), where a robot takes their seat for the rest of the set
+   *   (`turn_timeout`, or `away` if they were away). Nobody else is: the
+   *   board isn't waiting for them. No clock runs for a robot or an admin:
+   *   the table just waits for an admin.
+   * At a table whose set is over (completed or abandoned),
    * nobody is held for it any more: the seats of players still away are
    * freed, as a leave (an admin's is kept, and only stops being away).
    *
    * Each table is checked under its lock. Returns how many players were
-   * marked away, how many sets were forfeited and how many seats freed.
+   * marked away, how many players ran out of time and how many seats were
+   * freed.
    *
-   * @return array{away: int, forfeited: int, freed: int}
+   * @return array{away: int, timed_out: int, freed: int}
    */
   public function checkAway(): array
   {
@@ -485,7 +578,7 @@ class TableSeatService
 
     $tables = $awayOrQuiet->merge($overdue)->map(fn ($id) => (int) $id)->unique()->sort()->values();
 
-    $counts = ['away' => 0, 'forfeited' => 0, 'freed' => 0];
+    $counts = ['away' => 0, 'timed_out' => 0, 'freed' => 0];
 
     foreach ($tables as $tableId) {
       foreach ($this->checkAwayAt($tableId, $awayCutoff) as $key => $count) {
@@ -499,12 +592,12 @@ class TableSeatService
   /**
    * checkAway() for one table, under its lock.
    *
-   * @return array{away: int, forfeited: int, freed: int}
+   * @return array{away: int, timed_out: int, freed: int}
    */
   private function checkAwayAt(int $tableId, Carbon $awayCutoff): array
   {
     return DB::transaction(function () use ($tableId, $awayCutoff) {
-      $counts = ['away' => 0, 'forfeited' => 0, 'freed' => 0];
+      $counts = ['away' => 0, 'timed_out' => 0, 'freed' => 0];
       $table = Table::whereKey($tableId)->lockForUpdate()->first();
 
       if ($table === null) {
@@ -529,8 +622,8 @@ class TableSeatService
 
         if ($late !== null) {
           // remove() tells the table
-          $this->remove($table, $late->user, forfeit: $late->away_since === null ? TableSet::FORFEIT_TURN_TIMEOUT : TableSet::FORFEIT_AWAY);
-          $counts['forfeited']++;
+          $this->remove($table, $late->user, walkOut: $late->away_since === null ? TableSetSeat::REASON_TURN_TIMEOUT : TableSetSeat::REASON_AWAY);
+          $counts['timed_out']++;
         } elseif ($counts['away'] > 0) {
           TableUpdated::dispatch($table);
         }

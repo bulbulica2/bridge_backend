@@ -308,24 +308,29 @@ Seats are managed through `App\Services\TableSeatService`:
   in between wins. Returns how many seats it freed. Run every minute by the
   scheduled `tables:release-idle-seats` command.
 - `leave(Table, User)` is a player's own Leave: mid-set it holds the seat
-  (`away_since` now, returns `HELD`) when that would cost their side the
+  (`away_since` now, returns `HELD`) when that would be walking out on the
   set; otherwise it is `remove()` (`LEFT`, or `DELETED` with the table).
 - `checkAway()` is the away rule and the turn clock (`bridge.away_seconds`,
   60, and `bridge.turn_seconds`, 60), run every ten seconds by the
   scheduled `tables:check-away` command: mid-set it marks quiet humans
   away, and takes out, through `remove()`, the player on turn whose
-  `turn_deadline` (`PlayingStateService::turnDeadline()`) has passed, which
-  forfeits the set for their side (`turn_timeout`, or `away` if they were
-  away); once a set is over it frees anyone still away (an admin is only
+  `turn_deadline` (`PlayingStateService::turnDeadline()`) has passed, and a
+  robot takes their seat (`turn_timeout`, or `away` if they were away);
+  once a set is over it frees anyone still away (an admin is only
   un-marked). It looks at tables with a seat away or quiet mid-set and at
   those whose unfinished playing has had no move for `bridge.turn_seconds`;
-  each table is checked under its lock.
-  `remove(..., $forfeit)` forfeits (`BoardSelectionService::forfeitSet()`,
-  with the reason) instead of abandoning when the player going ran out of
-  time (`turn_timeout`/`away`), is moving to another table (`moved`), is
-  banned (`kicked`) or is kicked while away (`kicked`), mid-set, except an
-  admin or — for anything but running out of time — while an admin there is
-  away (`forfeitReason()`, `costsTheSet()`).
+  each table is checked under its lock. Returns
+  `{away, timed_out, freed}`.
+  `remove(..., $walkOut)` hands the seat to a robot (`replaceWithRobot()`,
+  with the reason) instead of abandoning the set when the player going ran
+  out of time (`turn_timeout`/`away`), is moving to another table
+  (`moved`), is banned (`kicked`) or is kicked while away (`kicked`),
+  mid-set, while another human stays at the table, except an admin or —
+  for anything but running out of time — while an admin there is away
+  (`replacementReason()`, `walksOut()`). The robot comes from `RobotPool`,
+  sits down ready, and takes over the set's seat and the open board's
+  snapshot; `seat()` refuses the replaced human at that table until the
+  set is over.
 
 Relations: `table`, `user` (both belongsTo).
 `game\TableSeeder` creates each seeded table the way `POST /tables` does and
@@ -497,7 +502,10 @@ Lifecycle (`App\Services\BoardSelectionService`):
   human's Next: the row is created
   with `started_at`, `table_set_id` and `set_position`, and the four
   `table_seats` are copied into `board_table_seats`.
-- **Abandoned** when any player leaves before `finished_at` is set. The row is
+- **Abandoned** when any player leaves before `finished_at` is set — unless
+  they walked out on the set and a robot took the hand over: then the
+  snapshot's seat becomes the robot's (`replaced_user_id` keeps the human)
+  and the board plays on. The row is
   **not** deleted — `table_id` is set to `null`, exactly as when a table is
   deleted. The seat snapshot has to survive, because those four players were
   dealt those hands and have seen them; board selection reads
@@ -526,15 +534,19 @@ moving on), `AuctionService`, `CardPlayService`, `ClaimService` and
 Snapshot of who sat where for a playing, kept after players leave the table —
 and after the table itself is deleted, since `board_table.table_id` is
 `nullOnDelete` rather than cascading.
-Fields: `board_table_id` (FK, cascade delete), `user_id` (FK users), `seat`
-(enum `Seats::SEATS`), `ready_at` (nullable timestamp, cast `datetime`: once
+Fields: `board_table_id` (FK, cascade delete), `user_id` (FK users: who
+plays the seat), `seat` (enum `Seats::SEATS`), `replaced_user_id` (FK users,
+nullable: the human dealt the seat, when a robot took the hand over
+mid-board because they walked out on the set; board selection counts the
+board as theirs, since they have seen it), `ready_at` (nullable timestamp, cast `datetime`: once
 the playing is finished, when this player asked for the next board —
 `POST /tables/{table}/playing/next`; the next board is dealt at once when
 every human's is set (robots count as set), else by itself once
-`bridge.next_board_seconds` have passed since `finished_at`. Not to be confused with `table_seats.ready_at`, Start). All four
-are fillable.
-Unique `(board_table_id, seat)` and `(board_table_id, user_id)`; index
-`(user_id, seat)` for board selection ("has this user played board B?",
+`bridge.next_board_seconds` have passed since `finished_at`; a player no
+longer seated, replaced by a robot since, isn't waited for. Not to be
+confused with `table_seats.ready_at`, Start). All five are fillable.
+Unique `(board_table_id, seat)` and `(board_table_id, user_id)`; indexes
+`(user_id, seat)` and `(replaced_user_id, seat)` for board selection ("has this user played board B?",
 "…from seat S?" — see
 [`GAME-RULES.md` §8](GAME-RULES.md#8-game-flow-checklist-for-implementers)).
 Relations: `boardTable`, `user` (both belongsTo).
@@ -557,32 +569,32 @@ Fields (all fillable):
 - `ended` (enum `TableSet::ENDINGS`, nullable): null while it goes on, then
   `completed` (`BoardTable::finish()` on its last board), `abandoned` (one of
   its four left before that: `BoardSelectionService::abandonSet()`, from
-  `TableSeatService::remove()`) or `forfeit` (see `forfeit_reason`:
-  `BoardSelectionService::forfeitSet()` → `TableSet::forfeit()`, from
-  `TableSeatService::remove()`).
-- `forfeited_by` (enum `TableSet::SIDES`: `NS`, `EW`, nullable): the side that
-  lost by forfeit, null for any other ending.
-- `forfeit_reason` (enum `TableSet::FORFEIT_REASONS`, nullable): how that
-  side lost it — `turn_timeout` (the player on turn let their turn clock run
-  out), `away` (the same, while away: gone quiet or after a Leave), `moved`
-  (walked out on the set for another table) or `kicked` (kicked while away,
-  or banned). Null for any other ending.
+  `TableSeatService::remove()`). A player walking out doesn't end it: a
+  robot takes their seat (see `TableSetSeat`). There is no forfeit (the
+  `forfeit` ending, `forfeited_by` and `forfeit_reason` were dropped).
 - timestamps.
 A table has at most one unfinished set at a time. Relations: `seats`
 (hasMany TableSetSeat), `playings` (hasMany BoardTable,
-by `set_position`). `end($ended)` and `forfeit($side, $reason)` close it (a no-op
-once closed),
-`hasPlayer($userId)`. No factory: sets are opened by
+by `set_position`). `end($ended)` closes it (a no-op once closed),
+`hasPlayer($userId)` (one of its four, or replaced by a robot in it),
+`replacements()` (the `replaced` list of the payloads: `{seat, user_id,
+reason}` per seat a robot took over). No factory: sets are opened by
 `BoardSelectionService` only.
 
 ### TableSetSeat (`table_set_seats`)
-The set's four players by seat, copied from `table_seats` when it opened —
-the same four as every playing in it, since a change of player ends the set.
-Fields: `table_set_id` (FK, cascade delete), `user_id` (FK users), `seat`
-(enum `Seats::SEATS`), all fillable, timestamps. Unique
-`(table_set_id, seat)` and `(table_set_id, user_id)`, index `user_id`.
-Relations: `user` (belongsTo). `GET /sets/{set}` lets these
-four see the set's results (`TableSetPolicy::view`).
+The set's four seats, copied from `table_seats` when it opened — the same
+four as every playing in it, since any other change of player ends the
+set. Fields: `table_set_id` (FK, cascade delete), `user_id` (FK users: who
+plays the seat now), `seat` (enum `Seats::SEATS`), and, once a robot has
+taken the seat over from a human who walked out
+(`TableSeatService::remove()`), `replaced_user_id` (FK users, nullable:
+that human, who may not sit down at the table again until the set is
+over), `replaced_reason` (enum `TableSetSeat::REASONS`: `turn_timeout`,
+`away`, `moved`, `kicked`) and `replaced_at` (cast `datetime`); all
+fillable, timestamps. Unique `(table_set_id, seat)` and
+`(table_set_id, user_id)`, index `user_id`.
+Relations: `user` (belongsTo). `GET /sets/{set}` lets these four, and the
+humans a robot replaced, see the set's results (`TableSetPolicy::view`).
 
 ## Relationship summary
 
@@ -602,10 +614,10 @@ Board ──< BoardLeadAnalysis            (one per declarer + strain played)
 Board ──< BoardTable >── Table        (history: one row per playing,
              │   │                     unique board+table; contract, result)
              │   ├── table_set_id ──> TableSet >── Table   (+set_position)
-             │   │                      └──< TableSetSeat >── User
+             │   │                      └──< TableSetSeat >── User   (+replaced_user_id ──> User)
              │   ├── contract_bid_id ──> Bid, declarer_id ──> User
              │   ├──< Auction >── Bid, User       (one row per call)
              │   ├──< Cardplay >── Card, User     (+seat, +won_trick)
              │   └──< BoardMessage >── User       (the chat: +seat, +to, +call_index, +card_index)
-             └──< BoardTableSeat >── User   (who sat where)
+             └──< BoardTableSeat >── User   (who sat where; +replaced_user_id ──> User)
 ```

@@ -28,7 +28,7 @@ return [
   | The human the board waits for (in the auction or the play, away or
   | not; never a robot or an admin) has this many seconds to call, play or
   | act on a claim, from when the board began waiting for them. Past that,
-  | their side forfeits the set and their seat is freed. Both are checked
+  | a robot takes their seat for the rest of the set. Both are checked
   | by `tables:check-away`, scheduled every ten seconds.
   |
   */

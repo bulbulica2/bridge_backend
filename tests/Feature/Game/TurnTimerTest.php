@@ -3,12 +3,17 @@
 namespace Tests\Feature\Game;
 
 use App\auxiliary\Seats;
+use App\Events\DeclarerHandShown;
 use App\Events\PlayingUpdated;
 use App\Events\TableUpdated;
+use App\Models\Auction;
 use App\Models\Bid;
 use App\Models\BoardTable;
+use App\Models\BoardTableSeat;
 use App\Models\Table;
+use App\Models\TableSeat;
 use App\Models\TableSet;
+use App\Models\TableSetSeat;
 use App\Models\User;
 use App\Services\BoardSelectionService;
 use App\Services\PlayingStateService;
@@ -24,9 +29,11 @@ use Tests\TestCase;
  * The turn clock: the human the board waits for (`acting_user_id`) has
  * `bridge.turn_seconds` to call, play or act on a claim, from when the
  * board began waiting for them, shown as `turn_deadline`. Only a move
- * resets it. Once it has passed, `tables:check-away` takes them out and
- * their side forfeits the set (`turn_timeout`). Nobody has one between
- * boards or while a claim is pending, nor does a robot or an admin.
+ * resets it. Once it has passed, `tables:check-away` takes them out and a
+ * robot plays their seat for the rest of the set, from where the board is
+ * (`turn_timeout`); they may not sit down there again until the set is
+ * over. Nobody has a clock between boards or while a claim is pending, nor
+ * does a robot or an admin.
  */
 class TurnTimerTest extends TestCase
 {
@@ -118,51 +125,89 @@ class TurnTimerTest extends TestCase
     $this->assertEquals(now()->subSeconds(30), BoardTable::sole()->turn_started_at);
   }
 
-  public function test_past_the_deadline_the_check_forfeits_for_their_side_abandons_the_board_and_frees_the_seat(): void
+  public function test_past_the_deadline_a_robot_takes_the_seat_and_plays_the_board_on(): void
   {
     $playing = $this->startBoard($this->table);
     $set = TableSet::sole();
     $turn = $this->turn();
-    $others = array_values(array_diff(Seats::SEATS, [$turn]));
+    $late = $this->players[$turn];
+    $partner = Seats::partner($turn);
 
     // there all along, never calling
     $this->travel(59)->seconds();
     $this->alive(...Seats::SEATS);
-    $this->assertSame(['away' => 0, 'forfeited' => 0, 'freed' => 0], $this->seats->checkAway());
+    $this->assertSame(['away' => 0, 'timed_out' => 0, 'freed' => 0], $this->seats->checkAway());
 
     $this->travel(1)->seconds();
     Event::fake([TableUpdated::class]);
 
     $this->artisan('tables:check-away')
-      ->expectsOutput('Marked 0 players away, forfeited 1 set, freed 0 seats.')
+      ->expectsOutput('Marked 0 players away, replaced 1 player with a robot, freed 0 seats.')
       ->assertSuccessful();
 
-    $side = Seats::side($turn);
+    // a robot sits in the seat, ready; the set and the board go on
+    $robot = TableSeat::where('table_id', $this->table->id)->where('seat', $turn)->sole()->user;
+    $this->assertTrue($robot->is_robot);
+    $this->assertDatabaseMissing('table_seats', ['user_id' => $late->id]);
+    $this->assertNull($set->fresh()->finished_at);
+    $this->assertSame($playing->id, BoardTable::where('table_id', $this->table->id)->sole()->id);
+    $this->assertSame($playing->board_id, $this->table->fresh()->board_id);
 
+    // the set's seat and the board's snapshot are the robot's now, and say
+    // whom it took over from
     $this->assertSame(
-      ['ended' => TableSet::ENDED_FORFEIT, 'forfeited_by' => $side, 'forfeit_reason' => TableSet::FORFEIT_TURN_TIMEOUT],
-      $set->fresh()->only('ended', 'forfeited_by', 'forfeit_reason')
+      ['user_id' => $robot->id, 'replaced_user_id' => $late->id, 'replaced_reason' => 'turn_timeout'],
+      TableSetSeat::where('seat', $turn)->sole()->only('user_id', 'replaced_user_id', 'replaced_reason')
     );
-    $this->assertDatabaseMissing('table_seats', ['user_id' => $this->players[$turn]->id]);
-    $this->assertNull($playing->fresh()->table_id);
-    $this->assertNull($playing->fresh()->finished_at);
-    $this->assertNull($this->table->fresh()->board_id);
-    Event::assertDispatched(TableUpdated::class, fn ($event) => $event->table['free_seats'] === [$turn]
-      && $event->table['set']['forfeit_reason'] === 'turn_timeout'
-      && $event->table['set']['forfeited_by'] === $side);
+    $this->assertSame(
+      ['user_id' => $robot->id, 'replaced_user_id' => $late->id],
+      BoardTableSeat::where('board_table_id', $playing->id)->where('seat', $turn)->sole()->only('user_id', 'replaced_user_id')
+    );
 
-    $this->actingAs($this->players[$others[0]])->getJson("/sets/$set->id")
+    // the robot has made the call they didn't
+    $this->assertSame($robot->id, (int) Auction::where('board_table_id', $playing->id)->sole()->user_id);
+
+    Event::assertDispatched(TableUpdated::class, fn ($event) => $event->table['free_seats'] === []
+      && $event->table['set']['ended'] === null
+      && $event->table['set']['replaced'] === [['seat' => $turn, 'user_id' => $late->id, 'reason' => 'turn_timeout']]);
+
+    $this->state($partner)
+      ->assertJsonPath('data.players.'.$turn.'.is_robot', true)
+      ->assertJsonPath('data.set.replaced.0.user_id', $late->id);
+
+    // they may still read the set, but not sit down at it again
+    $this->actingAs($late)->getJson("/sets/$set->id")
       ->assertOk()
-      ->assertJsonPath('data.forfeit_reason', 'turn_timeout')
-      ->assertJsonPath('data.winner', $side === 'NS' ? 'EW' : 'NS');
-
-    // nothing left to time out
-    $this->travel(5)->minutes();
-    $this->alive(...$others);
-    $this->assertSame(['away' => 0, 'forfeited' => 0, 'freed' => 0], $this->seats->checkAway());
+      ->assertJsonPath('data.ended', null)
+      ->assertJsonPath('data.players.'.$turn.'.is_robot', true)
+      ->assertJsonPath('data.replaced.0.reason', 'turn_timeout');
   }
 
-  public function test_on_dummys_turn_the_clock_follows_declarer(): void
+  public function test_a_player_a_robot_took_over_from_may_not_sit_down_again_until_the_set_is_over(): void
+  {
+    $this->startBoard($this->table);
+    $turn = $this->turn();
+    $late = $this->players[$turn];
+
+    $this->travel(60)->seconds();
+    $this->alive(...Seats::SEATS);
+    $this->seats->checkAway();
+
+    // the robot holds the seat; were it free, it would still be refused
+    TableSeat::where('table_id', $this->table->id)->where('seat', $turn)->delete();
+
+    $this->actingAs($late)->postJson("/tables/{$this->table->id}/seats", ['seat' => $turn])
+      ->assertStatus(409)
+      ->assertJsonPath('message', 'You walked out on the set going on at this table: you may sit down here again once it is over.');
+    $this->actingAs($this->players[Seats::next($turn)])->postJson("/tables/{$this->table->id}/seats/users", ['user_id' => $late->id, 'seat' => $turn])
+      ->assertStatus(409);
+
+    // once it is over, they may
+    TableSet::sole()->end(TableSet::ENDED_COMPLETED);
+    $this->actingAs($late)->postJson("/tables/{$this->table->id}/seats", ['seat' => $turn])->assertCreated();
+  }
+
+  public function test_on_dummys_turn_the_clock_follows_declarer_and_dummy_takes_over_a_robot_declarers_hand(): void
   {
     $this->startBoard($this->table);
     $declarer = $this->turn();
@@ -188,14 +233,19 @@ class TurnTimerTest extends TestCase
     // everyone there; declarer doesn't play dummy's card
     $this->travel(60)->seconds();
     $this->alive(...Seats::SEATS);
+    Event::fake([DeclarerHandShown::class]);
     $this->seats->checkAway();
 
-    $this->assertSame(
-      ['forfeited_by' => Seats::side($declarer), 'forfeit_reason' => 'turn_timeout'],
-      TableSet::sole()->only('forfeited_by', 'forfeit_reason')
-    );
+    $this->assertSame(TableSetSeat::REASON_TURN_TIMEOUT, TableSetSeat::where('seat', $declarer)->sole()->replaced_reason);
     $this->assertDatabaseMissing('table_seats', ['user_id' => $this->players[$declarer]->id]);
-    $this->assertDatabaseHas('table_seats', ['user_id' => $this->players[$dummy]->id]);
+
+    // a robot declarer with a human dummy: dummy plays both hands now, with
+    // a fresh minute, and gets declarer's cards
+    Event::assertDispatched(DeclarerHandShown::class, fn ($event) => $event->userId === $this->players[$dummy]->id);
+    $this->state($dummy)
+      ->assertJsonPath('data.acting_user_id', $this->players[$dummy]->id)
+      ->assertJsonPath('data.turn_deadline', now()->addSeconds(60)->toJSON())
+      ->assertJsonCount(13, 'data.declarer_hand');
   }
 
   public function test_no_clock_runs_between_boards_and_the_next_board_starts_one(): void
@@ -211,7 +261,7 @@ class TurnTimerTest extends TestCase
 
     $this->travel(5)->minutes();
     $this->alive(...Seats::SEATS);
-    $this->assertSame(['away' => 0, 'forfeited' => 0, 'freed' => 0], $this->seats->checkAway());
+    $this->assertSame(['away' => 0, 'timed_out' => 0, 'freed' => 0], $this->seats->checkAway());
 
     $this->assertNotNull(app(BoardSelectionService::class)->dealNext($playing->id));
     $this->state('N')->assertJsonPath('data.phase', 'auction')->assertJsonPath('data.turn_deadline', now()->addSeconds(60)->toJSON());
@@ -239,7 +289,7 @@ class TurnTimerTest extends TestCase
 
     $this->travel(5)->minutes();
     $this->alive(...Seats::SEATS);
-    $this->assertSame(0, $this->seats->checkAway()['forfeited']);
+    $this->assertSame(0, $this->seats->checkAway()['timed_out']);
 
     // rejected: declarer's turn again, with a whole minute
     $this->actingAs($this->players[$leader])->postJson("/tables/{$this->table->id}/claim/response", ['accept' => false])
@@ -248,10 +298,10 @@ class TurnTimerTest extends TestCase
 
     $this->travel(59)->seconds();
     $this->alive(...Seats::SEATS);
-    $this->assertSame(0, $this->seats->checkAway()['forfeited']);
+    $this->assertSame(0, $this->seats->checkAway()['timed_out']);
     $this->travel(1)->seconds();
-    $this->assertSame(1, $this->seats->checkAway()['forfeited']);
-    $this->assertSame(Seats::side($declarer), TableSet::sole()->forfeited_by);
+    $this->assertSame(1, $this->seats->checkAway()['timed_out']);
+    $this->assertSame($declarer, TableSetSeat::whereNotNull('replaced_user_id')->sole()->seat);
   }
 
   public function test_a_robot_on_turn_has_no_clock(): void
@@ -277,6 +327,7 @@ class TurnTimerTest extends TestCase
     $this->travel(5)->minutes();
     $this->seats->touch($table, $human);
     $this->seats->checkAway();
+    $this->assertDatabaseHas('table_seats', ['user_id' => $human->id]);
     $this->assertNull($table->sets()->sole()->finished_at);
   }
 

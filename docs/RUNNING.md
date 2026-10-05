@@ -40,7 +40,8 @@ The API works without them: seat changes still succeed, the broadcasts just
 wait in the `jobs` table until a worker runs.
 
 To free the seats of players who closed the tab, and mark players away (and
-forfeit their side's set) mid-set, also run the scheduler (see
+hand the seat of one who runs out of time to a robot) mid-set, also run the
+scheduler (see
 [Scheduler](#scheduler-idle-seats) below):
 ```bash
 php artisan schedule:work           # tables:release-idle-seats every minute, tables:check-away every 10 s
@@ -52,7 +53,8 @@ php artisan migrate:fresh --seed
 ```
 Migrations are still edited in place rather than added as new files (most
 recently `62-turn-timer`, which added `board_table.turn_started_at` and
-`table_sets.forfeit_reason` and dropped `table_seats.forfeit_at`). A plain `php artisan migrate`
+`replaced_user_id` on `table_set_seats` and `board_table_seats`, and dropped
+`table_seats.forfeit_at` and the set forfeit columns). A plain `php artisan migrate`
 sees nothing new and leaves the old schema. `migrate:fresh` drops every
 table, so local data is lost.
 
@@ -86,8 +88,9 @@ is the first board of its set, see [Sets](#sets)), so once `queue:work`
 runs, those three move on to their set's second board by themselves; to
 look at a finished board, seed again without a worker running, or open
 `Set over`, whose set is over and stays put. Likewise, once the scheduler
-runs, `Bidding` and `Playing` lose their set a minute after seeding
-(`BRIDGE_TURN_SECONDS`): nobody plays the seeded users' turns. `Your call`
+runs, the seeded user on turn at `Bidding` and `Playing` is replaced by a
+robot a minute after seeding (`BRIDGE_TURN_SECONDS`), and so on round the
+table, since nobody plays the seeded users' turns. `Your call`
 waits for the admin, who has no turn clock.
 
 No seeded table has robots. To play against robots, log in and create one
@@ -241,9 +244,9 @@ seconds:
   (see [`API.md`](API.md#away-mid-set-and-the-turn-clock)): it marks a human
   with no sign of life for `BRIDGE_AWAY_SECONDS` as away, and once the
   board has waited `BRIDGE_TURN_SECONDS` for the player on turn (away or
-  not) their side forfeits the set and their seat is freed. It also frees
+  not) a robot takes their seat for the rest of the set. It also frees
   the seats of players still away when a set ends. An admin is shown away
-  but never has a turn clock, never forfeits nor loses the seat.
+  but never has a turn clock, and is never replaced nor loses the seat.
   A minute would be too coarse for a one-minute turn, so it
   runs every few seconds; `schedule:work` (and `schedule:run`, which keeps
   running through the minute) runs such sub-minute tasks.
@@ -265,7 +268,7 @@ stays until somebody kicks its robots.
 |---|---|---|
 | `BRIDGE_IDLE_SEAT_MINUTES` | `5` | minutes without a sign of life before a seat is freed, at a table not in the middle of a set (`config/bridge.php`) |
 | `BRIDGE_AWAY_SECONDS` | `60` | mid-set, seconds without a sign of life before a player is marked away and their seat held |
-| `BRIDGE_TURN_SECONDS` | `60` | mid-set, seconds the player on turn (a human, not an admin) has to call, play or act on a claim, from when the board began waiting for them, before their side forfeits the set (the game state's `turn_deadline`) |
+| `BRIDGE_TURN_SECONDS` | `60` | mid-set, seconds the player on turn (a human, not an admin) has to call, play or act on a claim, from when the board began waiting for them, before a robot takes their seat for the rest of the set (the game state's `turn_deadline`) |
 | `BRIDGE_UNATTENDED_TABLE_MINUTES` | `10` | minutes a table with only robots left is kept before it is deleted |
 
 ### Sets

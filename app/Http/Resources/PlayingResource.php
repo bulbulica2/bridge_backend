@@ -156,11 +156,11 @@ class PlayingResource extends JsonResource
    * Where a table is in a set: its id (for `GET /sets/{set}`), its number at
    * the table, `board`, the board's place in it, `of`, how many boards it
    * has, and `finished`, true once it is over — after its last board, or as
-   * `ended` says, earlier (`abandoned` when one of its four left,
-   * `forfeit` when a player of `forfeited_by`'s side cost them the set,
-   * `forfeit_reason` saying how: one of `TableSet::FORFEIT_REASONS`).
+   * `ended` says, earlier (`abandoned` when one of its four left), and
+   * `replaced`, the players a robot took a seat over from mid-set
+   * (`TableSet::replacements()`).
    *
-   * @return array{id: int, number: int, board: int, of: int, finished: bool, ended: string|null, forfeited_by: string|null, forfeit_reason: string|null}
+   * @return array{id: int, number: int, board: int, of: int, finished: bool, ended: string|null, replaced: list<array{seat: string, user_id: int, reason: string}>}
    */
   public static function set(TableSet $set, int $board): array
   {
@@ -171,8 +171,7 @@ class PlayingResource extends JsonResource
       'of' => $set->size,
       'finished' => $set->isFinished(),
       'ended' => $set->ended,
-      'forfeited_by' => $set->forfeited_by,
-      'forfeit_reason' => $set->forfeit_reason,
+      'replaced' => $set->replacements(),
     ];
   }
 

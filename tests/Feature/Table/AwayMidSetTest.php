@@ -9,6 +9,7 @@ use App\Models\BoardTable;
 use App\Models\Table;
 use App\Models\TableSeat;
 use App\Models\TableSet;
+use App\Models\TableSetSeat;
 use App\Models\User;
 use App\Services\PlayingStateService;
 use App\Services\TableSeatService;
@@ -23,13 +24,13 @@ use Tests\TestCase;
 /**
  * Going away mid-set: a player quiet for a minute is away, their seat held;
  * back, play goes on. The board stops waiting only for the player on turn,
- * away or not, once their turn clock runs out (`TurnTimerTest`): an away
- * player on turn who does forfeits the set for their side as `away`. Leave
- * mid-set is going away, moving to another table forfeits at once, kicking
- * an away player forfeits, robots are never away and an admin never costs
- * their side the set.
+ * away or not, once their turn clock runs out (`TurnTimerTest`): then a
+ * robot takes their seat for the rest of the set (`away`). Leave mid-set is
+ * going away; moving to another table, or being kicked while away, hands
+ * the seat to a robot at once; with no human left to play with, the set is
+ * abandoned instead. Robots are never away and an admin is never replaced.
  */
-class SetForfeitTest extends TestCase
+class AwayMidSetTest extends TestCase
 {
   use RefreshDatabase;
 
@@ -78,14 +79,14 @@ class SetForfeitTest extends TestCase
 
     // 50 seconds quiet: not yet
     $this->travel(20)->seconds();
-    $this->assertSame(['away' => 0, 'forfeited' => 0, 'freed' => 0], $this->seats->checkAway());
+    $this->assertSame(['away' => 0, 'timed_out' => 0, 'freed' => 0], $this->seats->checkAway());
 
     $this->travel(15)->seconds();
     $this->alive(...$others);
 
     Event::fake([TableUpdated::class]);
 
-    $this->assertSame(['away' => 1, 'forfeited' => 0, 'freed' => 0], $this->seats->checkAway());
+    $this->assertSame(['away' => 1, 'timed_out' => 0, 'freed' => 0], $this->seats->checkAway());
     Event::assertDispatched(TableUpdated::class, fn ($event) => $this->seatIn($event->table, $quiet)['away_since'] === $lastSeen->toJSON());
 
     // away since their last sign of life; a seat has no clock of its own
@@ -106,7 +107,7 @@ class SetForfeitTest extends TestCase
     $this->assertNull($this->seatOf($quiet)->away_since);
 
     $this->alive(...Seats::SEATS);
-    $this->assertSame(['away' => 0, 'forfeited' => 0, 'freed' => 0], $this->seats->checkAway());
+    $this->assertSame(['away' => 0, 'timed_out' => 0, 'freed' => 0], $this->seats->checkAway());
     $this->assertNull(TableSet::sole()->finished_at);
     $this->state($quiet)->assertOk()->assertJsonPath('data.phase', 'auction');
   }
@@ -128,7 +129,7 @@ class SetForfeitTest extends TestCase
     $this->assertNull($this->seatOf($quiet)->away_since);
   }
 
-  public function test_an_away_player_on_turn_who_runs_out_of_time_forfeits_the_set_as_away(): void
+  public function test_an_away_player_on_turn_who_runs_out_of_time_is_replaced_by_a_robot_as_away(): void
   {
     $playing = BoardTable::where('table_id', $this->table->id)->sole();
     $set = TableSet::sole();
@@ -143,54 +144,35 @@ class SetForfeitTest extends TestCase
     // the board began waiting for them at the deal: 59 seconds on, not yet
     $this->travel(49)->seconds();
     $this->alive(...$others);
-    $this->assertSame(0, $this->seats->checkAway()['forfeited']);
+    $this->assertSame(0, $this->seats->checkAway()['timed_out']);
 
     $this->travel(1)->seconds();
 
     Event::fake([TableUpdated::class]);
 
     $this->artisan('tables:check-away')
-      ->expectsOutput('Marked 0 players away, forfeited 1 set, freed 0 seats.')
+      ->expectsOutput('Marked 0 players away, replaced 1 player with a robot, freed 0 seats.')
       ->assertSuccessful();
 
-    $side = Seats::side($turn);
-    $winners = $side === 'NS' ? 'EW' : 'NS';
-
-    $set->refresh();
-    $this->assertSame(TableSet::ENDED_FORFEIT, $set->ended);
-    $this->assertSame($side, $set->forfeited_by);
-    $this->assertSame(TableSet::FORFEIT_AWAY, $set->forfeit_reason);
-    $this->assertNotNull($set->finished_at);
-
-    // the seat freed as by a leave, the board on the table abandoned
+    // a robot plays the seat on; the set and the board go on
     $this->assertNull($this->seatOf($turn));
-    $this->assertNull($playing->fresh()->table_id);
-    $this->assertNull($this->table->fresh()->board_id);
-    Event::assertDispatched(TableUpdated::class, fn ($event) => $event->table['set']['ended'] === 'forfeit'
-      && $event->table['set']['forfeited_by'] === $side
-      && $event->table['set']['forfeit_reason'] === 'away'
-      && $event->table['free_seats'] === [$turn]);
+    $this->assertTrue(TableSeat::where('table_id', $this->table->id)->where('seat', $turn)->sole()->user->is_robot);
+    $this->assertNull($set->fresh()->finished_at);
+    $this->assertSame($this->table->id, $playing->fresh()->table_id);
+    $this->assertSame(
+      ['replaced_user_id' => $this->players[$turn]->id, 'replaced_reason' => TableSetSeat::REASON_AWAY],
+      TableSetSeat::where('seat', $turn)->sole()->only('replaced_user_id', 'replaced_reason')
+    );
+    Event::assertDispatched(TableUpdated::class, fn ($event) => $event->table['set']['ended'] === null
+      && $event->table['set']['replaced'] === [['seat' => $turn, 'user_id' => $this->players[$turn]->id, 'reason' => 'away']]
+      && $event->table['free_seats'] === []);
 
     // the moderator was the one to go: the role is handed on, to the
-    // human seated here longest
+    // human seated here longest, never to the robot
     $this->assertSame($this->players[$others[0]]->id, (int) $this->table->fresh()->moderated_by);
-
-    // everyone gets the set's results: the other side won it
-    $this->actingAs($this->players[$others[0]])->getJson("/sets/$set->id")
-      ->assertOk()
-      ->assertJsonPath('data.ended', 'forfeit')
-      ->assertJsonPath('data.forfeited_by', $side)
-      ->assertJsonPath('data.forfeit_reason', 'away')
-      ->assertJsonPath('data.winner', $winners);
-    $this->actingAs($this->players[$turn])->getJson("/sets/$set->id")->assertOk();
-
-    // a newcomer and everyone's Start: a new set
-    $this->seats->seat($this->table, User::factory()->create(), $turn);
-    $this->startBoard($this->table);
-    $this->assertSame(2, $this->table->fresh()->latestSet->number);
   }
 
-  public function test_an_away_player_not_on_turn_never_forfeits(): void
+  public function test_an_away_player_not_on_turn_is_never_replaced(): void
   {
     // an admin on turn has no clock: the board waits for them for good
     $turn = $this->turn();
@@ -200,11 +182,11 @@ class SetForfeitTest extends TestCase
     $this->travel(10)->minutes();
     $this->alive(...$this->others($quiet));
 
-    $this->assertSame(['away' => 1, 'forfeited' => 0, 'freed' => 0], $this->seats->checkAway());
+    $this->assertSame(['away' => 1, 'timed_out' => 0, 'freed' => 0], $this->seats->checkAway());
 
     $this->travel(10)->minutes();
     $this->alive(...$this->others($quiet));
-    $this->assertSame(['away' => 0, 'forfeited' => 0, 'freed' => 0], $this->seats->checkAway());
+    $this->assertSame(['away' => 0, 'timed_out' => 0, 'freed' => 0], $this->seats->checkAway());
     $this->assertNull(TableSet::sole()->finished_at);
     $this->assertNotNull($this->seatOf($quiet)->away_since);
   }
@@ -217,7 +199,7 @@ class SetForfeitTest extends TestCase
 
     $this->leave($turn)
       ->assertStatus(202)
-      ->assertJsonPath('message', 'You left in the middle of a set: your seat is held. Once the table is waiting for you, you have 60 seconds to play, or your side forfeits the set.')
+      ->assertJsonPath('message', 'You left in the middle of a set: your seat is held. Once the table is waiting for you, you have 60 seconds to play, or a robot takes your seat for the rest of the set.')
       ->assertJsonPath('data.free_seats', []);
 
     $seat = $this->seatOf($turn);
@@ -251,7 +233,7 @@ class SetForfeitTest extends TestCase
   {
     config(['bridge.turn_seconds' => 1]);
 
-    $this->leave('E')->assertStatus(202)->assertJsonPath('message', 'You left in the middle of a set: your seat is held. Once the table is waiting for you, you have 1 second to play, or your side forfeits the set.');
+    $this->leave('E')->assertStatus(202)->assertJsonPath('message', 'You left in the middle of a set: your seat is held. Once the table is waiting for you, you have 1 second to play, or a robot takes your seat for the rest of the set.');
   }
 
   public function test_leave_between_boards_of_a_set_holds_the_seat_too(): void
@@ -273,7 +255,7 @@ class SetForfeitTest extends TestCase
     $this->finishBoard();
 
     $this->travel(2)->minutes();
-    $this->assertSame(['away' => 0, 'forfeited' => 0, 'freed' => 0], $this->seats->checkAway());
+    $this->assertSame(['away' => 0, 'timed_out' => 0, 'freed' => 0], $this->seats->checkAway());
 
     $this->leave('E')->assertOk()->assertJsonPath('message', 'You left the table.')->assertJsonPath('data.free_seats', ['E']);
     $this->assertSame(TableSet::ENDED_COMPLETED, TableSet::sole()->ended);
@@ -287,57 +269,54 @@ class SetForfeitTest extends TestCase
     TableSet::sole()->update(['size' => 1]);
     $this->finishBoard();
 
-    $this->assertSame(['away' => 0, 'forfeited' => 0, 'freed' => 1], $this->seats->checkAway());
+    $this->assertSame(['away' => 0, 'timed_out' => 0, 'freed' => 1], $this->seats->checkAway());
 
     $this->assertNull($this->seatOf('E'));
     $this->assertSame(TableSet::ENDED_COMPLETED, TableSet::sole()->ended);
   }
 
-  public function test_moving_to_another_table_mid_set_forfeits_at_once(): void
+  public function test_moving_to_another_table_mid_set_hands_the_seat_to_a_robot_at_once(): void
   {
     $other = Table::factory()->create(['board_id' => null]);
 
     $this->actingAs($this->players['W'])->postJson("/tables/$other->id/seats", ['seat' => 'N'])
       ->assertCreated()
-      ->assertJsonPath('message', 'Seat taken successfully. You walked out on a set at your old table, so your side forfeited it.');
+      ->assertJsonPath('message', 'Seat taken successfully. You walked out on a set at your old table, so a robot took your seat there.');
 
     $set = TableSet::sole();
-    $this->assertSame(TableSet::ENDED_FORFEIT, $set->ended);
-    $this->assertSame('EW', $set->forfeited_by);
-    $this->assertSame(TableSet::FORFEIT_MOVED, $set->forfeit_reason);
+    $this->assertNull($set->finished_at);
+    $this->assertSame(TableSetSeat::REASON_MOVED, TableSetSeat::where('seat', 'W')->sole()->replaced_reason);
+    $this->assertTrue(TableSeat::where('table_id', $this->table->id)->where('seat', 'W')->sole()->user->is_robot);
     $this->assertSame($other->id, $this->seatOf('W')->table_id);
 
-    // with the set over, moving on costs nothing
-    $this->actingAs($this->players['N'])->postJson("/tables/$other->id/seats", ['seat' => 'S'])
+    // the robot holds their old seat; moving on from a table with no set
+    // costs nothing
+    $this->actingAs($this->players['W'])->postJson("/tables/{$this->table->id}/seats", ['seat' => 'W'])->assertStatus(409);
+    $this->actingAs($this->players['W'])->postJson('/tables/'.Table::factory()->create(['board_id' => null])->id.'/seats', ['seat' => 'S'])
       ->assertCreated()
       ->assertJsonPath('message', 'Seat taken successfully.');
-    $this->assertSame('EW', $set->fresh()->forfeited_by);
   }
 
-  public function test_kicking_an_away_player_forfeits_and_a_present_one_abandons(): void
+  public function test_kicking_an_away_player_hands_the_seat_to_a_robot_and_kicking_a_present_one_abandons(): void
   {
     $this->leave('E')->assertStatus(202);
 
     $this->actingAs($this->players['N'])->deleteJson("/tables/{$this->table->id}/seats/{$this->players['E']->id}")
       ->assertOk()
-      ->assertJsonPath('message', 'Player removed from the table. They were away mid-set, so their side forfeited it.')
-      ->assertJsonPath('data.set.ended', 'forfeit')
-      ->assertJsonPath('data.set.forfeited_by', 'EW')
-      ->assertJsonPath('data.set.forfeit_reason', 'kicked');
+      ->assertJsonPath('message', 'Player removed from the table. They were away mid-set, so a robot took their seat.')
+      ->assertJsonPath('data.set.ended', null)
+      ->assertJsonPath('data.set.replaced', [['seat' => 'E', 'user_id' => $this->players['E']->id, 'reason' => 'kicked']])
+      ->assertJsonPath('data.free_seats', []);
 
-    // a new set, and a kick of somebody who is there
-    $this->seats->seat($this->table, $this->players['E'], 'E');
-    $this->startBoard($this->table);
-
+    // a kick of somebody who is there ends the set
     $this->actingAs($this->players['N'])->deleteJson("/tables/{$this->table->id}/seats/{$this->players['S']->id}")
       ->assertOk()
       ->assertJsonPath('message', 'Player removed from the table.')
       ->assertJsonPath('data.set.ended', 'abandoned')
-      ->assertJsonPath('data.set.forfeited_by', null)
-      ->assertJsonPath('data.set.forfeit_reason', null);
+      ->assertJsonPath('data.free_seats', ['S']);
   }
 
-  public function test_robots_are_never_away_and_a_robots_partner_forfeits_for_their_side(): void
+  public function test_robots_are_never_away_and_with_no_human_left_the_set_is_abandoned(): void
   {
     $human = User::factory()->create();
     $id = $this->actingAs($human)->postJson('/tables', ['robots' => true])->assertCreated()->json('data.id');
@@ -348,19 +327,19 @@ class SetForfeitTest extends TestCase
     // they are never away
     $this->travel(59)->seconds();
     $this->seats->touch($table, $human);
-    $this->assertSame(['away' => 0, 'forfeited' => 0, 'freed' => 0], $this->seats->checkAway());
+    $this->seats->checkAway();
+    $this->assertSame(0, $table->seats()->whereNotNull('away_since')->count());
 
-    // there, but not playing: their side, robot partner and all, loses the
-    // set when their turn clock runs out
+    // there, but not playing: a robot would have nobody to play with, so
+    // the set is abandoned and the table left to its robots
     $seat = $table->seats()->where('user_id', $human->id)->value('seat');
     $this->travel(1)->seconds();
     $this->seats->checkAway();
 
     $set = $table->sets()->sole();
-    $this->assertSame(TableSet::ENDED_FORFEIT, $set->ended);
-    $this->assertSame(Seats::side($seat), $set->forfeited_by);
-    $this->assertSame(TableSet::FORFEIT_TURN_TIMEOUT, $set->forfeit_reason);
-    $this->assertSame(3, $table->seats()->count());
+    $this->assertSame(TableSet::ENDED_ABANDONED, $set->ended);
+    $this->assertSame([], $set->replacements());
+    $this->assertSame([$seat], $table->fresh()->freeSeats());
     $this->assertNotNull($table->fresh()->unattended_since);
   }
 
@@ -374,7 +353,7 @@ class SetForfeitTest extends TestCase
     $this->travel(10)->minutes();
     $this->alive(...$this->others($turn));
 
-    $this->assertSame(['away' => 1, 'forfeited' => 0, 'freed' => 0], $this->seats->checkAway());
+    $this->assertSame(['away' => 1, 'timed_out' => 0, 'freed' => 0], $this->seats->checkAway());
 
     // away, but no deadline: the table waits for them
     $this->assertNotNull($this->seatOf($turn)->away_since);
@@ -398,15 +377,16 @@ class SetForfeitTest extends TestCase
 
     $this->travel(31)->seconds();
     $this->alive(...$this->others($admin));
-    $this->assertSame(['away' => 1, 'forfeited' => 0, 'freed' => 0], $this->seats->checkAway());
+    $this->assertSame(['away' => 1, 'timed_out' => 0, 'freed' => 0], $this->seats->checkAway());
 
-    // Leave is immediate: the set is abandoned, nobody forfeits it
+    // Leave is immediate: the set is abandoned, no robot takes the seat
     $leaver = Seats::partner(Seats::next($admin));
     $this->leave($leaver)->assertOk()->assertJsonPath('message', 'You left the table.');
-    $this->assertSame(['ended' => 'abandoned', 'forfeited_by' => null], TableSet::sole()->only('ended', 'forfeited_by'));
+    $this->assertSame(TableSet::ENDED_ABANDONED, TableSet::sole()->ended);
+    $this->assertSame([], TableSet::sole()->replacements());
 
     // with the set over, the admin's seat is kept, no longer away
-    $this->assertSame(['away' => 0, 'forfeited' => 0, 'freed' => 0], $this->seats->checkAway());
+    $this->assertSame(['away' => 0, 'timed_out' => 0, 'freed' => 0], $this->seats->checkAway());
     $this->assertNull($this->seatOf($admin)->away_since);
   }
 
@@ -422,18 +402,19 @@ class SetForfeitTest extends TestCase
 
     $this->travel(15)->seconds();
     $this->alive(...$this->others($admin));
-    $this->assertSame(['away' => 1, 'forfeited' => 0, 'freed' => 0], $this->seats->checkAway());
+    $this->assertSame(['away' => 1, 'timed_out' => 0, 'freed' => 0], $this->seats->checkAway());
 
     // their own turn, their own time: the admin being away changes nothing
     $this->travel(44)->seconds();
     $this->alive(...$this->others($admin));
-    $this->assertSame(0, $this->seats->checkAway()['forfeited']);
+    $this->assertSame(0, $this->seats->checkAway()['timed_out']);
 
     $this->travel(1)->seconds();
-    $this->assertSame(1, $this->seats->checkAway()['forfeited']);
+    $this->assertSame(1, $this->seats->checkAway()['timed_out']);
+    $this->assertNull(TableSet::sole()->finished_at);
     $this->assertSame(
-      ['ended' => 'forfeit', 'forfeited_by' => Seats::side($late), 'forfeit_reason' => 'turn_timeout'],
-      TableSet::sole()->only('ended', 'forfeited_by', 'forfeit_reason')
+      ['seat' => $late, 'replaced_user_id' => $this->players[$late]->id, 'replaced_reason' => 'turn_timeout'],
+      TableSetSeat::whereNotNull('replaced_user_id')->sole()->only('seat', 'replaced_user_id', 'replaced_reason')
     );
   }
 

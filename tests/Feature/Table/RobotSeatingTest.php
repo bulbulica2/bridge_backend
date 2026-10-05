@@ -231,8 +231,8 @@ class RobotSeatingTest extends TestCase
   {
     $table = $this->robotTable();
 
-    // mid-set, Leave holds the seat; their side (with a robot partner)
-    // forfeits the set once their turn clock runs out
+    // mid-set, Leave holds the seat until their turn clock runs out; with
+    // no other human for a robot to play with, the set is then abandoned
     $this->actingAs($this->owner)->deleteJson("/tables/$table->id/seats")
       ->assertStatus(202)
       ->assertJsonPath('data.moderated_by', $this->owner->id);
@@ -245,7 +245,7 @@ class RobotSeatingTest extends TestCase
     $this->assertSame(['N'], $table->freeSeats());
     $this->assertNotNull($table->unattended_since);
     $this->assertSame(3, $table->seats()->count());
-    $this->assertSame(['ended' => 'forfeit', 'forfeited_by' => 'NS', 'forfeit_reason' => 'away'], $table->sets()->sole()->only('ended', 'forfeited_by', 'forfeit_reason'));
+    $this->assertSame('abandoned', $table->sets()->sole()->ended);
     // the board in progress was abandoned, as when anyone leaves mid-board
     $this->assertNull($table->board_id);
   }
@@ -455,7 +455,7 @@ class RobotSeatingTest extends TestCase
 
   /**
    * The owner leaves `$table` for good. Mid-set a Leave only holds the seat,
-   * so they go as a kick or a forfeit would take them out.
+   * so they go as a kick or running out of time would take them out.
    */
   private function leaveForGood(Table $table): void
   {

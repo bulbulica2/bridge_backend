@@ -10,7 +10,7 @@ use App\Jobs\DealNextBoard;
 use App\Models\Bid;
 use App\Models\BoardTable;
 use App\Models\Table;
-use App\Models\TableSet;
+use App\Models\TableSetSeat;
 use App\Models\User;
 use App\Services\BoardSelectionService;
 use App\Services\ClaimService;
@@ -194,17 +194,26 @@ class AutoNextBoardTest extends TestCase
     $this->assertDatabaseCount('board_table', 1);
   }
 
-  public function test_nothing_is_dealt_after_a_forfeit(): void
+  public function test_a_robot_that_took_a_seat_between_boards_plays_the_next_one(): void
   {
     $this->seatTable();
     $this->passOut();
 
-    app(BoardSelectionService::class)->forfeitSet($this->table, 'NS', TableSet::FORFEIT_TURN_TIMEOUT);
-    $this->state('N')->assertJsonPath('data.next_board_at', null);
+    // E walks out between boards: a robot takes the seat, the set goes on
+    $this->seats->remove($this->table, $this->players['E'], walkOut: TableSetSeat::REASON_MOVED);
+    $robot = $this->table->seats()->where('seat', 'E')->sole()->user;
+    $this->assertTrue($robot->is_robot);
 
-    $this->travel(10)->seconds();
-    $this->assertNull($this->runJob());
-    $this->assertDatabaseCount('board_table', 1);
+    // the finished board keeps its four; E doesn't hold up the others' Next
+    $this->assertSame($this->players['E']->id, (int) $this->playing->seats()->where('seat', 'E')->value('user_id'));
+    $this->state('N')->assertJsonPath('data.next_board_at', $this->playing->fresh()->finished_at->addSeconds(10)->toJSON());
+
+    $this->next('N');
+    $this->next('S');
+    $next = $this->next('W')->assertOk()->json('data.playing_id');
+
+    $this->assertSame($robot->id, (int) BoardTable::findOrFail($next)->seats()->where('seat', 'E')->value('user_id'));
+    $this->assertSame(2, BoardTable::findOrFail($next)->set_position);
   }
 
   public function test_a_board_dealt_by_everyone_asking_is_not_dealt_again(): void

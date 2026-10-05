@@ -67,6 +67,10 @@ return new class extends Migration
       $table->foreignId('board_table_id')->constrained('board_table')->onDelete('cascade');
       $table->foreignId('user_id')->constrained('users');
       $table->enum('seat', Seats::SEATS);
+      // the human dealt this seat, when a robot (user_id) took the hand over
+      // mid-board because they walked out on the set: they have seen the
+      // deal, so board selection still counts it as theirs
+      $table->foreignId('replaced_user_id')->nullable()->constrained('users');
       // once the board is finished: when this player asked for the next one
       $table->timestamp('ready_at')->nullable();
       $table->timestamps();
@@ -75,6 +79,7 @@ return new class extends Migration
       $table->unique(['board_table_id', 'user_id']);
       // board selection: has this user played a board, and in which seat
       $table->index(['user_id', 'seat']);
+      $table->index(['replaced_user_id', 'seat']);
     });
   }
 

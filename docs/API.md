@@ -73,7 +73,7 @@ lobby, profiles, histories, results — stays open.
 | DELETE | `/tables/{table}/claim` | `Game\ClaimController@destroy` | `auth` + seated at the table (`TablePolicy::play`) | withdraw your own pending claim (200, the updated game state) |
 | GET | `/users?search=` | `UserController@index` | `auth` + `throttle:30,1` | find users by username or name (public profiles + `seated`, at most 10) |
 | GET | `/users/{user}` | `UserController@show` | `auth` | another user's public profile (no email); an admin also gets their `ban` and `bans` |
-| POST | `/users/{user}/ban` | `UserBanController@store` | `auth` + admin (`UserPolicy::ban`) | ban that user for some days: frees their seat (mid-set their side forfeits), logs them out (201) |
+| POST | `/users/{user}/ban` | `UserBanController@store` | `auth` + admin (`UserPolicy::ban`) | ban that user for some days: frees their seat (mid-set a robot takes it), logs them out (201) |
 | DELETE | `/users/{user}/ban` | `UserBanController@destroy` | `auth` + admin | lift their ban at once (200; 404 if not banned) |
 | GET | `/users/{user}/playings` | `UserController@playings` | `auth` | that user's finished playings, latest first, paginated |
 | GET | `/boards/{board}` | `Game\BoardController@show` | `auth` + finished that board (`BoardPolicy::view`) | the board with all four hands as dealt |
@@ -163,9 +163,8 @@ with its `user` and `ready`),
 `can_manage`.
 `set` is where the table is in its [set of boards](#sets): the set it is on
 now, or the one it finished last — `{id, number, board, of, finished,
-ended, forfeited_by, forfeit_reason}` as in the game state, `board` being
-how many of its boards have been dealt — and `null` before the table's
-first Start.
+ended, replaced}` as in the game state, `board` being how many of its
+boards have been dealt — and `null` before the table's first Start.
 A seat's `away_since` is null unless its player is
 [away mid-set](#away-mid-set-and-the-turn-clock): it is since when (their
 last sign of life, or their Leave). A seat has **no clock of its own** any
@@ -351,13 +350,15 @@ Take a free seat at an existing table.
     only the table you joined; re-fetch `GET /tables` if the client tracks the
     old one.
   - Moving off a table **in the middle of a set** (your seat held after a
-    Leave included) **forfeits that set for your side at once**
-    (`forfeit_reason: "moved"`, see
-    [Away mid-set](#away-mid-set-and-the-turn-clock)); the message then reads
+    Leave included) is walking out on it: **a robot takes your seat there
+    at once** for the rest of the set (`replaced` reason `"moved"`, see
+    [Away mid-set](#away-mid-set-and-the-turn-clock)), and you may not sit
+    down at that table again until the set is over; the message then reads
     `"Seat taken successfully. You walked out on a set at your old table, so
-    your side forfeited it."`. Not for an admin, nor while an admin there is
-    away: the set is then just abandoned. The SPA should confirm before
-    moving a player who is mid-set (the old table's `set.finished` is false).
+    a robot took your seat there."`. Not for an admin, nor while an admin
+    there is away, nor when you were the last human there: the set is then
+    just abandoned. The SPA should confirm before moving a player who is
+    mid-set (the old table's `set.finished` is false).
   - Moving **within** the same table is a plain seat change (e.g. `N` -> `E`).
     The table is not deleted on the way out even if you are its only player.
     Note a full table can never allow this, since every target seat is taken.
@@ -365,8 +366,10 @@ Take a free seat at an existing table.
   every human at the table, you included, has pressed Start (see
   [Dealing](#tables)). Moving drops a Start you had pressed in your old seat.
 - **409** if the seat is taken (`"Seat E is already taken."`) or the seat name
-  is unknown. Already sitting somewhere is **no longer** a 409 — that is a
-  move.
+  is unknown, or if a robot took your seat over in the set going on at this
+  table (`"You walked out on the set going on at this table: you may sit
+  down here again once it is over."`). Already sitting somewhere is **no
+  longer** a 409 — that is a move.
 - **422** if `seat` is missing or not one of the four.
 - **404** if the table id doesn't exist (tables are deleted when their last
   player leaves, so there is no "closed table" case).
@@ -381,11 +384,11 @@ Give up the seat you hold at this table. No body.
   once if it is your turn) your **turn clock** runs as anyone's does
   (`turn_deadline`, `BRIDGE_TURN_SECONDS`, 60): come back (any request at
   the table: heartbeat, `GET .../playing`, …) and play before it runs out,
-  or your side forfeits the set (`forfeit_reason: "away"`) and the seat is
-  freed then. The body is the table (same shape as `GET /tables/{table}`),
+  or a robot takes your seat for the rest of the set (`replaced` reason
+  `"away"`). The body is the table (same shape as `GET /tables/{table}`),
   message `"You left in the middle of a set: your seat is held. Once the
-  table is waiting for you, you have 60 seconds to play, or your side
-  forfeits the set."`. Leaving again changes nothing. The SPA should confirm before a
+  table is waiting for you, you have 60 seconds to play, or a robot takes
+  your seat for the rest of the set."`. Leaving again changes nothing. The SPA should confirm before a
   Leave mid-set, and stop its heartbeat afterwards (a heartbeat brings you
   back). Not for an admin, nor while an admin at the table is away: then
   the seat is freed at once (below) and the set ends `abandoned`.
@@ -511,9 +514,10 @@ Take a player out of their seat. No body. `{user}` is a `users.id`.
 - A kick frees the seat at once, even mid-set, and abandons an unfinished
   playing just as a freed seat on `DELETE /tables/{table}/seats` does.
   Mid-set it ends the set `abandoned` — unless the kicked player was
-  **away**: then their side **forfeits** it (`forfeit_reason: "kicked"`),
-  and the message adds `" They were away mid-set, so their side forfeited
-  it."`.
+  **away**: then a **robot takes their seat** for the rest of the set and
+  plays the board on (`replaced` reason `"kicked"`; not when they were the
+  last human there), and the message adds `" They were away mid-set, so a
+  robot took their seat."`.
 - **404** if the table id or user id doesn't exist, or if `{user}` holds no
   seat at this table — `"That user is not seated at this table."`, or
   `"You are not seated at this table."` when you aimed at yourself. (Note
@@ -576,9 +580,11 @@ of a set the away rule below decides instead.
 #### Away mid-set, and the turn clock
 
 During a set — a board of it in progress, or between its boards — the
-player the board waits for has **one minute** to act, and letting it run
-out costs their partnership the set (`GAME-RULES.md` §8, "Sets of boards"),
-whether they are away or sitting there with the tab open.
+player the board waits for has **one minute** to act. Letting it run out
+takes them out of the set: a **robot takes their seat** and plays on with
+their partner, so nobody else loses anything for it (`GAME-RULES.md` §8,
+"Sets of boards"), whether they are away or sitting there with the tab
+open.
 `tables:check-away`, scheduled **every ten seconds** (one check every few
 seconds rather than a delayed job per turn, so a player gets their minute
 and at most ten seconds more), does it:
@@ -610,37 +616,51 @@ and at most ten seconds more), does it:
    no board, or when the board waits for a robot or an admin:
    `turn_deadline` is `null` then.
 3. **Time is up.** Once `turn_deadline` has passed, the next check takes
-   that player out: their side (`NS` or `EW`) loses the set — it ends with
-   `ended: "forfeit"`, `forfeited_by` that side and `forfeit_reason`
-   `turn_timeout` (or `away` if they were away then, a Leave included)
-   (`GET /sets/{set}`'s `winner` is the other side) — the board in
-   progress is abandoned unscored (detached, as on any leave), and their
-   seat is freed through the normal leave path: `TableUpdated` carries the
-   new `set` and the free seat. Only the player on turn can time out:
-   another player away costs nothing however long they stay away (once the
-   set is over their seat is freed, below).
+   that player out and **a robot sits in their seat** for the rest of the
+   set, ready. The set goes on and so does the board in progress: the
+   robot takes the hand over where it is (the game state's `players` show
+   it, and it makes the move that was waited for), and the board waits
+   afresh (a new `turn_deadline` if a human is on turn). The set's
+   `replaced` lists them, with reason `turn_timeout` (or `away` if they
+   were away then, a Leave included). They may not sit down at that table
+   again until the set is over (a 409 on `POST .../seats`). Moderation is
+   handed on as on any leave, never to the robot. `TableUpdated` carries
+   the robot's seat and the new `set.replaced`, `PlayingUpdated` the new
+   `players`. If they declared and their partner, dummy, is a human, dummy
+   plays both hands from then on and gets declarer's cards
+   ([`DeclarerHandShown`](#event-declarerhandshown)). Only the player on
+   turn can time out: another player away costs nothing however long they
+   stay away (once the set is over their seat is freed, below). If no other
+   human is left at the table, a robot would have nobody to play with: the
+   set ends `abandoned` instead, the board in progress is abandoned
+   unscored, and the table is left to its robots (unattended).
 4. **After the set.** Once a set is over, however it ended, nobody is held
    for it: the next check frees the seat of anyone still away (a Leave
    that was never taken back, say).
 
-**Moving** to another table mid-set forfeits at once (`moved`), and a
-manager **kicking** a player who is away forfeits for their side too
+**Moving** to another table mid-set hands the seat to a robot at once
+(`moved`), and so does a manager **kicking** a player who is away
 (`kicked`, as does an admin's ban mid-set). **Robots** never have a clock
-and are never away; a human whose partner is a robot forfeits for that side
-all the same.
+and are never away. A set is never forfeited: whoever walks out is
+replaced, and the set's result stands for the seats as they end it.
 
-`forfeit_reason` is one of `turn_timeout`, `away`, `moved` or `kicked`, so a
-client can word the result ("East didn't play in time: N-S win the set").
-It is `null` unless `ended` is `forfeit`.
+`set.replaced` (in the game state, the table and `GET /sets/{set}`) is the
+list of players a robot took a seat over from, in seat order:
+`{seat, user_id, reason}`, `reason` one of `turn_timeout`, `away`, `moved`
+or `kicked`, so a client can word it ("East didn't play in time: a robot
+took their seat"). It is `[]` while the four who opened the set are all
+still there. That a player walked out isn't counted anywhere else yet
+(player stats are #121).
 
-**Admins** never cost their side the set: an admin has no turn clock (the
-table just waits for them), an admin who goes quiet is shown away but their
-seat is never freed for it. While an admin at the table is away, a Leave or
-a move by anyone else is immediate and ends the set `abandoned`, nobody
-forfeiting it; but the player on turn still has their clock, and running
-out of time on their own turn still forfeits. An admin's own Leave or move
-is immediate as well. Once the set is over an away admin just stops being
-away, and keeps the seat: the idle timeout above skips admins too.
+**Admins** are never replaced: an admin has no turn clock (the table just
+waits for them), an admin who goes quiet is shown away but their seat is
+never freed for it. While an admin at the table is away, a Leave or a move
+by anyone else is immediate and ends the set `abandoned`; but the player on
+turn still has their clock, and running out of time on their own turn
+still hands their seat to a robot. An admin's own Leave or move is
+immediate as well and ends the set `abandoned`. Once the set is over an
+away admin just stops being away, and keeps the seat: the idle timeout
+above skips admins too.
 
 Outside a set nothing of this applies: nobody is marked away, Leave frees
 the seat at once, and the idle timeout above is the only one.
@@ -732,7 +752,7 @@ page refresh or a reconnect. No body. Built by
   "data": {
     "phase": "auction",
     "playing_id": 42,
-    "set": {"id": 5, "number": 1, "board": 2, "of": 4, "finished": false, "ended": null, "forfeited_by": null, "forfeit_reason": null},
+    "set": {"id": 5, "number": 1, "board": 2, "of": 4, "finished": false, "ended": null, "replaced": []},
     "board": {"id": 7, "number": 7, "dealer": "S", "vulnerable": "N-S E-W"},
     "players": {
       "N": {"id": 1, "name": "Ann", "username": "ann", "is_robot": false, "is_admin": false},
@@ -773,12 +793,12 @@ page refresh or a reconnect. No body. Built by
 |---|---|
 | `phase` | `waiting` — the table has no board (`tables.board_id` null, fewer than four players); `auction` — `board_table.auction_ended_at` is null; `play` — the auction ended with a contract (`finished_at` still null); `finished` — `finished_at` is set: after the 13th trick, when a claim is accepted, or straight away on a **passed out** board. |
 | `playing_id` | the `board_table.id` |
-| `set` | the [set](#sets) this board was dealt in: `id` (for [`GET /sets/{set}`](#get-setsset)), `number` (1, 2, 3… at this table), `board` (this board's place in it, 1–`of`), `of` (how many boards the set has, 4), `finished` (true once the set is over: after its last board is finished, or earlier if one of its four left or a side forfeited it), `ended` (`null` while it goes on, then `completed`, `abandoned` or `forfeit`), `forfeited_by` (`NS`/`EW` on a forfeit, else `null`) and `forfeit_reason` (on a forfeit, how: `turn_timeout`, `away`, `moved` or `kicked`, else `null`; see [Away mid-set](#away-mid-set-and-the-turn-clock)). After the last board `finished` is true while that board is still on show: time for the set's results and everyone's Start |
+| `set` | the [set](#sets) this board was dealt in: `id` (for [`GET /sets/{set}`](#get-setsset)), `number` (1, 2, 3… at this table), `board` (this board's place in it, 1–`of`), `of` (how many boards the set has, 4), `finished` (true once the set is over: after its last board is finished, or earlier if one of its four left), `ended` (`null` while it goes on, then `completed` or `abandoned`) and `replaced` (the players a robot took a seat over from mid-set, `[{seat, user_id, reason}]`, `[]` for none; see [Away mid-set](#away-mid-set-and-the-turn-clock)). After the last board `finished` is true while that board is still on show: time for the set's results and everyone's Start |
 | `board` | `id`, `number`, `dealer` (`N/E/S/W`) and `vulnerable` (a `Vulnerability` value) from `boards` |
-| `players` | seat → public profile less `description` (`PlayerResource`, as a seat's `user`: no email; `is_robot` marks a robot), from the playing's `board_table_seats` snapshot, not from `table_seats` |
+| `players` | seat → public profile less `description` (`PlayerResource`, as a seat's `user`: no email; `is_robot` marks a robot), from the playing's `board_table_seats` snapshot, not from `table_seats` — so a robot that took a seat over mid-board shows here from then on |
 | `turn` | the seat expected to act. During the `auction`: the dealer first, then clockwise after the last call. During the `play`: the **hand** the next card comes from — declarer's left-hand opponent leads the first trick, then clockwise, and each trick's winner leads the next. When it is dummy's seat, declarer plays it (see `acting_user_id`). `null` while `waiting` and once `finished` |
 | `acting_user_id` | the id of the user who must act for `turn`: that seat's player, except that on dummy's turn it is **declarer**. One exception to that: when a **robot declares and dummy is a human**, the human plays both hands, so on declarer's turn **and** on dummy's turn it is the **human dummy's** id, and the robot declarer never acts in the play (see [`declarer_hand`](#get-tablestableplaying) and [`POST /tables/{table}/cards`](#post-tablestablecards)). Declarer and dummy themselves don't change (`contract`). A client compares it with its own user id to know it is its move (and, when `turn` isn't its own seat, that it is playing its partner's cards). `null` whenever `turn` is |
-| `turn_deadline` | when the [turn clock](#away-mid-set-and-the-turn-clock) of `acting_user_id` runs out (ISO 8601, like `claim.expires_at`): `BRIDGE_TURN_SECONDS` (60) after the board began waiting for them — the deal, the previous call or card, or a claim cleared. Past it, `tables:check-away` takes them out and their side forfeits the set (`forfeit_reason: "turn_timeout"`, or `"away"`). Only a call, card or claim action moves it; a heartbeat or a chat line doesn't. `null` whenever nobody's clock runs: `waiting`, `finished` (between boards), a claim pending, or `acting_user_id` a robot or an admin. Count down from it, never from when the state arrived. In `PlayingUpdated` too; not in `GET /playings/{playing}` |
+| `turn_deadline` | when the [turn clock](#away-mid-set-and-the-turn-clock) of `acting_user_id` runs out (ISO 8601, like `claim.expires_at`): `BRIDGE_TURN_SECONDS` (60) after the board began waiting for them — the deal, the previous call or card, or a claim cleared. Past it, `tables:check-away` takes them out and a robot plays their seat for the rest of the set (`set.replaced` reason `"turn_timeout"`, or `"away"`). Only a call, card or claim action moves it; a heartbeat or a chat line doesn't. `null` whenever nobody's clock runs: `waiting`, `finished` (between boards), a claim pending, or `acting_user_id` a robot or an admin. Count down from it, never from when the state arrived. In `PlayingUpdated` too; not in `GET /playings/{playing}` |
 | `auction` | the calls made so far, in order: `{seat, bid, alert, question}`, where `bid` is `{id, call, level, strain, special}` — `call` is the short name (`P`, `X`, `XX`, `1C`…`7NT`) and the only field telling pass, double and redouble apart; `level`/`strain` are null for those three. `[]` before the first call. A call's place in this list (from 0) is its `index` in the [alert](#alerts) endpoints and events. `alert` and `question` are **per viewer** ([Alerts](#alerts)): for the caller's own calls and the opponents', `alert` is `{explanation}` (`explanation` a string, or null for "alerted, no description") once the call is alerted, else null, and `question` is `{asked_by}` (the asking opponent's seat) while a question about it is open, else null; for **partner's** calls both are always null — partner seeing them would be unauthorised information. Once the board is `finished`, every call's `alert` shows, to everyone, and `question` is null. Neither field is ever on the table channel (`PlayingUpdated`) |
 | `contract` | `null` during the auction and on a passed out board; once the auction ends with a bid, `{bid, doubled, declarer, dummy}` — `bid` shaped as above, `doubled` 0 (none), 1 (X) or 2 (XX), `declarer` the seat of the first player on the winning side to name the strain, `dummy` declarer's partner |
 | `tricks` | the **complete** tricks, in order: `{round, leader, cards, winner}` — `round` 1–13, `leader` the seat that led, `cards` the four `{seat, card}` in the order played (`seat` is the hand the card came from, so dummy's seat for dummy's cards), `winner` the seat whose card won. `[]` until the first trick is complete. `null` whenever `contract` is |
@@ -790,7 +810,7 @@ page refresh or a reconnect. No body. Built by
 | `result` | `null` until the phase is `finished`. Then `{contract, doubled, declarer, tricks_won, score_ns, made_by, claimed}`: `contract` is the final bid (shaped as `bid` above), `doubled` 0/1/2, `declarer` its seat, `tricks_won` the tricks declarer's side took, `score_ns` the duplicate score (`GAME-RULES.md` §6) **from N-S's point of view** — positive when N-S scored, negative when E-W did, whichever side declared — `made_by` the overtricks (`+1`), `0` for just made, or undertricks (`-2`), and `claimed` whether the play ended by an accepted claim rather than at trick 13 (`tricks_won` then includes the claimed tricks). A **passed out** board has `score_ns: 0`, `claimed: false` and every other field `null`. Example: `{"contract": {"id": 22, "call": "4S", ...}, "doubled": 0, "declarer": "E", "tricks_won": 11, "score_ns": -650, "made_by": 1, "claimed": false}` — E-W vulnerable, 4♠ by East making 11 |
 | `deal` | `null` until the phase is `finished`. Then all four hands **as dealt** (from `board_card`, not what is left after the play): `{N: [...], E: [...], S: [...], W: [...]}`, each in `hand`'s order and card shape. Public — it is on the table channel too — since the board is over |
 | `ready` | `null` until the phase is `finished`. Then the seats whose players have asked for the next board (`POST /tables/{table}/playing/next`), in N, E, S, W order: `[]` right after the board ends |
-| `next_board_at` | when the set's next board is dealt **by itself** (ISO 8601, like `claim.expires_at`): `BRIDGE_NEXT_BOARD_SECONDS` (10) after the board finished. `null` until the phase is `finished`, and whenever no automatic deal is coming: the set is over (its last board, or a forfeit), a seat is empty, or the four seated aren't the four who played the board (everyone's Start deals the next one then). Count down from it, never from when the state arrived. Not in `GET /playings/{playing}` |
+| `next_board_at` | when the set's next board is dealt **by itself** (ISO 8601, like `claim.expires_at`): `BRIDGE_NEXT_BOARD_SECONDS` (10) after the board finished. `null` until the phase is `finished`, and whenever no automatic deal is coming: the set is over (its last board, or abandoned), a seat is empty, or the four seated aren't the four who played the board (everyone's Start deals the next one then). Count down from it, never from when the state arrived. Not in `GET /playings/{playing}` |
 | `my_seat` | the caller's seat in the snapshot |
 | `hand` | the caller's **own** cards only: the 13 `board_card` rows for their seat, less any card already in `cardplays`, sorted spades, hearts, diamonds, clubs and high to low within a suit. Card `rank` is 2–10, J=12, Q=13, K=14, A=15. Apart from this and `declarer_hand`, the only cards in the payload are face up: those in `tricks` / `current_trick`, after the opening lead `dummy_hand`, a pending claim's `claim.hand`, and once the board is finished `deal` |
 | `declarer_hand` | **only** for a human dummy whose declarer is a robot, who plays declarer's cards (see `acting_user_id`): declarer's **remaining** cards, in `hand`'s order and card shape, from the end of the auction (all 13, before the opening lead) to the end of the play. `null` for everyone else and at any other time, including once the board is `finished` (`deal` then shows it). Private to that player like `hand`: it is in their own answers only (this endpoint and the answers to calls, cards, claims, Start and Next), never on the table channel or in anyone else's state — the defenders see only dummy's cards after the lead. The auction usually ends on a robot's call, so it is also pushed as [`DeclarerHandShown`](#event-declarerhandshown) |
@@ -859,7 +879,9 @@ the same rules and lock as this endpoint
 (`BoardSelectionService::dealNext()`), and does **nothing** if by then the
 table has moved on (everyone asked, or it ran twice), a player left or the
 four seated aren't the ones who played the board (the next board then takes
-everyone's Start), or the set ended (a forfeit). It deals even while a seat
+everyone's Start), or the set ended (abandoned). A robot that took a seat
+over between boards counts as one of the four, and a player it replaced
+doesn't hold up the others' Next. It deals even while a seat
 is [away](#away-mid-set-and-the-turn-clock): being dealt to is not a sign of
 life, and once the board waits for them their turn clock runs as anyone's.
 
@@ -1197,7 +1219,8 @@ with that delay when the claim is made, does it (so it needs
 withdrawn first, or if it is a newer claim with its own deadline. From
 `expires_at` on no answer counts, even before the job has run: an answer
 then gets the 409 `"There is no claim to answer."`. The expiry is nobody's
-sign of life and doesn't touch the away and forfeit timers.
+sign of life and doesn't touch the away rule; the turn clock restarts then
+(see `turn_deadline`).
 
 All three answer like `POST /tables/{table}/cards`: the updated state as
 `GET /tables/{table}/playing` would return it, and a **409** (`sendError`,
@@ -1461,18 +1484,19 @@ Play at a table goes in **sets** of four boards (`bridge.set_size`, env
    the players read the set's results, and everybody's Start opens the next
    set (`number` 2, `board` 1).
 
-A set also ends early, even between boards:
-- as `forfeit`, lost by one side (`forfeited_by: "NS" | "EW"`), when a
-  player of that side lets their turn clock run out (`forfeit_reason`
-  `turn_timeout`, or `away` if they were away), moves to another table
-  (`moved`), or is kicked while away or banned (`kicked`) — see
-  [Away mid-set](#away-mid-set-and-the-turn-clock). A Leave mid-set only
-  holds the seat until the board has waited a turn for them;
-- as `abandoned`, with no winner, when one of its four is taken out of the
-  table otherwise (kicked while there, or leaving while an admin there is
-  away, or an admin leaving).
+A player who **walks out** on a set — lets their turn clock run out
+(`turn_timeout`, or `away` if they were away), moves to another table
+(`moved`), or is kicked while away or banned (`kicked`) — doesn't end it: a
+robot takes their seat and plays on, and the set's `replaced` lists them
+(see [Away mid-set](#away-mid-set-and-the-turn-clock)). A Leave mid-set only
+holds the seat until the board has waited a turn for them.
 
-Either way the board in play goes as before (detached, unscored), and the
+A set ends early, even between boards, as `abandoned`, with no winner, when
+one of its four is taken out of the table otherwise (kicked while there,
+leaving while an admin there is away, an admin leaving), or walks out with
+no other human left at the table to play with a robot.
+
+The board in play then goes as before (detached, unscored), and the
 refilled table's Start opens a new set.
 
 The game state, `PlayingUpdated` and every table payload carry `set`; the
@@ -1498,8 +1522,9 @@ boards finished so far) and after its table is deleted.
   "data": {
     "id": 5, "number": 1, "table_id": 3, "of": 4, "boards_dealt": 4,
     "started_at": "...", "finished_at": "...", "finished": true,
-    "ended": "completed", "forfeited_by": null, "forfeit_reason": null,
+    "ended": "completed",
     "players": {"N": {"id": 1, "name": "Ann", ...}, "E": {...}, "S": {...}, "W": {...}},
+    "replaced": [],
     "boards": [
       {
         "position": 1, "playing_id": 42,
@@ -1517,13 +1542,13 @@ boards finished so far) and after its table is deleted.
 
 | Field | Meaning |
 |---|---|
-| `number`, `of`, `finished`, `ended` | as the game state's `set`; `forfeited_by` is `NS`/`EW` on a forfeit, else `null`, and `forfeit_reason` how (`turn_timeout`, `away`, `moved`, `kicked`), else `null` |
+| `number`, `of`, `finished`, `ended`, `replaced` | as the game state's `set` |
 | `table_id` | `null` once the table has been deleted |
 | `boards_dealt` | how many of its boards were dealt, including one abandoned mid-play (not listed in `boards`) |
-| `players` | seat → public profile (`UserResource`), the four who played the whole set |
+| `players` | seat → public profile (`UserResource`), the four who play the set's seats: a robot where it took a seat over (`replaced` names whom from). A player a robot replaced may still read the set's results |
 | `boards` | the set's **finished** boards, in order: `position` (1–`of`), `playing_id` (reviewable with `GET /playings/{playing}`), `board`, the game state's `result` fields, and `top` and `matchpoints` against **every** finished playing of that board at any table, worked out now as in `GET /boards/{board}/results` (a board only this table has played has `top: 0`) |
 | `totals` | `score`: the boards' `score_ns` added up, and the same from E-W's side; `matchpoints`: each side's matchpoints added up, out of `top` |
-| `winner` | `NS` or `EW`, the side with the higher total **score**; `null` while the set goes on, on a tie, and for an `abandoned` set. A forfeit gives it to the other side. Matchpoints don't decide it |
+| `winner` | `NS` or `EW`, the side with the higher total **score**; `null` while the set goes on, on a tie, and for an `abandoned` set. A side a robot finished the set for can win it too. Matchpoints don't decide it |
 
 ## Users
 
@@ -1621,9 +1646,10 @@ Admins only.
 At once, in one transaction:
 - the user's seat, if they hold one, is freed as if they had walked out
   (moderation is handed on, an emptied table is deleted, the others get
-  `TableUpdated`). In the middle of a [set](#sets) their side **forfeits**
-  it immediately, with no three-minute grace (unless an admin at the table
-  is away, when it is abandoned, as for any leave);
+  `TableUpdated`). In the middle of a [set](#sets) a **robot takes their
+  seat** at once, with no turn clock to wait for (`replaced` reason
+  `kicked`; unless an admin at the table is away or nobody else human is
+  left, when the set is abandoned, as for any leave);
 - their sessions are deleted and their remember-me token replaced, so their
   next request is a **401** (see [`AUTH.md`](AUTH.md#bans));
 - [`UserBanned`](#event-userbanned) goes to their own channel, so an open
@@ -1633,8 +1659,8 @@ A ban already in force is replaced: it is closed (`lifted_at`, `lifted_by`)
 and the new one starts now, shorter or longer.
 
 - **201**, message `"User banned until 12 Oct 2026."`, plus
-  `" They were in the middle of a set, so their side forfeited it."` when
-  it cost a set:
+  `" They were in the middle of a set, so a robot took their seat."` when
+  one did:
 
 ```json
 {
@@ -1813,17 +1839,18 @@ Event name on the wire: `App\Events\TableUpdated` (Echo:
   /tables/{table}/start`), changing their seat's `ready`;
 - mid-set, a player is marked **away** (`tables:check-away`, or their
   Leave) or comes **back** (a heartbeat or playing request), changing their
-  seat's `away_since`; and a player's side **forfeits** the set
-  (`set.ended: "forfeit"`, `set.forfeited_by`, `set.forfeit_reason`, their
-  seat free) — see [Away mid-set](#away-mid-set-and-the-turn-clock). The
-  turn clock moving from player to player is in `PlayingUpdated`
-  (`turn_deadline`), not here;
+  seat's `away_since`; and a **robot takes the seat** of a player who
+  walked out on the set (their turn clock ran out, a move, a kick while
+  away, a ban: the seat's new `user`, `set.replaced`) — see
+  [Away mid-set](#away-mid-set-and-the-turn-clock). The turn clock moving
+  from player to player is in `PlayingUpdated` (`turn_deadline`), not
+  here;
 - a board is dealt — by the last Start, by a robot taking the fourth seat
   after every human has pressed it, or by the last `playing/next`: that
   event is the first with a non-null `board_id` (and the humans' `ready`
   cleared); a player leaving mid-board sends it back to null. Its `set`
   moves with it: a new set on a Start, the next `board` on a Next, and
-  `finished` when a player leaving abandons the set or a side forfeits it.
+  `finished` when a player leaving abandons the set.
 
 **Not sent** when the change deleted the table (the last player left, or
 `tables:delete-unattended` removed an unattended one) — nobody is left to
@@ -1961,7 +1988,7 @@ rank_name}`, and a `GET /bids` entry exactly its bid.
   "playing": {
     "phase": "play",
     "playing_id": 42,
-    "set": {"id": 5, "number": 1, "board": 2, "of": 4, "finished": false, "ended": null, "forfeited_by": null, "forfeit_reason": null},
+    "set": {"id": 5, "number": 1, "board": 2, "of": 4, "finished": false, "ended": null, "replaced": []},
     "board": {"id": 7, "number": 7, "dealer": "S", "vulnerable": "N-S E-W"},
     "players": {"N": {"id": 1, "name": "Ann", "username": "ann", "is_robot": false, "is_admin": false}, "E": {...}, "S": {...}, "W": {...}},
     "turn": "N",
