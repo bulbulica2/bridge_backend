@@ -178,8 +178,10 @@ Things worth knowing before you change them:
   once and stored (`board_double_dummy`, `board_lead_analyses`). The solver
   is the `App\Solvers\DoubleDummySolver` interface; `App\Solvers\DdsSolver`
   calls DDS's C API through FFI (no CLI to build, the library loaded once
-  per worker), and `AppServiceProvider` binds it only when
-  `bridge.dds_library` (`DDS_LIBRARY`) is set — `DoubleDummyService::available()`
+  per worker, and capped then with DDS's `SetResources` at
+  `bridge.dds_memory_mb`/`dds_threads`, 256 MB and 2 threads: DDS would
+  otherwise size itself for every core), and `AppServiceProvider` binds it
+  only when `bridge.dds_library` (`DDS_LIBRARY`) is set — `DoubleDummyService::available()`
   is whether anything is bound. It runs **only in the queue**, never in a
   request: a full table is 20 solves. The jobs are `ShouldBeUnique`, so
   repeated reads while `pending` queue one each. Tests bind
@@ -355,6 +357,16 @@ Three long-running processes sit next to `php artisan serve`:
   (`App\Jobs\SolveDoubleDummyTable` when a board is dealt,
   `App\Jobs\SolveOpeningLeads` when a playing finishes; see
   [Game services](#game-services)), the only place DDS ever runs.
+  It reports on itself through three listeners, none queued:
+  `App\Listeners\LogWorkerStopping` (`WorkerStopping`) logs every stop at
+  `warning` with its exit code (12: `--memory` reached) and PHP memory;
+  `LogJobMemory` (`JobProcessed`) logs each job's memory at `debug`, only
+  with `bridge.log_job_memory`; `BeatQueueHeartbeat` (`Looping`, before
+  every poll) writes a heartbeat to the cache through
+  `App\Services\QueueHealthService` (a singleton, so it writes at most
+  every 10 s and never throws), which `GET /api/health`
+  (`HealthController`) reads back. How to keep it running:
+  [`RUNNING.md`](RUNNING.md#keeping-the-worker-running).
 - `php artisan reverb:start` holds the players' websocket connections.
 - `php artisan schedule:work` runs what `routes/console.php` schedules, every
   minute: `tables:release-idle-seats`
@@ -470,7 +482,9 @@ rules refuse (`RobotFallbackTest`).
   plain `vendor/bin/pint` reindents the whole codebase to 4 spaces. Check
   formatting with `vendor/bin/pint --test`.
 - **Debugbar** is force-enabled (`AppServiceProvider::register`) only when
-  `APP_ENV=local`, since `enable()` skips debugbar's own testing check and its
+  `APP_ENV=local` and not in the console (#127: in `queue:work` it kept
+  every transaction, without limit, until the worker reached `--memory`
+  and stopped silently every 10–25 minutes), since `enable()` skips debugbar's own testing check and its
   injected HTML would break `assertNoContent()` in tests. `enable()` also
   overrides `config('debugbar.enabled')`, so the provider skips it when
   `.env` says `DEBUGBAR_ENABLED=false`; without that check the key did

@@ -42,6 +42,7 @@ Local stack is XAMPP (MySQL on 3306, DB `bridge`, user `root`, no password).
 php artisan serve --host=localhost  # API on http://localhost:8000 (see RUNNING.md "Local speed")
 php artisan reverb:start          # websocket server on :8080 (live table updates)
 php artisan queue:work --sleep=0.1  # sends queued broadcasts to Reverb, moves the robots, expires unanswered claims, deals a set's next board, solves double dummy
+                                  # (RUNNING.md "Keeping the worker running": a restart loop, its stop log, GET /api/health)
 php artisan schedule:work         # runs tables:release-idle-seats and tables:delete-unattended every minute, tables:check-away every 10 s
 php artisan tables:release-idle-seats  # free idle players' seats once, by hand
 php artisan tables:check-away     # mark quiet players away mid-set and forfeit overdue sets, once, by hand
@@ -65,10 +66,13 @@ vendor/bin/pint --test            # check formatting without changing files
   on in-memory sqlite. Feature tests must extend `Tests\TestCase` to get that
   guard. `phpunit.xml` also sets a test-only `APP_KEY`, so no `.env` is needed.
 - `AppServiceProvider::register` force-enables laravel-debugbar only when
-  `APP_ENV=local` and `.env` doesn't say `DEBUGBAR_ENABLED=false`. Don't make
-  it unconditional: `enable()` skips debugbar's own testing check, and the
-  HTML it injects breaks `assertNoContent()`. It also overrides the config,
-  which is why the provider has to check `DEBUGBAR_ENABLED` itself.
+  `APP_ENV=local`, not in the console, and `.env` doesn't say
+  `DEBUGBAR_ENABLED=false`. Don't make it unconditional: `enable()` skips
+  debugbar's own testing and console checks, the HTML it injects breaks
+  `assertNoContent()`, and in `queue:work` it kept every transaction until
+  the worker hit `--memory` and stopped silently (#127). It also overrides
+  the config, which is why the provider has to check `DEBUGBAR_ENABLED`
+  itself.
 - Breeze auth is lightly customized: `/register` also requires `username`
   (NOT NULL, unique on `users`).
 - Migrations are edited in place (nothing has shipped), so after pulling
@@ -98,7 +102,10 @@ vendor/bin/pint --test            # check formatting without changing files
   (stock Breeze, API-only — no views) is `require`d from `web.php`.
   `routes/api.php` only has `GET`/`PATCH /api/user` (the caller's own record,
   email included; `UserController@update` edits `name`/`description`) and
-  `GET /api/user/playings` (the caller's own board history). Sanctum's
+  `GET /api/user/playings` (the caller's own board history), plus the
+  public `GET /api/health` (`HealthController`, whether a queue worker is
+  running, from the heartbeat `BeatQueueHeartbeat` writes on `Looping`
+  through `QueueHealthService`). Sanctum's
   `EnsureFrontendRequestsAreStateful` is prepended to the api group.
 - **Player identity**: `email` is not in `User::$hidden` (the owner needs it),
   so anything showing a user to *other* players goes through
@@ -312,7 +319,10 @@ vendor/bin/pint --test            # check formatting without changing files
   broadcast free text is capped (`User::NAME_MAX`/`USERNAME_MAX`,
   `Table::NAME_MAX`, `UserBan::REASON_MAX`). A new event or field gets a
   case in that test. `App\Listeners\LogFailedBroadcast` logs a failed
-  broadcast at `error`.
+  broadcast at `error`, and `LogWorkerStopping` every stop of `queue:work`
+  at `warning` (exit code and memory; `LogJobMemory` adds each job's memory
+  with `bridge.log_job_memory`, see `RUNNING.md` "Keeping the worker
+  running").
 - **Game state**: `App\Services\PlayingStateService` is the one place that
   works out a playing's phase (`waiting`/`auction`/`play`/`finished`, from
   `tables.board_id`, `auction_ended_at`, `finished_at`), the calls so far
@@ -579,9 +589,10 @@ vendor/bin/pint --test            # check formatting without changing files
   contract's opening leads (queued by `BoardTable::finish()`,
   `SolveOpeningLeads`) once each, **only in the queue**, and stores them
   (`board_double_dummy`, `board_lead_analyses`). The solver is the
-  `App\Solvers\DoubleDummySolver` interface: `DdsSolver` (DDS through FFI)
-  is bound only when `DDS_LIBRARY` is set, else the analysis is
-  `unavailable`. Served by `GET /boards/{board}/double-dummy` and the
+  `App\Solvers\DoubleDummySolver` interface: `DdsSolver` (DDS through FFI,
+  capped with DDS's `SetResources` at `bridge.dds_memory_mb`/`dds_threads`
+  when it loads the library) is bound only when `DDS_LIBRARY` is set, else
+  the analysis is `unavailable`. Served by `GET /boards/{board}/double-dummy` and the
   review's `double_dummy`, behind `BoardPolicy::view`. Tests bind
   `Tests\Support\FakeDoubleDummySolver` (`phpunit.xml` forces
   `DDS_LIBRARY` empty); `tests/Unit/DdsSolverTest` runs the real library
