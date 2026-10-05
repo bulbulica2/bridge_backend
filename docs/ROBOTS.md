@@ -50,11 +50,17 @@ robot makes **one** move if it is a robot's turn:
 |---|---|---|
 | auction | the robot whose turn it is | one call ([Bidding](#bidding)) |
 | play, no claim pending | the robot acting for `turn` — declarer's robot also plays dummy's cards, unless dummy is a human (below) | one card ([Card play](#card-play)), or a claim of the rest ([Claims](#claims)) |
-| play, claim pending | the first robot (N, E, S, W order) that still has to answer, never a robot declarer whose dummy is a human | accept or reject ([Claims](#claims)) |
+| play, claim pending | **every** robot that still has to answer, together in this one move, never a robot declarer whose dummy is a human | each accepts or rejects ([Claims](#claims)) |
 | finished, mid-set | the first robot not yet ready for the next board | ready ([The next board](#the-next-board)); nothing after a set's last board |
 
 That move changes the game, which sends the next `PlayingUpdated`, so the
 robots take their turns one after another until it is a human's turn. A
+claim is the exception: nobody waits for a turn to answer it, so the two
+robots that must answer (say, both defenders against a human declarer)
+decide at once, `BRIDGE_ROBOT_DELAY_SECONDS` after the claim, in one move —
+each answer still goes through `ClaimService` and sends its own
+`PlayingUpdated`. A reject clears the claim, and an accept that finishes
+the board ends it, so either leaves the other robot nothing to answer. A
 robot that is dummy never acts: declarer plays dummy's cards.
 
 **A robot declarer with a human dummy hands the play over.** When a robot
@@ -921,14 +927,15 @@ for it instead) and the hand on lead holds nothing but **top winners**:
 every card a master, and in a suit contract no more trumps out than the
 hand's own (all masters, so leading them first draws the rest). It claims
 **all** the tricks left. The two other non-dummy players answer as for any
-claim — robots by the rules below, humans themselves. A robot claims only
-once from a given point of the play (`RobotService` remembers it in the
-cache for a day): if the claim is rejected — or expires, nobody having
-answered within `BRIDGE_CLAIM_SECONDS` — it plays on, and may claim again
-after more cards.
+claim — robots by the rules below, humans themselves. A robot **never
+claims while claims are locked** (`claim_locked`): once any claim is
+rejected, expires (nobody having answered within `BRIDGE_CLAIM_SECONDS`) or
+is withdrawn, nobody may claim until the next card is played, so the robot
+plays a card instead, and may claim again after it.
 
 **Answering a claim.** When someone claims, each robot that must answer
-(the other non-dummy players) decides on its own. A defender's claim that
+(the other non-dummy players) decides on its own, both in the same move
+(see [At the table](#at-the-table)). A defender's claim that
 declarer must answer is answered by the human dummy when declarer is a robot
 playing with one; the robot declarer leaves it to them:
 

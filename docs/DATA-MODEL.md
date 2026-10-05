@@ -476,6 +476,11 @@ Fields:
   so the result can say the board ended by claim (`result.claimed`). A
   playing detached with a claim pending keeps its columns as they were
   until the claim expires.
+- `claim_locked` (boolean, default false, cast to `boolean`): set by
+  `clearClaim()` — a claim ended without being accepted — and cleared by
+  the next card played (`CardPlayService::play()`); while it is set
+  `ClaimService::claim()` refuses every claim. The state shows it as
+  `claim_locked`.
 - `table_set_id` (FK table_sets, nullable) and `set_position` (tinyint,
   nullable): the [set](#tableset-table_sets) the board was dealt in and its
   place there, 1 to the set's `size`. Set on every playing the services

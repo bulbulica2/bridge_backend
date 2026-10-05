@@ -72,6 +72,7 @@ class PlayingResource extends JsonResource
         'contract' => null,
         ...self::play(null),
         'claim' => null,
+        'claim_locked' => false,
         'result' => null,
         'deal' => null,
         'ready' => null,
@@ -112,6 +113,8 @@ class PlayingResource extends JsonResource
       ],
       ...self::play($playing),
       'claim' => self::claim($playing),
+      // a claim ended without being accepted: none until the next card
+      'claim_locked' => (bool) $playing->claim_locked,
       'result' => self::result($playing),
       // once the board is over nothing is hidden any more: all four hands
       // as dealt, who has asked for the next board, and when it comes anyway

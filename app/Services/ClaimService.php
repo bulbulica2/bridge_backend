@@ -20,8 +20,11 @@ use Illuminate\Support\Facades\DB;
  * which finishes the board, or one rejects it or the claimer withdraws it,
  * which clears it and play goes on. Silence counts as a reject: a claim
  * still pending `bridge.claim_seconds` after it was made expires
- * (`ExpireClaim`, `expire()`). A human dummy who plays a robot declarer's
- * cards claims, answers and withdraws for declarer's seat.
+ * (`ExpireClaim`, `expire()`). A claim that ends without being accepted
+ * locks claims, everyone's, until the next card is played
+ * (`claim_locked`, cleared by `CardPlayService::play()`). A human dummy who
+ * plays a robot declarer's cards claims, answers and withdraws for
+ * declarer's seat.
  *
  * Like `AuctionService` and `CardPlayService`, every action locks the
  * playing's row, and the rules are static functions unit-tested with no
@@ -43,6 +46,10 @@ class ClaimService
 
       if ($playing->hasPendingClaim()) {
         throw new IllegalClaimException("A claim is already pending: {$playing->claim_seat} claims {$playing->claim_tricks}.");
+      }
+
+      if ($playing->claim_locked) {
+        throw new IllegalClaimException('A claim was just refused: play a card first.');
       }
 
       $reason = self::tricksReason($tricks, self::remaining($this->state->plays($playing)));

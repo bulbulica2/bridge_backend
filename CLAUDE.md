@@ -401,7 +401,9 @@ vendor/bin/pint --test            # check formatting without changing files
   `tests/Unit/ClaimServiceTest`. The pending claim is stored on
   `board_table` (`claim_seat`, `claim_tricks`, `claim_accepted` JSON list);
   `BoardTable::hasPendingClaim()` is `claim_seat` set and not finished, and
-  `clearClaim()` wipes it on reject/withdraw/expiry. The last accept calls
+  `clearClaim()` wipes it on reject/withdraw/expiry and sets
+  `claim_locked`, which refuses every claim (409) until
+  `CardPlayService::play()` clears it with the next card. The last accept calls
   `finish()` with tricks so far plus the claimed share; the columns are then
   kept, which is what `result.claimed` reads. A claim doesn't change
   `turn()`/`actingUserId()`. Silence means no: `claim()` stores
@@ -421,9 +423,8 @@ vendor/bin/pint --test            # check formatting without changing files
   `RobotService::act()` after every `PlayingUpdated`: **one** robot move —
   call, card (declarer's robot plays dummy; a robot declarer with a human
   dummy never moves in the play) or a claim of the rest when
-  every trick left is a top winner (once per position: a `Cache::add()`
-  key stops a re-claim after a rejection), claim answer, or ready for the
-  next board — through the normal services, only while a human is seated
+  every trick left is a top winner (never while `claim_locked`), every
+  robot's claim answer at once, or ready for the next board — through the normal services, only while a human is seated
   and the table isn't unattended. The decisions are pure classes in
   `app/Robots/` (`RobotHand`, `RobotBidder`; `RobotCardPlayer` over a
   `PlayView`, with `DeclarerPlan`, `DeclarerPlay`, `DefenderPlay`,

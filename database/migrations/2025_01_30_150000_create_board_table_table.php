@@ -43,6 +43,9 @@ return new class extends Migration
       $table->unsignedTinyInteger('claim_tricks')->nullable();
       $table->json('claim_accepted')->nullable();
       $table->timestamp('claim_expires_at')->nullable();
+      // a claim that ended without being accepted (rejected, withdrawn or
+      // expired) locks claims until the next card is played
+      $table->boolean('claim_locked')->default(false);
 
       $table->timestamp('started_at')->useCurrent();
       $table->timestamp('auction_ended_at')->nullable();

@@ -21,6 +21,7 @@ use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Testing\TestResponse;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class ClaimTest extends TestCase
@@ -288,8 +289,10 @@ class ClaimTest extends TestCase
 
     $this->claim('N', 13)->assertCreated();
     $this->respond('E', false)->assertOk();
+    $this->play('E', 'S10')->assertCreated();
     $this->claim('N', 13)->assertCreated();
     $this->actingAs($this->players['N'])->deleteJson("/tables/{$this->table->id}/claim")->assertOk();
+    $this->play('N', 'S7')->assertCreated();
     $this->claim('E', 0)->assertCreated();
     $this->respond('N', true)->assertOk();
 
@@ -298,16 +301,65 @@ class ClaimTest extends TestCase
 
     $this->respond('W', true)->assertOk();
 
-    Event::assertDispatchedTimes(PlayingUpdated::class, 7);
+    Event::assertDispatchedTimes(PlayingUpdated::class, 9);
 
     $payloads = collect(Event::dispatched(PlayingUpdated::class))->map(fn ($event) => $event[0]->broadcastWith()['playing']);
 
     $this->assertSame('N', $payloads[0]['claim']['seat']);
     $this->assertCount(13, $payloads[0]['claim']['hand']);
+    $this->assertFalse($payloads[0]['claim_locked']);
     $this->assertNull($payloads[1]['claim']);
-    $this->assertSame(['N'], $payloads[5]['claim']['accepted']);
-    $this->assertSame('finished', $payloads[6]['phase']);
-    $this->assertTrue($payloads[6]['result']['claimed']);
+    $this->assertTrue($payloads[1]['claim_locked']);
+    $this->assertFalse($payloads[2]['claim_locked']);
+    $this->assertTrue($payloads[4]['claim_locked']);
+    $this->assertSame(['N'], $payloads[7]['claim']['accepted']);
+    $this->assertSame('finished', $payloads[8]['phase']);
+    $this->assertTrue($payloads[8]['result']['claimed']);
+  }
+
+  /**
+   * @return array<string, array{0: string}>
+   */
+  public static function refusals(): array
+  {
+    return ['rejected' => ['reject'], 'expired' => ['expire'], 'withdrawn' => ['withdraw']];
+  }
+
+  #[DataProvider('refusals')]
+  public function test_a_refused_claim_locks_claims_for_everyone_until_the_next_card(string $refusal): void
+  {
+    $this->plays('E S10, N S7');
+
+    $this->claim('N', 13)->assertCreated()->assertJsonPath('data.claim_locked', false);
+    $this->refuse($refusal);
+
+    foreach (Seats::SEATS as $seat) {
+      $this->state($seat)->assertJsonPath('data.claim', null)->assertJsonPath('data.claim_locked', true);
+    }
+
+    // the claimer, either opponent, a concession
+    foreach (['N' => 13, 'E' => 0, 'W' => 1] as $seat => $tricks) {
+      $this->claim($seat, $tricks)
+        ->assertStatus(409)
+        ->assertJsonPath('message', 'A claim was just refused: play a card first.');
+    }
+
+    $this->assertNull($this->playing->fresh()->claim_seat);
+
+    // the next card lifts it, whoever plays it
+    $this->play('W', 'S4')->assertCreated()->assertJsonPath('data.claim_locked', false);
+    $this->state('E')->assertJsonPath('data.claim_locked', false);
+
+    $this->claim('N', 13)->assertCreated();
+  }
+
+  public function test_an_accepted_claim_locks_nothing(): void
+  {
+    $this->claim('N', 13)->assertCreated();
+    $this->respond('E', true)->assertOk();
+    $this->respond('W', true)->assertOk()->assertJsonPath('data.claim_locked', false);
+
+    $this->assertFalse($this->playing->fresh()->claim_locked);
   }
 
   public function test_a_rejected_claim_leaves_no_mark_on_the_result(): void
@@ -435,6 +487,7 @@ class ClaimTest extends TestCase
     $rejected = $this->expiryJob();
     $this->respond('E', false)->assertOk();
 
+    $this->play('E', 'S10')->assertCreated();
     $this->claim('N', 13)->assertCreated();
     $withdrawn = $this->expiryJob();
     $this->actingAs($this->players['N'])->deleteJson("/tables/{$this->table->id}/claim")->assertOk();
@@ -445,7 +498,7 @@ class ClaimTest extends TestCase
     $this->runJob($withdrawn);
 
     Event::assertNotDispatched(PlayingUpdated::class);
-    $this->play('E', 'S10')->assertCreated();
+    $this->play('N', 'S7')->assertCreated();
   }
 
   public function test_a_new_claim_gets_its_own_deadline_and_the_old_job_leaves_it_alone(): void
@@ -459,6 +512,7 @@ class ClaimTest extends TestCase
     $this->runJob($first);
     $this->assertNull($this->playing->fresh()->claim_seat);
 
+    $this->play('E', 'S10')->assertCreated();
     $this->travel(3)->seconds();
     $this->claim('N', 13)->assertCreated()->assertJsonPath('data.claim.expires_at', now()->addSeconds(10)->toJSON());
     $second = $this->expiryJob();
@@ -544,6 +598,23 @@ class ClaimTest extends TestCase
       [$seat, $code] = explode(' ', $made);
       $this->play($seat, $code)->assertCreated();
     }
+  }
+
+  /**
+   * End the pending claim without its being accepted: an opponent rejects
+   * it, it expires, or the claimer withdraws it.
+   */
+  private function refuse(string $refusal): void
+  {
+    match ($refusal) {
+      'reject' => $this->respond('E', false)->assertOk(),
+      'withdraw' => $this->actingAs($this->players[$this->playing->fresh()->claim_seat])->deleteJson("/tables/{$this->table->id}/claim")->assertOk(),
+      'expire' => (function () {
+        $job = $this->expiryJob();
+        $this->travel(10)->seconds();
+        $this->runJob($job);
+      })(),
+    };
   }
 
   /**
