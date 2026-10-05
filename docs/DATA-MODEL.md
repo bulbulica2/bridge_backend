@@ -210,10 +210,16 @@ change at the same table and by every deal; `TableSeatResource` shows it as
 `ready`), `away_since` (nullable timestamp, cast to datetime: set only in
 the middle of a set, while the player is **away** — to their `last_seen_at`
 once `tables:check-away` notices a minute without a sign of life, or to now
-when they press Leave; cleared by any sign of life (`touch()`). Their side
-forfeits the set `bridge.set_forfeit_minutes` after it;
-`TableSeatResource` adds that moment as `forfeit_at`). This is the "who is
-sitting where at this table" join table. All six are fillable. Leaving
+when they press Leave; cleared by any sign of life (`touch()`)) and
+`forfeit_at` (nullable timestamp, cast to datetime: the **forfeit clock**,
+when the player's side forfeits the set if they aren't back. Set only for
+an away player the board is waiting for — the playing's acting user, never
+an admin, nor anyone while an admin there is away — to
+`bridge.set_forfeit_minutes` after the board began waiting for them, and
+cleared when it stops waiting for them (the turn moves on, a claim, the end
+of the board or set) or they come back; so at most one seat at a table has
+it. Kept by `TableSeatService::syncForfeitClock()`). This is the "who is
+sitting where at this table" join table. All seven are fillable. Leaving
 deletes the row, Start with it — except a Leave mid-set, which keeps the row
 (the seat is held) and sets `away_since`.
 Unique indexes:
@@ -269,7 +275,9 @@ Seats are managed through `App\Services\TableSeatService`:
   rejoin that table or any other.
 - `touch(Table, User)` sets the user's `last_seen_at` at that table to now
   (a no-op if they don't sit there; `updated_at` is left alone), and clears
-  `away_since` if it was set, broadcasting `TableUpdated`. Called by
+  `away_since` and `forfeit_at` if they were set, bringing the other clocks
+  up to date (an admin back restarts the one on turn) and broadcasting
+  `TableUpdated`. Called by
   `POST /tables/{table}/heartbeat` and by the `seen` middleware on the
   playing endpoints. `seat()` also refreshes it when a player changes seat.
 - `releaseIdleSeats()` frees, through `remove()`, every human non-admin
@@ -285,14 +293,24 @@ Seats are managed through `App\Services\TableSeatService`:
   set; otherwise it is `remove()` (`LEFT`, or `DELETED` with the table).
 - `checkAway()` is the away rule (`bridge.away_seconds`, 60, and
   `bridge.set_forfeit_minutes`, 3), run every ten seconds by the scheduled
-  `tables:check-away` command: mid-set it marks quiet humans away and takes
-  out, through `remove()`, the one away past the deadline, which forfeits
+  `tables:check-away` command: mid-set it marks quiet humans away, brings
+  the forfeit clocks up to date (`syncForfeitClock()`) and takes out,
+  through `remove()`, the one whose `forfeit_at` has passed, which forfeits
   the set for their side; once a set is over it frees anyone still away
   (an admin is only un-marked). Each table is checked under its lock.
   `remove()` forfeits (`BoardSelectionService::forfeitSet()`) instead of
   abandoning when the player going is away or moving to another table
   mid-set, except an admin or while an admin there is away
   (`costsTheSet()`).
+- `syncForfeitClock(Table)` brings the table's `forfeit_at` clocks up to
+  date with whose turn it is (`PlayingStateService::actingUserId()`, nobody
+  while a claim is pending or between boards): the away player on turn
+  gets `bridge.set_forfeit_minutes` from now if their clock isn't running
+  yet, every other seat's is cleared. Run under the table lock by
+  `leave()`, `remove()`, `touch()` and `checkAway()`, and after every
+  `PlayingUpdated` by the `RunForfeitClock` listener
+  (`syncForfeitClockAt()`, which takes the lock and sends `TableUpdated`
+  when a clock started or stopped).
 
 Relations: `table`, `user` (both belongsTo).
 `game\TableSeeder` creates each seeded table the way `POST /tables` does and

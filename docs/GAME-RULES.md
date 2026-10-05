@@ -525,30 +525,39 @@ has played has nothing to be compared with.
 
 **Going away costs the set.** If a player leaves or stops responding during
 a set (a board in progress, or between boards of an unfinished set), their
-partnership **loses the set** — but only after **3 minutes**
-(`BRIDGE_SET_FORFEIT_MINUTES`); if they come back in time, play goes on:
+partnership **loses the set** — but only once the board has waited
+**3 minutes** for them (`BRIDGE_SET_FORFEIT_MINUTES`); if they come back in
+time, play goes on:
 
 - A human with no sign of life (heartbeat or playing request) for a minute
-  (`BRIDGE_AWAY_SECONDS`, 60) is **away**: their seat is held — nobody else
-  can take it — and the board simply waits on them. The others see it, with
-  a countdown (`away_since`, `forfeit_at` per seat).
+  (`BRIDGE_AWAY_SECONDS`, 60) is **away** (`away_since`): their seat is
+  held — nobody else can take it. The others see it.
+- The board waits on one player at a time, the one on turn (declarer on
+  dummy's turn, a robot declarer's human dummy on declarer's), so only that
+  player, when away, has a **countdown** (`forfeit_at`): 3 minutes from
+  when the board began waiting for them — when the turn reached them, or
+  when they went away on their turn. Another player away costs nothing
+  until the turn reaches them, and then gets the full 3 minutes. Between
+  boards and while a claim is pending nobody is on turn, so no countdown
+  runs.
 - Any sign of life before the deadline brings them back: play continues
   where it was.
-- Still away 3 minutes after their last sign of life, their side (`NS` or
-  `EW`) **forfeits** the set (`ended: forfeit`, `forfeited_by`): the other
+- Still away when their countdown runs out, their side (`NS` or `EW`)
+  **forfeits** the set (`ended: forfeit`, `forfeited_by`): the other
   side wins it, whatever the scores so far. The board in progress is
   abandoned unscored (detached, as on any leave), the away player's seat is
   freed through the normal leave path, and everyone sees the set's result.
-- Pressing **Leave** mid-set counts as going away (held for 3 minutes, they
-  may come back). **Moving** to another table mid-set forfeits at once, and
+- Pressing **Leave** mid-set counts as going away (held, with the
+  countdown once the board waits for them; they may come back). **Moving** to another table mid-set forfeits at once, and
   so does a manager **kicking** a player who is away.
 - Robots are never away. A human whose partner is a robot forfeits for that
   side the same way.
 - **Admins** never cost their side the set: an absent admin is shown away
   but has no deadline and their seat is never freed for it, and the table
-  just waits. While an admin is away nobody forfeits at all: the others'
-  countdowns stop and they may Leave (or move) at once without penalty —
-  the set ends `abandoned`. An admin's own Leave is immediate too.
+  just waits. While an admin is away nobody forfeits at all: the countdown
+  stops (and restarts at 3 minutes when the admin is back) and the others
+  may Leave (or move) at once without penalty — the set ends
+  `abandoned`. An admin's own Leave is immediate too.
 - Once the set is over (completed, forfeited or abandoned), anyone still
   away is no longer held for it: their seat is freed (an admin's is kept).
 
@@ -571,8 +580,12 @@ mid-set (`costsTheSet()` holds the admin exceptions).
 `TableSeatService::leave()` holds the seat on a mid-set Leave
 (`table_seats.away_since`), `touch()` clears it on any sign of life, and
 `checkAway()` (`tables:check-away`, scheduled every ten seconds) marks
-quiet players away, forfeits for the one away too long and frees those
-still away once the set is over.
+quiet players away, forfeits for the one whose countdown ran out and frees
+those still away once the set is over. The countdown is
+`table_seats.forfeit_at`, kept by `syncForfeitClock()` from
+`PlayingStateService::actingUserId()`: run by `checkAway()`, `leave()`,
+`touch()` and `remove()`, and after every `PlayingUpdated` (each call,
+card, claim action and deal) by the `RunForfeitClock` listener.
 `moveOn()` refuses after the last board, and `start()` accepts a Start once
 the set is over even with the same four seated. A set outlives its table,
 like the playings in it. Its results are `GET /sets/{set}`
