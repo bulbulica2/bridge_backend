@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Events\UserBanned;
+use App\Models\TableSet;
 use App\Models\User;
 use App\Models\UserBan;
 use Illuminate\Support\Facades\DB;
@@ -52,8 +53,8 @@ class UserBanService
 
       if ($seat !== null) {
         // read before remove(), which decides again under the table lock
-        $forfeited = $this->seats->removalForfeits($seat->table, $user, walkOut: true);
-        $this->seats->remove($seat->table, $user, $admin, walkOut: true);
+        $forfeited = $this->seats->removalForfeits($seat->table, $user, TableSet::FORFEIT_KICKED);
+        $this->seats->remove($seat->table, $user, $admin, TableSet::FORFEIT_KICKED);
       }
 
       if (config('session.driver') === 'database') {

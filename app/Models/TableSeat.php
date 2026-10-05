@@ -19,7 +19,6 @@ class TableSeat extends Model
     'last_seen_at',
     'ready_at',
     'away_since',
-    'forfeit_at',
   ];
 
   protected function casts(): array
@@ -28,7 +27,6 @@ class TableSeat extends Model
       'last_seen_at' => 'datetime',
       'ready_at' => 'datetime',
       'away_since' => 'datetime',
-      'forfeit_at' => 'datetime',
     ];
   }
 

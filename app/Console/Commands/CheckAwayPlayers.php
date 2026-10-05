@@ -9,7 +9,7 @@ class CheckAwayPlayers extends Command
 {
   protected $signature = 'tables:check-away';
 
-  protected $description = 'Mark players who went quiet mid-set as away, and forfeit the set for the side of one away too long';
+  protected $description = 'Mark players who went quiet mid-set as away, and forfeit the set for the side of the player on turn once their turn clock runs out';
 
   public function handle(TableSeatService $seats): int
   {

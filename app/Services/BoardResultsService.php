@@ -147,6 +147,7 @@ class BoardResultsService
       'finished' => $set->isFinished(),
       'ended' => $set->ended,
       'forfeited_by' => $set->forfeited_by,
+      'forfeit_reason' => $set->forfeit_reason,
       'players' => $players,
       'boards' => $boards->all(),
       'totals' => [

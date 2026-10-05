@@ -46,6 +46,11 @@ return new class extends Migration
       // a claim that ended without being accepted (rejected, withdrawn or
       // expired) locks claims until the next card is played
       $table->boolean('claim_locked')->default(false);
+      // when the board began waiting for whoever is on turn now: the deal,
+      // the last call or card, or a claim cleared. Their turn clock
+      // (bridge.turn_seconds) runs from here, if they have one
+      // (PlayingStateService::turnDeadline())
+      $table->timestamp('turn_started_at')->nullable();
 
       $table->timestamp('started_at')->useCurrent();
       $table->timestamp('auction_ended_at')->nullable();

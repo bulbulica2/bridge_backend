@@ -120,6 +120,9 @@ class CardPlayService
         $this->saveResult($playing, $plays);
       }
 
+      // the next player's turn clock
+      $playing->update(['turn_started_at' => now()]);
+
       PlayingUpdated::dispatch($table);
     });
   }

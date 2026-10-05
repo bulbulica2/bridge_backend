@@ -111,6 +111,41 @@ class PlayingStateService
   }
 
   /**
+   * When the turn clock of the player the board waits for runs out:
+   * `bridge.turn_seconds` after the board began waiting for them
+   * (`turn_started_at`: the deal, the last call or card, or a claim
+   * cleared). Being there isn't playing: only a move resets it, never a
+   * heartbeat or a chat line.
+   *
+   * Only a human who is not an admin has a clock (`actingUserId()`:
+   * declarer on dummy's turn, a robot declarer's human dummy on
+   * declarer's), only in the auction and the play of a set's board, and
+   * not while a claim is pending (it expires by itself). Null whenever
+   * nobody's clock runs. Once it has passed, `tables:check-away` takes
+   * them out and their side forfeits the set
+   * (`TableSeatService::checkAway()`).
+   */
+  public function turnDeadline(?BoardTable $playing): ?Carbon
+  {
+    if ($playing?->turn_started_at === null
+      || $playing->tableSet === null
+      || $playing->tableSet->isFinished()
+      || $playing->hasPendingClaim()) {
+      return null;
+    }
+
+    // nobody acts in `waiting` or once the board is finished
+    $actingUserId = $this->actingUserId($playing);
+    $user = $actingUserId === null ? null : $playing->seats->firstWhere('user_id', $actingUserId)?->user;
+
+    if ($user === null || $user->is_robot || $user->is_admin) {
+      return null;
+    }
+
+    return $playing->turn_started_at->copy()->addSeconds((int) config('bridge.turn_seconds'));
+  }
+
+  /**
    * Whether dummy plays declarer's cards as well as their own: when a robot
    * declares and its partner, dummy, is a human, who came to play rather
    * than watch. Declarer and dummy stay where the auction put them; only

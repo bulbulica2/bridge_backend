@@ -145,24 +145,25 @@ Things worth knowing before you change them:
   completes the set on its last board — after which `moveOn()` 409s and
   `start()` accepts a Start even with the same four seated. `remove()` ends
   an unfinished set as `abandoned` (`abandonSet()`), even between boards —
-  or as lost by the leaver's side (`forfeitSet()`) when they were away or
-  are moving to another table.
+  or as lost by the leaver's side (`forfeitSet()`, with a `forfeit_reason`)
+  when they ran out of time on their turn, were away or are moving to
+  another table.
 - **Away mid-set.** In the middle of a set a seat is never just freed by
   its player going: `TableSeatService::leave()` holds it on a Leave
   (`table_seats.away_since`), `checkAway()` marks quiet players away after
   `bridge.away_seconds` (60); `touch()` (any sign of life) brings them
-  back. Only the away player on turn has a forfeit clock
-  (`table_seats.forfeit_at`, `bridge.set_forfeit_minutes` (3) from when the
-  board began waiting for them): `syncForfeitClock()` sets and clears it
-  from `PlayingStateService::actingUserId()` (nobody on turn between boards
-  or while a claim is pending), run by `leave()`, `remove()`, `touch()`,
-  `checkAway()` and, after every `PlayingUpdated`, the
-  `App\Listeners\RunForfeitClock` listener (not queued: it runs right after
-  the move's commit, so the clock starts as the turn moves, not at the next
-  check). `checkAway()` takes the player whose clock ran out through
-  `remove()`, which forfeits the set for their side. `costsTheSet()` holds
-  the exceptions: robots are never away, an admin never has a clock, and
-  while an admin is away nobody does (Leave is then immediate).
+  back. Away or not, the player on turn has a **turn clock**:
+  `board_table.turn_started_at`, set by the deal, every call and card and a
+  cleared claim (never by a heartbeat), plus `bridge.turn_seconds` (60) —
+  `PlayingStateService::turnDeadline()`, the state's `turn_deadline`, null
+  for a robot or an admin, between boards and while a claim is pending.
+  Being stored on the playing and moved only by moves, it rides on the
+  `PlayingUpdated` each move sends anyway. `checkAway()` takes the player
+  whose clock ran out through `remove(..., forfeit: turn_timeout|away)`,
+  which forfeits the set for their side. `forfeitReason()` and
+  `costsTheSet()` hold the exceptions: robots are never away, an admin never
+  costs their side the set, and while an admin is away a Leave or move is
+  immediate and abandons (running out of time still forfeits).
   Sets outlive their table like playings do; `TableResource` and
   `PlayingResource` show where the table is as `set`.
   Start, like Next, takes the table row lock that seat changes take. A playing abandoned mid-board is
@@ -288,7 +289,7 @@ to run it: [`RUNNING.md`](RUNNING.md#realtime-reverb)).
 | Event | Channel | Carries | Sent when |
 |---|---|---|---|
 | `TableUpdated` | `table.{id}` | the `TableResource` JSON, without `can_manage` | any seat change that didn't delete the table, a Start pressed or taken back, a board dealt, a player away or back, a forfeit clock started or stopped |
-| `PlayingUpdated` | `table.{id}` | the public game state (no hand, no `my_seat`) in its compact shape (`PlayingResource::compact()`: cards and bids as ids) | a board is dealt, and after every accepted call, card or claim action (a robot's too); `DriveRobots` and `RunForfeitClock` listen to it |
+| `PlayingUpdated` | `table.{id}` | the public game state (no hand, no `my_seat`) in its compact shape (`PlayingResource::compact()`: cards and bids as ids) | a board is dealt, and after every accepted call, card or claim action (a robot's too); `DriveRobots` listens to it |
 | `HandDealt` | `App.Models.User.{id}` | that player's 13 cards | a board is dealt (humans only) |
 | `DeclarerHandShown` | `App.Models.User.{id}` | declarer's 13 cards (`declarer_hand`) | an auction ends with a robot declarer and a human dummy, who plays both hands (to that human only; `AuctionService`) |
 | `CallAlerted` | `App.Models.User.{id}` | `index` of the call in the auction, its `explanation` | a call is alerted or its bidder explains it (a robot's too): to each human opponent of the bidder, never partner (`AuctionService::alertTo()`) |
@@ -375,9 +376,10 @@ Three long-running processes sit next to `php artisan serve`:
   robots have kept for `bridge.unattended_table_minutes` (10)); and every
   **ten seconds** `tables:check-away` (`App\Console\Commands\CheckAwayPlayers`,
   `TableSeatService::checkAway()`), since a minute is too coarse for the
-  three-minute set forfeit. It is a frequent check rather than a delayed
-  job per away player: being away starts with a heartbeat that *doesn't*
-  come, which no event marks.
+  one-minute turn clock. It is a frequent check rather than a delayed
+  job per turn or per away player: being away starts with a heartbeat that
+  *doesn't* come, which no event marks, and one check serves both rules
+  without queueing a job for every call and card.
 
 Reverb can't tell Laravel that a client disconnected, so the backend tracks
 presence with a heartbeat instead: `table_seats.last_seen_at` is set by
@@ -386,10 +388,11 @@ presence with a heartbeat instead: `table_seats.last_seen_at` is set by
 to any new one. `tables:release-idle-seats` frees seats idle for
 `config('bridge.idle_seat_minutes')` (5) at a table that isn't mid-set,
 through the normal `remove()`, so it behaves exactly like the player
-leaving; mid-set `tables:check-away` marks them away instead and forfeits
-the set after three minutes. Robots send no heartbeat, so both skip them;
-an admin's seat is never freed by either (`tables:check-away` may show an
-admin away, but never forfeits or frees for it).
+leaving; mid-set `tables:check-away` marks them away instead, and forfeits
+the set for the side of whoever lets their turn clock run out. Robots send
+no heartbeat, so both skip them; an admin's seat is never freed by either
+(`tables:check-away` may show an admin away, but never forfeits or frees
+for it).
 
 All three keep the old code loaded: restart them after changing PHP.
 

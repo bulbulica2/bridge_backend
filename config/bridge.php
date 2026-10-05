@@ -18,22 +18,24 @@ return [
 
   /*
   |--------------------------------------------------------------------------
-  | Away mid-set, and the forfeit
+  | Away mid-set, and the turn clock
   |--------------------------------------------------------------------------
   |
   | In the middle of a set, a human with no sign of life for this many
   | seconds is marked away (`table_seats.away_since`), and their seat is
   | held. Pressing Leave mid-set marks them away at once.
   |
-  | Still away this many minutes after their last sign of life (or their
-  | Leave), their side forfeits the set and the seat is freed. Both are
-  | checked by `tables:check-away`, scheduled every ten seconds.
+  | The human the board waits for (in the auction or the play, away or
+  | not; never a robot or an admin) has this many seconds to call, play or
+  | act on a claim, from when the board began waiting for them. Past that,
+  | their side forfeits the set and their seat is freed. Both are checked
+  | by `tables:check-away`, scheduled every ten seconds.
   |
   */
 
   'away_seconds' => (int) env('BRIDGE_AWAY_SECONDS', 60),
 
-  'set_forfeit_minutes' => (int) env('BRIDGE_SET_FORFEIT_MINUTES', 3),
+  'turn_seconds' => (int) env('BRIDGE_TURN_SECONDS', 60),
 
   /*
   |--------------------------------------------------------------------------

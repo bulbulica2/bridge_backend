@@ -129,8 +129,7 @@ class TableSeatController extends BaseController
         return $this->leaveResponse($table, $seatService->leave($table, $user));
       }
 
-      // kicking a player who is away mid-set costs their side the set, as
-      // their time running out would
+      // kicking a player who is away mid-set costs their side the set
       $forfeited = $seatService->removalForfeits($table, $user);
       $tableDeleted = $seatService->remove($table, $user, $request->user());
     } catch (SeatUnavailableException $e) {
@@ -174,12 +173,12 @@ class TableSeatController extends BaseController
 
     $table->load('seats.user');
 
-    $minutes = config('bridge.set_forfeit_minutes');
+    $seconds = config('bridge.turn_seconds');
 
     return $this->sendResponse(
       new TableResource($table),
-      'You left in the middle of a set: your seat is held. Once the table is waiting for you, come back within '
-        .$minutes.' '.($minutes === 1 ? 'minute' : 'minutes').', or your side forfeits the set.',
+      'You left in the middle of a set: your seat is held. Once the table is waiting for you, you have '
+        .$seconds.' '.($seconds === 1 ? 'second' : 'seconds').' to play, or your side forfeits the set.',
       202
     );
   }

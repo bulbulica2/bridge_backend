@@ -29,9 +29,11 @@ return new class extends Migration
       // set once the set is over, however it ended
       $table->timestamp('finished_at')->nullable();
       $table->enum('ended', TableSet::ENDINGS)->nullable();
-      // the side that lost the set by forfeit, a player of it having been
-      // away too long (or moved to another table) mid-set
+      // the side that lost the set by forfeit, and why: a player of it let
+      // their turn clock run out (turn_timeout, or away if they were away
+      // then), moved to another table, or was kicked while away or banned
       $table->enum('forfeited_by', TableSet::SIDES)->nullable();
+      $table->enum('forfeit_reason', TableSet::FORFEIT_REASONS)->nullable();
       $table->timestamps();
 
       $table->unique(['table_id', 'number']);

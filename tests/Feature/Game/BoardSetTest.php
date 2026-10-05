@@ -55,7 +55,7 @@ class BoardSetTest extends TestCase
     $boards = [];
 
     for ($board = 1; $board <= 4; $board++) {
-      $expected = ['id' => $set->id, 'number' => 1, 'board' => $board, 'of' => 4, 'finished' => false, 'ended' => null, 'forfeited_by' => null];
+      $expected = ['id' => $set->id, 'number' => 1, 'board' => $board, 'of' => 4, 'finished' => false, 'ended' => null, 'forfeited_by' => null, 'forfeit_reason' => null];
 
       $this->state('N')->assertJsonPath('data.phase', 'auction')->assertJsonPath('data.set', $expected);
       $this->actingAs($this->players['E'])->getJson("/tables/{$this->table->id}")->assertJsonPath('data.set', $expected);
@@ -306,12 +306,13 @@ class BoardSetTest extends TestCase
     $set = TableSet::sole();
 
     // as tables:check-away would (SetForfeitTest)
-    $set->update(['finished_at' => now(), 'ended' => TableSet::ENDED_FORFEIT, 'forfeited_by' => 'NS']);
+    $set->update(['finished_at' => now(), 'ended' => TableSet::ENDED_FORFEIT, 'forfeited_by' => 'NS', 'forfeit_reason' => TableSet::FORFEIT_TURN_TIMEOUT]);
 
     $this->actingAs($this->players['N'])->getJson("/sets/$set->id")
       ->assertOk()
       ->assertJsonPath('data.ended', 'forfeit')
       ->assertJsonPath('data.forfeited_by', 'NS')
+      ->assertJsonPath('data.forfeit_reason', 'turn_timeout')
       ->assertJsonPath('data.winner', 'EW');
   }
 
@@ -320,18 +321,19 @@ class BoardSetTest extends TestCase
     $this->startAll();
     $set = TableSet::sole();
 
-    $set->forfeit('EW');
+    $set->forfeit('EW', TableSet::FORFEIT_MOVED);
     $finishedAt = $set->fresh()->finished_at;
 
     $this->travel(1)->minutes();
 
     // a later abandon or forfeit changes nothing
     $set->end(TableSet::ENDED_ABANDONED);
-    $set->forfeit('NS');
+    $set->forfeit('NS', TableSet::FORFEIT_TURN_TIMEOUT);
 
     $set->refresh();
     $this->assertSame(TableSet::ENDED_FORFEIT, $set->ended);
     $this->assertSame('EW', $set->forfeited_by);
+    $this->assertSame(TableSet::FORFEIT_MOVED, $set->forfeit_reason);
     $this->assertEquals($finishedAt, $set->finished_at);
   }
 

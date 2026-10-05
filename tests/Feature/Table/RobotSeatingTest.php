@@ -232,12 +232,12 @@ class RobotSeatingTest extends TestCase
     $table = $this->robotTable();
 
     // mid-set, Leave holds the seat; their side (with a robot partner)
-    // forfeits the set once their time is up
+    // forfeits the set once their turn clock runs out
     $this->actingAs($this->owner)->deleteJson("/tables/$table->id/seats")
       ->assertStatus(202)
       ->assertJsonPath('data.moderated_by', $this->owner->id);
 
-    $this->travel(config('bridge.set_forfeit_minutes'))->minutes();
+    $this->travel(config('bridge.turn_seconds'))->seconds();
     $this->artisan('tables:check-away')->assertSuccessful();
 
     $table->refresh();
@@ -245,7 +245,7 @@ class RobotSeatingTest extends TestCase
     $this->assertSame(['N'], $table->freeSeats());
     $this->assertNotNull($table->unattended_since);
     $this->assertSame(3, $table->seats()->count());
-    $this->assertSame(['ended' => 'forfeit', 'forfeited_by' => 'NS'], $table->sets()->sole()->only('ended', 'forfeited_by'));
+    $this->assertSame(['ended' => 'forfeit', 'forfeited_by' => 'NS', 'forfeit_reason' => 'away'], $table->sets()->sole()->only('ended', 'forfeited_by', 'forfeit_reason'));
     // the board in progress was abandoned, as when anyone leaves mid-board
     $this->assertNull($table->board_id);
   }

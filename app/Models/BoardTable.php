@@ -39,6 +39,7 @@ class BoardTable extends Model
     'claim_accepted',
     'claim_expires_at',
     'claim_locked',
+    'turn_started_at',
     'started_at',
     'auction_ended_at',
     'finished_at',
@@ -55,6 +56,7 @@ class BoardTable extends Model
       'claim_accepted' => 'array',
       'claim_expires_at' => 'datetime',
       'claim_locked' => 'boolean',
+      'turn_started_at' => 'datetime',
       'started_at' => 'datetime',
       'auction_ended_at' => 'datetime',
       'finished_at' => 'datetime',
@@ -133,11 +135,19 @@ class BoardTable extends Model
 
   /**
    * Forget a claim that was rejected, withdrawn or expired, and lock claims
-   * until the next card is played (`claim_locked`): play has to go on.
+   * until the next card is played (`claim_locked`): play has to go on, and
+   * whoever is on turn gets a fresh turn clock (`turn_started_at`).
    */
   public function clearClaim(): void
   {
-    $this->update(['claim_seat' => null, 'claim_tricks' => null, 'claim_accepted' => null, 'claim_expires_at' => null, 'claim_locked' => true]);
+    $this->update([
+      'claim_seat' => null,
+      'claim_tricks' => null,
+      'claim_accepted' => null,
+      'claim_expires_at' => null,
+      'claim_locked' => true,
+      'turn_started_at' => now(),
+    ]);
   }
 
   /**

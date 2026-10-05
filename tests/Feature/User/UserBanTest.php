@@ -114,6 +114,7 @@ class UserBanTest extends TestCase
     $set = TableSet::sole();
     $this->assertSame(TableSet::ENDED_FORFEIT, $set->ended);
     $this->assertSame('EW', $set->forfeited_by);
+    $this->assertSame(TableSet::FORFEIT_KICKED, $set->forfeit_reason);
     $this->assertDatabaseMissing('table_seats', ['user_id' => $players['E']->id]);
     Event::assertDispatched(TableUpdated::class, fn ($event) => $event->table['set']['ended'] === 'forfeit');
 

@@ -235,16 +235,11 @@ change at the same table and by every deal; `TableSeatResource` shows it as
 `ready`), `away_since` (nullable timestamp, cast to datetime: set only in
 the middle of a set, while the player is **away** — to their `last_seen_at`
 once `tables:check-away` notices a minute without a sign of life, or to now
-when they press Leave; cleared by any sign of life (`touch()`)) and
-`forfeit_at` (nullable timestamp, cast to datetime: the **forfeit clock**,
-when the player's side forfeits the set if they aren't back. Set only for
-an away player the board is waiting for — the playing's acting user, never
-an admin, nor anyone while an admin there is away — to
-`bridge.set_forfeit_minutes` after the board began waiting for them, and
-cleared when it stops waiting for them (the turn moves on, a claim, the end
-of the board or set) or they come back; so at most one seat at a table has
-it. Kept by `TableSeatService::syncForfeitClock()`). This is the "who is
-sitting where at this table" join table. All seven are fillable. Leaving
+when they press Leave; cleared by any sign of life (`touch()`)). There is
+no per-seat clock any more (`forfeit_at` was dropped): how long the board
+waits for the player on turn is the playing's turn clock
+(`board_table.turn_started_at`). This is the "who is
+sitting where at this table" join table. All six are fillable. Leaving
 deletes the row, Start with it — except a Leave mid-set, which keeps the row
 (the seat is held) and sets `away_since`.
 Unique indexes:
@@ -300,9 +295,8 @@ Seats are managed through `App\Services\TableSeatService`:
   rejoin that table or any other.
 - `touch(Table, User)` sets the user's `last_seen_at` at that table to now
   (a no-op if they don't sit there; `updated_at` is left alone), and clears
-  `away_since` and `forfeit_at` if they were set, bringing the other clocks
-  up to date (an admin back restarts the one on turn) and broadcasting
-  `TableUpdated`. Called by
+  `away_since` if it was set, broadcasting `TableUpdated`. It never touches
+  the turn clock: being there isn't playing. Called by
   `POST /tables/{table}/heartbeat` and by the `seen` middleware on the
   playing endpoints. `seat()` also refreshes it when a player changes seat.
 - `releaseIdleSeats()` frees, through `remove()`, every human non-admin
@@ -316,26 +310,22 @@ Seats are managed through `App\Services\TableSeatService`:
 - `leave(Table, User)` is a player's own Leave: mid-set it holds the seat
   (`away_since` now, returns `HELD`) when that would cost their side the
   set; otherwise it is `remove()` (`LEFT`, or `DELETED` with the table).
-- `checkAway()` is the away rule (`bridge.away_seconds`, 60, and
-  `bridge.set_forfeit_minutes`, 3), run every ten seconds by the scheduled
-  `tables:check-away` command: mid-set it marks quiet humans away, brings
-  the forfeit clocks up to date (`syncForfeitClock()`) and takes out,
-  through `remove()`, the one whose `forfeit_at` has passed, which forfeits
-  the set for their side; once a set is over it frees anyone still away
-  (an admin is only un-marked). Each table is checked under its lock.
-  `remove()` forfeits (`BoardSelectionService::forfeitSet()`) instead of
-  abandoning when the player going is away or moving to another table
-  mid-set, except an admin or while an admin there is away
-  (`costsTheSet()`).
-- `syncForfeitClock(Table)` brings the table's `forfeit_at` clocks up to
-  date with whose turn it is (`PlayingStateService::actingUserId()`, nobody
-  while a claim is pending or between boards): the away player on turn
-  gets `bridge.set_forfeit_minutes` from now if their clock isn't running
-  yet, every other seat's is cleared. Run under the table lock by
-  `leave()`, `remove()`, `touch()` and `checkAway()`, and after every
-  `PlayingUpdated` by the `RunForfeitClock` listener
-  (`syncForfeitClockAt()`, which takes the lock and sends `TableUpdated`
-  when a clock started or stopped).
+- `checkAway()` is the away rule and the turn clock (`bridge.away_seconds`,
+  60, and `bridge.turn_seconds`, 60), run every ten seconds by the
+  scheduled `tables:check-away` command: mid-set it marks quiet humans
+  away, and takes out, through `remove()`, the player on turn whose
+  `turn_deadline` (`PlayingStateService::turnDeadline()`) has passed, which
+  forfeits the set for their side (`turn_timeout`, or `away` if they were
+  away); once a set is over it frees anyone still away (an admin is only
+  un-marked). It looks at tables with a seat away or quiet mid-set and at
+  those whose unfinished playing has had no move for `bridge.turn_seconds`;
+  each table is checked under its lock.
+  `remove(..., $forfeit)` forfeits (`BoardSelectionService::forfeitSet()`,
+  with the reason) instead of abandoning when the player going ran out of
+  time (`turn_timeout`/`away`), is moving to another table (`moved`), is
+  banned (`kicked`) or is kicked while away (`kicked`), mid-set, except an
+  admin or — for anything but running out of time — while an admin there is
+  away (`forfeitReason()`, `costsTheSet()`).
 
 Relations: `table`, `user` (both belongsTo).
 `game\TableSeeder` creates each seeded table the way `POST /tables` does and
@@ -481,6 +471,16 @@ Fields:
   the next card played (`CardPlayService::play()`); while it is set
   `ClaimService::claim()` refuses every claim. The state shows it as
   `claim_locked`.
+- `turn_started_at` (nullable timestamp, cast to `datetime`): when the board
+  began waiting for whoever is on turn now — set by the deal
+  (`BoardSelectionService::deal()`), every call (`AuctionService::call()`),
+  every card (`CardPlayService::play()`) and a cleared claim
+  (`clearClaim()`), never by a heartbeat or a chat line. The **turn clock**
+  runs `bridge.turn_seconds` (60) from it for the acting user, when they
+  are a human and not an admin, in the auction and the play of a set's
+  board, with no claim pending (`PlayingStateService::turnDeadline()`,
+  shown as `turn_deadline`); `tables:check-away` takes them out once it has
+  run out. Null on rows made outside the services (factories).
 - `table_set_id` (FK table_sets, nullable) and `set_position` (tinyint,
   nullable): the [set](#tableset-table_sets) the board was dealt in and its
   place there, 1 to the set's `size`. Set on every playing the services
@@ -557,16 +557,20 @@ Fields (all fillable):
 - `ended` (enum `TableSet::ENDINGS`, nullable): null while it goes on, then
   `completed` (`BoardTable::finish()` on its last board), `abandoned` (one of
   its four left before that: `BoardSelectionService::abandonSet()`, from
-  `TableSeatService::remove()`) or `forfeit` (a player was away too long,
-  moved to another table or was kicked while away:
+  `TableSeatService::remove()`) or `forfeit` (see `forfeit_reason`:
   `BoardSelectionService::forfeitSet()` → `TableSet::forfeit()`, from
   `TableSeatService::remove()`).
 - `forfeited_by` (enum `TableSet::SIDES`: `NS`, `EW`, nullable): the side that
   lost by forfeit, null for any other ending.
+- `forfeit_reason` (enum `TableSet::FORFEIT_REASONS`, nullable): how that
+  side lost it — `turn_timeout` (the player on turn let their turn clock run
+  out), `away` (the same, while away: gone quiet or after a Leave), `moved`
+  (walked out on the set for another table) or `kicked` (kicked while away,
+  or banned). Null for any other ending.
 - timestamps.
 A table has at most one unfinished set at a time. Relations: `seats`
 (hasMany TableSetSeat), `playings` (hasMany BoardTable,
-by `set_position`). `end($ended)` and `forfeit($side)` close it (a no-op
+by `set_position`). `end($ended)` and `forfeit($side, $reason)` close it (a no-op
 once closed),
 `hasPlayer($userId)`. No factory: sets are opened by
 `BoardSelectionService` only.

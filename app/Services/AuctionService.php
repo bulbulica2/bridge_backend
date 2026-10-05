@@ -100,6 +100,9 @@ class AuctionService
         $this->saveResult($playing, $calls);
       }
 
+      // the next caller's turn clock (or the opening leader's)
+      $playing->update(['turn_started_at' => now()]);
+
       PlayingUpdated::dispatch($table);
     });
   }

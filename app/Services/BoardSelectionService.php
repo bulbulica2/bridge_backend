@@ -38,8 +38,8 @@ use RuntimeException;
  * Start opens a set with its first board, the rest follow as above, and
  * after the last one Next is refused and it takes everyone's Start again to
  * open the next set. A set one of its four players leaves is over too
- * (`abandonSet()`), and one a player is away from too long is lost by their
- * side (`forfeitSet()`).
+ * (`abandonSet()`), and one a player lets their turn clock run out on, or
+ * walks out on, is lost by their side (`forfeitSet()`).
  */
 class BoardSelectionService
 {
@@ -153,6 +153,8 @@ class BoardSelectionService
       'table_set_id' => $set->id,
       'set_position' => $set->playings()->reorder()->count() + 1,
       'started_at' => now(),
+      // the dealer's turn clock, if they have one
+      'turn_started_at' => now(),
     ]);
 
     foreach ($seats as $seat) {
@@ -225,19 +227,20 @@ class BoardSelectionService
   }
 
   /**
-   * End the table's set as lost by `$side` (`NS` or `EW`): one of its
-   * players was away too long, or walked out on it for another table
-   * (`TableSeatService::remove()`). The board on the table goes as on any
-   * leave (`abandonPlaying()`), unscored.
+   * End the table's set as lost by `$side` (`NS` or `EW`) for `$reason`
+   * (one of `TableSet::FORFEIT_REASONS`): one of its players let their turn
+   * clock run out, walked out on it for another table, or was kicked while
+   * away (`TableSeatService::remove()`). The board on the table goes as on
+   * any leave (`abandonPlaying()`), unscored.
    *
    * Does nothing once the set is over.
    */
-  public function forfeitSet(Table $table, string $side): void
+  public function forfeitSet(Table $table, string $side, string $reason): void
   {
     TableSet::query()
       ->where('table_id', $table->id)
       ->whereNull('finished_at')
-      ->each(fn (TableSet $set) => $set->forfeit($side));
+      ->each(fn (TableSet $set) => $set->forfeit($side, $reason));
 
     $table->unsetRelation('latestSet');
   }
@@ -390,8 +393,8 @@ class BoardSelectionService
    * Deal the set's next board by itself once finished playing `$playingId`
    * has been on show for `bridge.next_board_seconds` (`nextBoardAt()`), for
    * the same four, as the last human's Next would (`moveOn()`), with the
-   * same events. Away players are dealt to as well: their turn waits, and
-   * the away clock runs on.
+   * same events. Away players are dealt to as well: once the board waits
+   * for them, their turn clock runs as anyone's does.
    *
    * Deals nothing when, by now, the table has moved on (everyone asked, or
    * this ran twice), the playing has left its table, a seat is empty or has

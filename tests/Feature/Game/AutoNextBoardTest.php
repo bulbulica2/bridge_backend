@@ -10,6 +10,7 @@ use App\Jobs\DealNextBoard;
 use App\Models\Bid;
 use App\Models\BoardTable;
 use App\Models\Table;
+use App\Models\TableSet;
 use App\Models\User;
 use App\Services\BoardSelectionService;
 use App\Services\ClaimService;
@@ -198,7 +199,7 @@ class AutoNextBoardTest extends TestCase
     $this->seatTable();
     $this->passOut();
 
-    app(BoardSelectionService::class)->forfeitSet($this->table, 'NS');
+    app(BoardSelectionService::class)->forfeitSet($this->table, 'NS', TableSet::FORFEIT_TURN_TIMEOUT);
     $this->state('N')->assertJsonPath('data.next_board_at', null);
 
     $this->travel(10)->seconds();
