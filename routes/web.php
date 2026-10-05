@@ -54,11 +54,14 @@ Route::middleware('auth')->group(function () {
     Route::delete('tables/{table}/seats/{user}', [TableSeatController::class, 'destroyUser'])->name('tables.seats.users.destroy');
 
     // a seated player is still there; the client sends it every ~30 s while the table is open
-    Route::post('tables/{table}/heartbeat', [TableSeatController::class, 'heartbeat'])->name('tables.heartbeat');
+    // (both this and the playing requests below first expire a claim whose
+    // time is up, in case no queue worker ran ExpireClaim)
+    Route::post('tables/{table}/heartbeat', [TableSeatController::class, 'heartbeat'])
+      ->middleware('claim-due')->name('tables.heartbeat');
 
     // playing requests count as a heartbeat too (last_seen_at), so an active
     // player is never released as idle
-    Route::middleware('seen')->group(function () {
+    Route::middleware(['claim-due', 'seen'])->group(function () {
       // ready to play, or not after all: the board is dealt once the table is
       // full and every human there has pressed Start (robots always have)
       Route::post('tables/{table}/start', [TableStartController::class, 'store'])->name('tables.start.store');

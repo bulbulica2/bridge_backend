@@ -142,7 +142,7 @@ class TurnTimerTest extends TestCase
     Event::fake([TableUpdated::class]);
 
     $this->artisan('tables:check-away')
-      ->expectsOutput('Marked 0 players away, replaced 1 player with a robot, freed 0 seats.')
+      ->expectsOutput('Marked 0 players away, replaced 1 player with a robot, freed 0 seats, expired 0 claims.')
       ->assertSuccessful();
 
     // a robot sits in the seat, ready; the set and the board go on

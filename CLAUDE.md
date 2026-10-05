@@ -439,7 +439,10 @@ vendor/bin/pint --test            # check formatting without changing files
   `claim.expires_at`) and queues `App\Jobs\ExpireClaim` with that delay,
   whose `expire()` rejects the claim under the same row lock if that very
   claim is still pending; no answer is taken once it is due
-  (`claimExpired()`), and `DriveRobots` cuts a robot's delay so its answer
+  (`claimExpired()`). Without a worker the `claim-due` middleware
+  (`ExpireOverdueClaim`, `expireOverdue()`, on the heartbeat and every
+  `seen` route — add it to new ones) and `tables:check-away`
+  (`expireAllOverdue()`) expire it instead. `DriveRobots` cuts a robot's delay so its answer
   lands a second before. The `sync` test queue runs the job at once (not
   due, so a no-op): tests travel in time and run it themselves.
 - **Robots**: `users.is_robot` players from a `robot-<n>` pool

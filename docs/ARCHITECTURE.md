@@ -97,7 +97,7 @@ the same pattern:
 | `AuctionService` | one call (`call()`, with its self-alert), a question about a call (`ask()`) and its bidder's answer (`explain()`), both also written into the chat; `nextToCall`, `illegalReason`, `isOver`, `result` | `tests/Unit/AuctionServiceTest`, `tests/Feature/Game/BidAlertTest` |
 | `BoardChatService` | the board's chat: who may read a message (`messagesFor()`, `BoardMessage::visibleTo()`: never partner's `opponents` message until the board is finished), sending one (`send()`: `table` or `opponents` in every phase, a robot answering a question about its call with `robotReading()` or, as a defender, about its card with `RobotCarding::explain()`), and `post()`, which writes a message and pushes it to its human readers — `AuctionService` writes its questions and answers through it | `tests/Feature/Game/BoardChatTest` |
 | `CardPlayService` | one card (`play()`); `nextToPlay`, `actingSeat`, `illegalReason`, `trickWinner`, `tricks`, `tricksWon` | `tests/Unit/CardPlayServiceTest` |
-| `ClaimService` | claims and concessions (`claim`, `respond`, `withdraw`, and `expire`, which the queued `App\Jobs\ExpireClaim` runs `bridge.claim_seconds` after a claim: silence rejects it); a claim ended without an accept locks claims until the next card (`claim_locked`) | `tests/Unit/ClaimServiceTest`, `tests/Feature/Game/ClaimTest` |
+| `ClaimService` | claims and concessions (`claim`, `respond`, `withdraw`, and `expire`, which the queued `App\Jobs\ExpireClaim` runs `bridge.claim_seconds` after a claim: silence rejects it; `expireOverdue` for the `claim-due` middleware and `expireAllOverdue` for `tables:check-away` run it too when no worker did); a claim ended without an accept locks claims until the next card (`claim_locked`) | `tests/Unit/ClaimServiceTest`, `tests/Feature/Game/ClaimTest` |
 | `ScoringService` | duplicate scoring (`score()`, from declarer's side) and matchpoints (`matchpoints()`), pure static functions | `tests/Unit/ScoringTest` |
 | `BoardResultsService` | reads finished playings back for results across tables, a set's results (`set()`, `maySeeSet()`) and a player's history | feature tests (`BoardResultsTest`, `BoardSetTest`) |
 | `PlayerStatsService` | a player's stats (`stats()`, `GET /users/{user}/stats`): boards played and compared, won and mean matchpoint %, completed sets and won, sets walked out on by reason — worked out on every read in a handful of queries, never stored | `tests/Feature/User/PlayerStatsTest` |
@@ -362,7 +362,9 @@ Three long-running processes sit next to `php artisan serve`:
   runs the robots' moves (`DriveRobots`), expires unanswered claims
   (`App\Jobs\ExpireClaim`, dispatched `afterCommit()` with a delay up to
   the claim's `claim_expires_at` — a delayed job, not a scheduled check,
-  since the 10-second schedule tick is as long as the whole deadline) and
+  since the 10-second schedule tick is as long as the whole deadline; the
+  `claim-due` middleware and `tables:check-away` are the fallback without a
+  worker, see below) and
   deals a set's next board when its pause is up (`App\Jobs\DealNextBoard`,
   dispatched the same way from `BoardTable::finish()` with a delay up to
   `next_board_at`). It also solves the double dummy analysis
@@ -386,8 +388,10 @@ Three long-running processes sit next to `php artisan serve`:
   (`App\Console\Commands\DeleteUnattendedTables`, which deletes tables only
   robots have kept for `bridge.unattended_table_minutes` (10)); and every
   **ten seconds** `tables:check-away` (`App\Console\Commands\CheckAwayPlayers`,
-  `TableSeatService::checkAway()`), since a minute is too coarse for the
-  one-minute turn clock. It is a frequent check rather than a delayed
+  `TableSeatService::checkAway()`, after `ClaimService::expireAllOverdue()`
+  has expired every overdue claim at a table, for when no worker ran
+  `ExpireClaim` and nobody sends a request), since a minute is too coarse
+  for the one-minute turn clock. It is a frequent check rather than a delayed
   job per turn or per away player: being away starts with a heartbeat that
   *doesn't* come, which no event marks, and one check serves both rules
   without queueing a job for every call and card.
@@ -396,7 +400,13 @@ Reverb can't tell Laravel that a client disconnected, so the backend tracks
 presence with a heartbeat instead: `table_seats.last_seen_at` is set by
 `POST /tables/{table}/heartbeat` and by the `seen` middleware
 (`App\Http\Middleware\TouchTableSeat`) on every playing endpoint — add `seen`
-to any new one. `tables:release-idle-seats` frees seats idle for
+to any new one. The same endpoints and the heartbeat also run `claim-due`
+(`App\Http\Middleware\ExpireOverdueClaim`) first: it expires the table's
+claim once its `claim_expires_at` has passed
+(`ClaimService::expireOverdue()`, the same `expire()` as the job under the
+`board_table` row lock, so only the first of request, job and scheduler
+clears it), and the request never finds a dead claim still pending —
+add it to any new route that reads or acts on the playing. `tables:release-idle-seats` frees seats idle for
 `config('bridge.idle_seat_minutes')` (5) at a table that isn't mid-set,
 through the normal `remove()`, so it behaves exactly like the player
 leaving; mid-set `tables:check-away` marks them away instead, and hands
@@ -482,9 +492,9 @@ rules refuse (`RobotFallbackTest`).
   alone keep a table alive, as *unattended*, until the scheduler deletes it.
 - **Robots need the queue worker.** Without `queue:work` their jobs wait in
   `jobs` and the table stalls on a robot's turn. A robot job that throws
-  fails like any job (`queue:retry`). Claims need it too: without it an
-  unanswered claim never expires (though no answer is taken after its
-  `expires_at`), and a set's next board waits for every human's Next.
+  fails like any job (`queue:retry`). Without it a set's next board waits
+  for every human's Next; an unanswered claim still expires, on the next
+  request on the playing or `tables:check-away`, just not on the second.
 - **Delayed jobs run at once in the tests.** The `sync` queue ignores
   `delay`, so `ExpireClaim` runs the moment its claim is made and
   `DealNextBoard` the moment its board finishes and, not due yet, they do

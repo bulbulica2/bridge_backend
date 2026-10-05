@@ -544,6 +544,88 @@ class ClaimTest extends TestCase
     $this->assertFalse(app(ClaimService::class)->expire(0, $job->expiresAt));
   }
 
+  public function test_reading_the_playing_expires_an_overdue_claim_without_the_job(): void
+  {
+    $this->claim('N', 13)->assertCreated();
+    $job = $this->expiryJob();
+
+    Event::fake([PlayingUpdated::class]);
+
+    // not due yet: nothing changes
+    $this->travel(9)->seconds();
+    $this->state('W')->assertJsonPath('data.claim.seat', 'N')->assertJsonPath('data.claim_locked', false);
+    Event::assertNotDispatched(PlayingUpdated::class);
+
+    $this->travel(1)->seconds();
+    $this->state('W')->assertJsonPath('data.claim', null)->assertJsonPath('data.claim_locked', true);
+    $this->state('E')->assertJsonPath('data.claim', null);
+
+    Event::assertDispatchedTimes(PlayingUpdated::class, 1);
+    $this->assertNull(Event::dispatched(PlayingUpdated::class)->sole()[0]->broadcastWith()['playing']['claim']);
+
+    // the job, late, finds nothing to do
+    $this->runJob($job);
+    Event::assertDispatchedTimes(PlayingUpdated::class, 1);
+  }
+
+  public function test_every_playing_request_expires_an_overdue_claim_first(): void
+  {
+    $this->claim('N', 13)->assertCreated();
+    $this->travel(10)->seconds();
+
+    // a card would be refused while the claim is pending
+    $this->play('E', 'S10')->assertCreated();
+    $this->assertFalse($this->playing->fresh()->claim_locked);
+
+    $this->claim('N', 13)->assertCreated();
+    $this->travel(10)->seconds();
+
+    $this->actingAs($this->players['W'])->postJson("/tables/{$this->table->id}/heartbeat")->assertOk();
+    $this->assertNull($this->playing->fresh()->claim_seat);
+    $this->assertTrue($this->playing->fresh()->claim_locked);
+
+    // and claims stay locked until the next card, as after any refusal
+    $this->claim('N', 13)->assertStatus(409)->assertJsonPath('message', 'A claim was just refused: play a card first.');
+  }
+
+  public function test_check_away_expires_overdue_claims_without_the_job(): void
+  {
+    $this->claim('N', 13)->assertCreated();
+    $job = $this->expiryJob();
+
+    Event::fake([PlayingUpdated::class]);
+
+    $this->travel(9)->seconds();
+    $this->artisan('tables:check-away')->expectsOutputToContain('expired 0 claims.')->assertSuccessful();
+    $this->assertSame('N', $this->playing->fresh()->claim_seat);
+    Event::assertNotDispatched(PlayingUpdated::class);
+
+    $this->travel(1)->seconds();
+    $this->artisan('tables:check-away')->expectsOutputToContain('expired 1 claim.')->assertSuccessful();
+
+    $playing = $this->playing->fresh();
+    $this->assertNull($playing->claim_seat);
+    $this->assertTrue($playing->claim_locked);
+    Event::assertDispatchedTimes(PlayingUpdated::class, 1);
+
+    // nothing left for the job, the next run or a read
+    $this->runJob($job);
+    $this->artisan('tables:check-away')->expectsOutputToContain('expired 0 claims.');
+    $this->state('W')->assertJsonPath('data.claim', null);
+    Event::assertDispatchedTimes(PlayingUpdated::class, 1);
+  }
+
+  public function test_check_away_leaves_a_detached_playings_claim_to_its_job(): void
+  {
+    $this->claim('N', 13)->assertCreated();
+    app(TableSeatService::class)->remove($this->table, $this->players['E']);
+
+    $this->travel(10)->seconds();
+
+    $this->assertSame(0, app(ClaimService::class)->expireAllOverdue());
+    $this->assertSame('N', $this->playing->fresh()->claim_seat);
+  }
+
   public function test_only_seated_players_may_claim_and_guests_get_401(): void
   {
     $stranger = User::factory()->create();

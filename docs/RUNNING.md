@@ -163,8 +163,9 @@ long-running and keep the old code loaded.
 ### Keeping the worker running
 
 Everything the table waits for runs in `queue:work`: a worker that stops
-freezes every table (robots, live updates, claim expiry, the next deal)
-while the screens still look live. Three things look after it:
+freezes every table (robots, live updates, the next deal) while the
+screens still look live. (Claim expiry alone survives it: requests and
+`tables:check-away` expire an overdue claim too, see [Claims](#claims).) Three things look after it:
 
 - **Every stop is logged.** `App\Listeners\LogWorkerStopping` writes a
   `warning` to `storage/logs/laravel.log` with the exit code, what it
@@ -245,7 +246,8 @@ seconds:
   with no sign of life for `BRIDGE_AWAY_SECONDS` as away, and once the
   board has waited `BRIDGE_TURN_SECONDS` for the player on turn (away or
   not) a robot takes their seat for the rest of the set. It also frees
-  the seats of players still away when a set ends. An admin is shown away
+  the seats of players still away when a set ends, and first expires
+  every claim past its `expires_at` (see [Claims](#claims)). An admin is shown away
   but never has a turn clock, and is never replaced nor loses the seat.
   A minute would be too coarse for a one-minute turn, so it
   runs every few seconds; `schedule:work` (and `schedule:run`, which keeps
@@ -286,9 +288,11 @@ The automatic deal is a delayed queued job (`App\Jobs\DealNextBoard`), so
 
 A claim the other players haven't all accepted within
 `BRIDGE_CLAIM_SECONDS` is rejected: silence means no. A delayed queued job
-(`App\Jobs\ExpireClaim`) does it, so **`queue:work` must be running**, or
-an unanswered claim stays on the table (no answer is taken after its
-deadline, but play doesn't resume until a worker runs the job).
+(`App\Jobs\ExpireClaim`) does it on time while `queue:work` runs. It
+doesn't need the worker, though: without one, the next request on the
+table's playing (the state, a call or card, a claim action, the heartbeat)
+expires the overdue claim, and so does `tables:check-away` (`schedule:work`,
+every ten seconds). Only the robots' answers to it need `queue:work`.
 
 | Key | Default | Meaning |
 |---|---|---|

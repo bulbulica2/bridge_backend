@@ -99,7 +99,8 @@ curl http://127.0.0.1:8000/bids
 ### `GET /api/health`
 Whether a `queue:work` is running, which a client can't tell by itself: a
 stopped worker leaves the table on screen as it was, while robots, live
-updates, claim expiry and the next deal all wait for it. Every worker
+updates and the next deal all wait for it (an overdue claim still expires,
+on the next request or `tables:check-away`). Every worker
 writes a heartbeat to the cache at most every 10 s as it loops
 (`App\Listeners\BeatQueueHeartbeat`, `App\Services\QueueHealthService`);
 `running` is whether the last one is under 60 s old. No auth; always 200.
@@ -550,7 +551,9 @@ two alert endpoints (`.../calls/{index}/question`, `.../explanation`),
 both chat endpoints (`GET`/`POST /tables/{table}/messages`),
 `POST /tables/{table}/cards` and the three claim endpoints — count as a heartbeat too (the `seen` route
 middleware, `App\Http\Middleware\TouchTableSeat`), even when the call or
-card itself is refused. Taking or changing a seat also sets it.
+card itself is refused. Taking or changing a seat also sets it. These
+endpoints and the heartbeat also expire an overdue claim before anything
+else (see [Claims](#claims-post-tablestableclaim-post-tablestableclaimresponse-delete-tablestableclaim), "Silence means no").
 
 **Keep beating while the tab is hidden.** The heartbeat is how the server
 tells a player who is still there from one who has gone, and in the middle
@@ -1230,11 +1233,19 @@ Concede.
 reject it — `claim` back to `null`, a `PlayingUpdated`, play resumes where
 it stopped — and the accepts already given count for nothing. The state's
 `claim.expires_at` says when. The queued job `App\Jobs\ExpireClaim`, sent
-with that delay when the claim is made, does it (so it needs
-`queue:work`); it does nothing if the claim was accepted, rejected or
-withdrawn first, or if it is a newer claim with its own deadline. From
-`expires_at` on no answer counts, even before the job has run: an answer
-then gets the 409 `"There is no claim to answer."`. The expiry is nobody's
+with that delay when the claim is made, does it on time while
+`queue:work` runs. Without a worker the claim still expires: every request
+on the table's playing — `GET .../playing`, a call, a card, a claim
+action, the chat, Start, Next, the heartbeat — first expires a claim whose
+`expires_at` has passed (the request then sees `claim: null`,
+`claim_locked: true`, and a card is played rather than refused), and so
+does `tables:check-away`, every ten seconds, for a table where everyone
+just waits. Whichever comes first clears the claim and sends the one
+`PlayingUpdated`; the others do nothing, as does any of them if the claim
+was accepted, rejected or withdrawn first, or if it is a newer claim with
+its own deadline. So a client re-reading the state just after
+`expires_at` gets the claim cleared. From `expires_at` on no answer
+counts: an answer then gets the 409 `"There is no claim to answer."`. The expiry is nobody's
 sign of life and doesn't touch the away rule; the turn clock restarts then
 (see `turn_deadline`).
 
