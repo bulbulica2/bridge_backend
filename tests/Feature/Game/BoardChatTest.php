@@ -16,6 +16,8 @@ use App\Models\Card;
 use App\Models\Table;
 use App\Models\User;
 use App\Models\UserBan;
+use App\Robots\RobotCarding;
+use App\Services\AuctionService;
 use App\Services\BoardChatService;
 use App\Services\PlayingStateService;
 use App\Services\RobotService;
@@ -29,10 +31,11 @@ use Illuminate\Testing\TestResponse;
 use Tests\TestCase;
 
 /**
- * The board's chat: during the board a player talks to the opponents only,
- * never partner; between boards to all four; once the board is finished
- * everything said is public, and in the review. A question about a robot's
- * call gets the robot's answer at once.
+ * The board's chat: a message to the table reaches all four in every
+ * phase, one to the opponents never reaches partner until the board is
+ * finished; once it is, everything said is public, and in the review. A
+ * question about a robot's call, or a robot defender's card, gets the
+ * robot's answer at once.
  */
 class BoardChatTest extends TestCase
 {
@@ -101,21 +104,36 @@ class BoardChatTest extends TestCase
       ->assertJsonPath('data.messages.0.body', 'Yes, 15–17 balanced');
   }
 
-  public function test_partners_cannot_talk_while_the_board_is_bid_or_played(): void
+  public function test_a_message_to_the_table_reaches_all_four_while_the_board_is_bid_and_played(): void
   {
     $this->humanTable();
 
-    $this->send('N', ['to' => 'table', 'body' => 'Good luck'])
-      ->assertStatus(409)
-      ->assertJsonPath('message', "Partners can't talk while the board is bid or played: send it to the opponents.");
+    $this->send('N', ['to' => 'table', 'body' => 'Good luck, partner'])
+      ->assertCreated()
+      ->assertJsonPath('data.to', 'table')
+      ->assertJsonPath('data.card_index', null);
+    $this->assertSentTo(Seats::SEATS, BoardMessage::sole());
 
     $this->makeCalls('N 1C, E P, S P, W P');
     $this->assertSame('play', app(PlayingStateService::class)->phase($this->playing()));
 
-    $this->send('E', ['to' => 'table', 'body' => 'Nice'])->assertStatus(409);
-    $this->send('E', ['to' => 'opponents', 'body' => 'Nice'])->assertCreated();
+    $this->send('S', ['to' => 'table', 'body' => 'Sorry, I should have bid'])->assertCreated();
+    $this->assertSentTo(Seats::SEATS, BoardMessage::orderByDesc('id')->first());
 
-    $this->assertSame(1, BoardMessage::count());
+    // an opponents message still never reaches partner
+    $this->send('E', ['to' => 'opponents', 'body' => 'We lead fourth best'])->assertCreated();
+    $this->assertSentTo(['E', 'N', 'S'], BoardMessage::orderByDesc('id')->first());
+
+    foreach (['N', 'E', 'S'] as $reader) {
+      $this->messages($reader)->assertJsonCount(3, 'data.messages');
+    }
+
+    // W reads both table messages, from partner and from an opponent
+    $this->messages('W')
+      ->assertJsonCount(2, 'data.messages')
+      ->assertJsonPath('data.messages.0.body', 'Good luck, partner')
+      ->assertJsonPath('data.messages.1.body', 'Sorry, I should have bid')
+      ->assertDontSee('fourth best');
   }
 
   public function test_between_boards_a_message_to_the_table_reaches_all_four(): void
@@ -124,6 +142,7 @@ class BoardChatTest extends TestCase
     $this->makeCalls('N P');
 
     $this->send('N', ['to' => 'opponents', 'body' => 'Weak with clubs'])->assertCreated();
+    $this->send('W', ['to' => 'table', 'body' => 'Hello all'])->assertCreated();
 
     $this->makeCalls('E P, S P, W P');
     $this->assertNotNull($this->playing()->finished_at);
@@ -136,9 +155,10 @@ class BoardChatTest extends TestCase
     // and everyone, partner included, reads everything said at the board now
     foreach (Seats::SEATS as $reader) {
       $this->messages($reader)
-        ->assertJsonCount(2, 'data.messages')
+        ->assertJsonCount(3, 'data.messages')
         ->assertJsonPath('data.messages.0.body', 'Weak with clubs')
-        ->assertJsonPath('data.messages.1.body', 'Well passed');
+        ->assertJsonPath('data.messages.1.body', 'Hello all')
+        ->assertJsonPath('data.messages.2.body', 'Well passed');
     }
 
     // opponents is the same as table now
@@ -147,11 +167,12 @@ class BoardChatTest extends TestCase
 
     $this->actingAs($this->players['S'])->getJson("/playings/{$this->playing()->id}")
       ->assertOk()
-      ->assertJsonCount(3, 'data.messages')
+      ->assertJsonCount(4, 'data.messages')
       ->assertJsonPath('data.messages.0.body', 'Weak with clubs')
       ->assertJsonPath('data.messages.0.seat', 'N')
       ->assertJsonPath('data.messages.0.to', 'opponents')
-      ->assertJsonPath('data.messages.2.body', 'Next');
+      ->assertJsonPath('data.messages.1.to', 'table')
+      ->assertJsonPath('data.messages.3.body', 'Next');
 
     // the live state carries no chat
     $this->actingAs($this->players['S'])->getJson("/tables/{$this->table->id}/playing")
@@ -215,6 +236,78 @@ class BoardChatTest extends TestCase
     $this->send('S', ['to' => 'opponents', 'body' => 'Partner?', 'call_index' => 0])->assertCreated();
 
     $this->assertSame(1, BoardMessage::count());
+  }
+
+  public function test_a_robot_defender_answers_a_question_about_its_card(): void
+  {
+    // robot N declares 3NT and the human S, dummy, plays both hands; robot
+    // E leads the top of its diamond sequence
+    $this->robotTable(human: 'S', hands: [
+      'N' => 'AK2.KQ2.A432.432',
+      'E' => 'JT9.T98.QJT8.AKQ',
+      'S' => 'Q8765.J43.K5.876',
+      'W' => '43.A765.976.JT95',
+    ]);
+
+    $this->makeCalls('N 1NT, E P, S 3NT, W P, N P, E P');
+    $this->driveRobots();
+
+    $this->send('S', ['to' => 'table', 'body' => 'What do you lead?', 'card_index' => 0])
+      ->assertCreated()
+      ->assertJsonPath('data.card_index', 0)
+      ->assertJsonPath('data.call_index', null);
+
+    $answer = BoardMessage::orderByDesc('id')->first();
+    $this->assertSame('E', $answer->seat);
+    $this->assertSame('table', $answer->to);
+    $this->assertSame(0, $answer->card_index);
+    $this->assertNull($answer->call_index);
+    $this->assertSame(RobotCarding::OPENING_LEAD, $answer->body);
+    $this->assertSentTo(['S'], $answer);
+
+    // dummy's card, then W follows to partner's lead: attitude
+    $diamonds = array_filter($this->state('S')->json('data.dummy_hand'), fn ($card) => $card['suit'] === 'D');
+    $this->playCard('S', reset($diamonds)['id']);
+    $this->driveRobots();
+
+    $this->send('S', ['to' => 'opponents', 'body' => 'Was that a signal?', 'card_index' => 2])->assertCreated();
+    $this->assertSame(RobotCarding::ATTITUDE, BoardMessage::orderByDesc('id')->value('body'));
+    $this->assertSame('W', BoardMessage::orderByDesc('id')->value('seat'));
+    $this->assertSame('opponents', BoardMessage::orderByDesc('id')->value('to'));
+
+    // no answer about a card of the asker's own side
+    $this->send('S', ['to' => 'table', 'body' => 'Oops', 'card_index' => 1])->assertCreated();
+
+    $this->assertSame(5, BoardMessage::count());
+    $this->messages('S')->assertJsonCount(5, 'data.messages');
+  }
+
+  public function test_a_card_question_names_a_card_already_played(): void
+  {
+    $this->humanTable();
+    $this->makeCalls('N 1C, E P, S P, W P');
+
+    $this->send('N', ['to' => 'table', 'body' => 'Hi', 'card_index' => 0])
+      ->assertUnprocessable()
+      ->assertJsonValidationErrors(['card_index' => 'There is no card 0 in the play.']);
+    $this->send('N', ['to' => 'table', 'body' => 'Hi', 'card_index' => -1])
+      ->assertUnprocessable()
+      ->assertJsonValidationErrors('card_index');
+
+    $this->playCard('E', $this->state('E')->json('data.hand.0.id'));
+
+    $this->send('N', ['to' => 'table', 'body' => 'Hi', 'card_index' => 0, 'call_index' => 0])
+      ->assertUnprocessable()
+      ->assertJsonValidationErrors('card_index');
+
+    // a human's card gets no robot's answer: E answers in their own words
+    $this->send('N', ['to' => 'opponents', 'body' => 'Fourth best?', 'card_index' => 0])->assertCreated();
+    $this->assertSame(1, BoardMessage::count());
+
+    $this->expectException(IllegalMessageException::class);
+    $this->expectExceptionMessage('There is no card 1 in the play.');
+
+    app(BoardChatService::class)->send($this->table, $this->players['N'], 'Hi', BoardMessage::TO_TABLE, null, 1);
   }
 
   public function test_asking_and_explaining_a_call_go_into_the_chat(): void
@@ -481,17 +574,32 @@ class BoardChatTest extends TestCase
   }
 
   /**
-   * Several calls in turn, written `'N 1H, E P, S X'`.
+   * Several calls in turn, written `'N 1H, E P, S X'`; a robot's are made
+   * for it.
    */
   private function makeCalls(string $calls): void
   {
     foreach (explode(', ', $calls) as $made) {
       [$seat, $call] = explode(' ', $made);
+      $bid = Bid::where('suit', $call)->firstOrFail();
+
+      if (! isset($this->players[$seat])) {
+        app(AuctionService::class)->call($this->table, $this->playing()->seats->firstWhere('seat', $seat)->user, $bid);
+
+        continue;
+      }
 
       $this->actingAs($this->players[$seat])
-        ->postJson("/tables/{$this->table->id}/calls", ['bid_id' => Bid::where('suit', $call)->value('id')])
+        ->postJson("/tables/{$this->table->id}/calls", ['bid_id' => $bid->id])
         ->assertCreated();
     }
+  }
+
+  private function playCard(string $seat, int $cardId): void
+  {
+    $this->actingAs($this->players[$seat])
+      ->postJson("/tables/{$this->table->id}/cards", ['card_id' => $cardId])
+      ->assertCreated();
   }
 
   /**

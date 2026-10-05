@@ -24,6 +24,7 @@ class BoardMessageResource extends JsonResource
       'user_id' => (int) $this->user_id,
       'to' => $this->to,
       'call_index' => $this->call_index,
+      'card_index' => $this->card_index,
       'body' => $this->body,
       'created_at' => $this->created_at,
     ];

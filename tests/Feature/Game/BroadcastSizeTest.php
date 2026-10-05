@@ -183,8 +183,9 @@ class BroadcastSizeTest extends TestCase
       'board_table_id' => $this->playing->id,
       'user_id' => $this->players['N']->id,
       'seat' => 'N',
-      'to' => BoardMessage::TO_OPPONENTS,
+      'to' => BoardMessage::TO_TABLE,
       'call_index' => 318,
+      'card_index' => 51,
       'body' => str_repeat(self::EMOJI['N'], BoardMessage::BODY_MAX),
     ]);
 

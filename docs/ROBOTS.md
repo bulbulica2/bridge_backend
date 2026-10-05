@@ -163,9 +163,29 @@ question went to (`opponents` during the board), with the same
 partner to bid ♠". Unlike the question endpoint, this changes nothing on
 the call itself: it isn't alerted by it.
 
-Robots don't otherwise chat: a message without `call_index`, one about a
-human's call, or one about a robot's call from its own partner gets no
-reply, and nothing a robot decides reads the chat.
+A message with a `card_index` about a card a robot **defender** played,
+from declarer or dummy, is a question about the card play: the robot
+answers it the same way, with the same `card_index`, with its carding
+agreement for that kind of card (`App\Robots\RobotCarding::explain()`,
+the rules of [Card play](#card-play)) — not why it picked that very card:
+
+| The card | The answer |
+|---|---|
+| the opening lead | top of a sequence (A-K, K-Q, Q-J, J-10, 10-9); else from the longest suit, fourth best from four or more, the lowest from three to an honour, the highest from three small, the higher of a doubleton; against a suit, never away from an ace and no trump while there is another suit |
+| a later lead | partner's suit back (the higher of two cards left, else the lowest), our own suit on (the top card when a master or the top of a sequence, else the lowest), a new suit as an opening lead; a lead for partner to ruff is suit preference |
+| following partner's lead | attitude: the highest spot card encourages, the lowest discourages |
+| following declarer's (or dummy's) lead, the suit's first round | count: high with an even number, the lowest with an odd number |
+| following declarer's lead of a suit played before | the lowest card, no signal |
+| a ruff | no signal |
+| a discard | the lowest card of the suit it can best spare: don't lead this suit |
+
+Declarer's and dummy's cards carry no partnership agreement, so a robot
+declarer is never asked for one.
+
+Robots don't otherwise chat: a message without `call_index` or
+`card_index`, one about a human's call or card, or one about a robot's
+call or card from its own partner gets no reply, and nothing a robot
+decides reads the chat.
 
 ### Hand evaluation
 
@@ -1013,6 +1033,7 @@ set — a human alone with three robots presses it once.
 | hand evaluation | `App\Robots\RobotHand` | `tests/Unit/Robots/RobotHandTest` |
 | bidding: the system | `App\Robots\BiddingSystem` (the rules for each position), `App\Robots\BidRule`, `App\Robots\BidMeaning` (a call's meaning and explanation), `App\Robots\AuctionView` (the auction as one seat sees it, legal calls, `shown()`) | `tests/Unit/Robots/RobotBidderTest` |
 | bidding: the robot | `App\Robots\RobotBidder` (`choose()`, `bid()` with the explanation and `alert`, `read()`, `shown()`) | `tests/Unit/Robots/RobotBidderTest` (a case for each convention above, which calls are alerted, and 500 random deals bid by four robots: each call checked by `AuctionService`, and each robot's HCP inside the range its own call shows) |
+| carding answers | `App\Robots\RobotCarding` (`explain()`: what a defender's card means, for the chat) | `tests/Unit/Robots/RobotCardingTest`, `tests/Feature/Game/BoardChatTest` |
 | card play | `App\Robots\RobotCardPlayer` (`choose()`), `App\Robots\PlayView` (what the seat knows: hands it sees, cards out, voids, tricks needed), `App\Robots\DeclarerPlan` (the count and the line), `App\Robots\DeclarerPlay`, `App\Robots\DefenderPlay`, `App\Robots\LeadSafety` (what a defender on lead sees in dummy: ruffs, ruff-and-discards, tenaces, weak suits, a trump to cut the ruffs), `App\Robots\Signals`, `App\Robots\Discards`, `App\Robots\Endgame` (the last four tricks) | `tests/Unit/Robots/RobotCardPlayerTest` (a case for each technique above, and 80 random deals played out, each card checked by `CardPlayService`), `tests/Unit/Robots/DeclarerPlanTest` |
 | double dummy | `App\Robots\DoubleDummy` (`tricks()`, `cardValues()`: an exhaustive search with alpha-beta, fine for endings of a few tricks) | `tests/Unit/Robots/DoubleDummyTest` (against a plain minimax on random endings) |
 | claims | `App\Robots\RobotClaims` (`claim()`, `accepts()`, `doubleDummy()`, `sureWinners()`) | `tests/Unit/Robots/RobotClaimsTest`, `tests/Feature/Game/RobotPlayTest` |

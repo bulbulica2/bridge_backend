@@ -30,8 +30,8 @@ class BoardMessageController extends BaseController
   }
 
   /**
-   * Send a message to the opponents or, between boards, to the whole
-   * table. Answers with the message.
+   * Send a message to the opponents or to the whole table, in any phase,
+   * optionally about a call or a card. Answers with the message.
    */
   public function store(SendMessageRequest $request, Table $table, BoardChatService $chat): JsonResponse
   {
@@ -42,6 +42,7 @@ class BoardMessageController extends BaseController
         $request->validated('body'),
         $request->validated('to'),
         $request->validated('call_index'),
+        $request->validated('card_index'),
       );
     } catch (IllegalMessageException $e) {
       return $this->sendError($e->getMessage(), 409);

@@ -22,10 +22,12 @@ return new class extends Migration
       // the sender's seat: who may read an `opponents` message depends on it
       $table->enum('seat', Seats::SEATS);
       // `opponents`: the sender and their two opponents, never partner;
-      // `table`: all four, only while no board is being bid or played
+      // `table`: all four, in every phase
       $table->enum('to', BoardMessage::TO);
       // the call the message is about (its place in the auction, from 0)
       $table->unsignedSmallInteger('call_index')->nullable();
+      // the card the message is about (its place in the play, from 0)
+      $table->unsignedTinyInteger('card_index')->nullable();
       $table->string('body', BoardMessage::BODY_MAX);
       $table->timestamps();
     });
