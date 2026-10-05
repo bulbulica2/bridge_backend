@@ -11,6 +11,7 @@ use App\Models\Table;
 use App\Models\TableSeat;
 use App\Models\User;
 use App\Robots\RobotBidder;
+use App\Robots\RobotCarding;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -19,14 +20,18 @@ use Illuminate\Support\Facades\DB;
  * players seated at a table, kept against the board in play, or the last
  * one finished.
  *
- * While the board is bid or played a player talks to the opponents only
- * (`opponents`: the sender and both opponents read it, never partner); a
- * message to all four (`table`) waits until the board is finished. Once it
- * is, every message of the board is public, to the table and in the review.
+ * The chat is for everyone at the table, in every phase: a message to the
+ * `table` reaches all four, the sender's partner included, so greetings,
+ * apologies and questions about the other side's agreements are open
+ * table talk. There is no partner-only line: anything partner reads, the
+ * opponents read too. A message to the `opponents` (the sender and both
+ * opponents, never partner) is the other kind; once the board is finished
+ * every message of it is public, to the table and in the review.
  *
- * A message about a call of the other side (`call_index`) is a question:
- * a robot bidder answers it at once with what its system reads into the
- * call. Robots don't otherwise chat.
+ * A message about a call of the other side (`call_index`) or a card of the
+ * other side (`card_index`) is a question: a robot answers it at once,
+ * with what its bidding system reads into the call or what its carding
+ * agreements say of the card. Robots don't otherwise chat.
  */
 class BoardChatService
 {
@@ -60,23 +65,20 @@ class BoardChatService
 
   /**
    * Send `$user`'s message to the current board's chat, `$to` the
-   * opponents or the table, about the call at `$callIndex` (from 0) when
-   * that is set. The playing's row is locked, as for a call or a card, so
-   * the phase can't change under the message.
+   * opponents or the table, about the call at `$callIndex` or the card at
+   * `$cardIndex` (each from 0) when one is set. The playing's row is
+   * locked, as for a call or a card, so the board can't change under the
+   * message.
    *
    * @throws IllegalMessageException
    */
-  public function send(Table $table, User $user, string $body, string $to, ?int $callIndex = null): BoardMessage
+  public function send(Table $table, User $user, string $body, string $to, ?int $callIndex = null, ?int $cardIndex = null): BoardMessage
   {
-    return DB::transaction(function () use ($table, $user, $body, $to, $callIndex) {
+    return DB::transaction(function () use ($table, $user, $body, $to, $callIndex, $cardIndex) {
       $playing = $this->state->currentPlaying($table, lock: true);
 
       if ($playing === null) {
         throw new IllegalMessageException('The table has no board yet: the chat opens with the first deal.');
-      }
-
-      if ($to === BoardMessage::TO_TABLE && $this->state->phase($playing) !== PlayingStateService::PHASE_FINISHED) {
-        throw new IllegalMessageException("Partners can't talk while the board is bid or played: send it to the opponents.");
       }
 
       $seat = self::seatAt($table, $user);
@@ -95,14 +97,36 @@ class BoardChatService
         }
       }
 
-      $message = $this->post($playing, $user, $seat, $to, $body, $callIndex);
+      $plays = $cardIndex === null ? [] : $this->state->plays($playing);
+
+      if ($cardIndex !== null && ! isset($plays[$cardIndex])) {
+        throw new IllegalMessageException("There is no card $cardIndex in the play.");
+      }
+
+      $message = $this->post($playing, $user, $seat, $to, $body, $callIndex, $cardIndex);
 
       // a question about the other side's call: a robot bidder answers it
-      if ($call !== null && $call->seat !== $seat && $call->seat !== Seats::partner($seat)) {
+      if ($call !== null && self::opponents($call->seat, $seat)) {
         $bidder = $playing->seats->firstWhere('seat', $call->seat)->user;
 
         if ($bidder->is_robot) {
           $this->post($playing, $bidder, $call->seat, $to, $this->robotReading($playing, $callIndex), $callIndex);
+        }
+      }
+
+      // a question about a defender's card: a robot defender answers it
+      // with its carding agreement (declarer's cards carry none)
+      if ($cardIndex !== null && self::opponents($plays[$cardIndex]['seat'], $seat)) {
+        $player = $playing->seats->firstWhere('seat', $plays[$cardIndex]['seat'])->user;
+        $carding = RobotCarding::explain(
+          array_map(fn ($play) => ['seat' => $play['seat'], 'suit' => $play['card']->suit], $plays),
+          $cardIndex,
+          $playing->declarer_seat,
+          $this->state->trump($playing),
+        );
+
+        if ($player->is_robot && $carding !== null) {
+          $this->post($playing, $player, $plays[$cardIndex]['seat'], $to, $carding, null, $cardIndex);
         }
       }
 
@@ -117,13 +141,14 @@ class BoardChatService
    * message, and `AuctionService` writes its questions and answers about
    * calls through this too.
    */
-  public function post(BoardTable $playing, User $user, string $seat, string $to, string $body, ?int $callIndex = null): BoardMessage
+  public function post(BoardTable $playing, User $user, string $seat, string $to, string $body, ?int $callIndex = null, ?int $cardIndex = null): BoardMessage
   {
     $message = $playing->messages()->create([
       'user_id' => $user->id,
       'seat' => $seat,
       'to' => $to,
       'call_index' => $callIndex,
+      'card_index' => $cardIndex,
       'body' => mb_substr($body, 0, BoardMessage::BODY_MAX),
     ]);
 
@@ -151,6 +176,14 @@ class BoardChatService
     );
 
     return RobotBidder::read($calls)[$index]->explanation();
+  }
+
+  /**
+   * Whether `$seat` and `$other` are on different sides.
+   */
+  private static function opponents(string $seat, string $other): bool
+  {
+    return $seat !== $other && $seat !== Seats::partner($other);
   }
 
   /**

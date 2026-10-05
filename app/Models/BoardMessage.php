@@ -8,14 +8,15 @@ use Illuminate\Database\Eloquent\Model;
 /**
  * One message of a board's chat (`App\Services\BoardChatService`): sent by
  * `user_id` from `seat`, `to` the opponents or the whole table, about the
- * call at `call_index` of the auction when that is set.
+ * call at `call_index` of the auction or the card at `card_index` of the
+ * play when one is set.
  */
 class BoardMessage extends Model
 {
   /** The sender and their two opponents: never partner. */
   public const TO_OPPONENTS = 'opponents';
 
-  /** All four, only while no board is being bid or played. */
+  /** All four, in every phase: open table talk. */
   public const TO_TABLE = 'table';
 
   public const TO = [self::TO_OPPONENTS, self::TO_TABLE];
@@ -32,6 +33,7 @@ class BoardMessage extends Model
     'seat',
     'to',
     'call_index',
+    'card_index',
     'body',
   ];
 
@@ -39,6 +41,7 @@ class BoardMessage extends Model
   {
     return [
       'call_index' => 'integer',
+      'card_index' => 'integer',
     ];
   }
 

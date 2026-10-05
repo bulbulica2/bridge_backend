@@ -358,9 +358,11 @@ Relations: `bid` (belongsTo).
 ### BoardMessage (`board_messages`)
 Fields: `board_table_id`, `user_id` (both FK), `seat` (enum `Seats::SEATS`,
 the sender's seat), `to` (enum `BoardMessage::TO`: `opponents` — the sender
-and both opponents, never partner — or `table`, all four), `call_index`
-(nullable unsigned small integer, cast: the call of the auction the message
-is about, from 0) and `body` (string, at most `BoardMessage::BODY_MAX` = 500
+and both opponents, never partner — or `table`, all four, in every phase),
+`call_index` (nullable unsigned small integer, cast: the call of the
+auction the message is about, from 0), `card_index` (nullable unsigned tiny
+integer, cast: the card of the play it is about, from 0 in the order
+played) and `body` (string, at most `BoardMessage::BODY_MAX` = 500
 characters). One message of a board's chat (`BoardChatService`,
 [`API.md`](API.md#chat)), against the playing the table was on.
 `visibleTo($seat, $finished)` says who may read it: everyone once the board
@@ -550,6 +552,6 @@ Board ──< BoardTable >── Table        (history: one row per playing,
              │   ├── contract_bid_id ──> Bid, declarer_id ──> User
              │   ├──< Auction >── Bid, User       (one row per call)
              │   ├──< Cardplay >── Card, User     (+seat, +won_trick)
-             │   └──< BoardMessage >── User       (the chat: +seat, +to)
+             │   └──< BoardMessage >── User       (the chat: +seat, +to, +call_index, +card_index)
              └──< BoardTableSeat >── User   (who sat where)
 ```

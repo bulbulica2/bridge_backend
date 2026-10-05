@@ -65,7 +65,7 @@ lobby, profiles, histories, results — stays open.
 | POST | `/tables/{table}/calls/{index}/question` | `Game\CallController@question` | `auth` + seated at the table (`TablePolicy::play`) | ask the opponents what one of their calls means; a robot answers at once (200, the updated game state) |
 | PUT | `/tables/{table}/calls/{index}/explanation` | `Game\CallController@explain` | `auth` + seated at the table (`TablePolicy::play`) | explain your own call: answer a question, fix your alert, or alert late (200, the updated game state) |
 | GET | `/tables/{table}/messages` | `Game\BoardMessageController@index` | `auth` + seated at the table (`TablePolicy::play`) | the current board's [chat](#chat): the messages the caller may read |
-| POST | `/tables/{table}/messages` | `Game\BoardMessageController@store` | `auth` + seated at the table (`TablePolicy::play`) + `throttle:board-messages` (10 per 30 s) | a chat message to the opponents or, between boards, to the table (201, the message) |
+| POST | `/tables/{table}/messages` | `Game\BoardMessageController@store` | `auth` + seated at the table (`TablePolicy::play`) + `throttle:board-messages` (10 per 30 s) | a chat message to the whole table or to the opponents, in any phase, optionally about a call or a card (201, the message) |
 | POST | `/tables/{table}/playing/next` | `Game\PlayingController@next` | `auth` + seated at the table (`TablePolicy::play`) | optional "deal now": the set's next board comes by itself at `next_board_at`; once every human has asked, it is dealt at once (200, the game state; 409 after the set's last board) |
 | POST | `/tables/{table}/cards` | `Game\CardPlayController@store` | `auth` + seated at the table (`TablePolicy::play`) | play the next card of the trick — yours, or dummy's as declarer (201, the updated game state) |
 | POST | `/tables/{table}/claim` | `Game\ClaimController@store` | `auth` + seated at the table (`TablePolicy::play`) | claim some of the remaining tricks for your side, 0 to concede (201, the updated game state) |
@@ -944,16 +944,21 @@ fix to their alert's explanation, or an alert they forgot to make.
 ### Chat
 
 A chat per board, kept with the board (`board_messages`,
-`App\Services\BoardChatService`), for the players seated at the table. An
-alert's few words are often not enough: the opponents ask, and the bidder
-answers in their own words — **without partner reading along**, which
-would be unauthorised information. So a message goes `to`:
+`App\Services\BoardChatService`), for **everyone** seated at the table, in
+every phase: players greet each other, wish good luck, apologise, ask the
+other side about their bidding or their carding ("fourth best, or third
+and fifth?", "is that count?") and answer. A message goes `to`:
 
+- **`table`**: all four read it — the sender's partner and both
+  opponents — in `auction`, `play` and once the board is `finished`. This
+  is open table talk.
 - **`opponents`**: the sender and their two opponents read it, **never the
-  sender's partner**. The only kind allowed while the board is in `auction`
-  or `play`.
-- **`table`**: all four. Only while no board is being bid or played — once
-  the board is `finished` — so partners can't talk mid-board.
+  sender's partner**, until the board is finished: for asking the other
+  side about their agreements and answering without partner reading along,
+  which would be unauthorised information.
+
+There is **no partner-only** message: anything partner reads, the
+opponents read too.
 
 Messages belong to the table's current board: the one in play, or the last
 one finished until the next is dealt. Before the first deal (`waiting`)
@@ -966,8 +971,17 @@ A message with a `call_index` about a call of **the other side** is a
 question. If that call was a **robot's**, the robot answers at once in the
 chat with what its system reads into the call (`"Transfer: 0–17 HCP, 5+ ♠,
 asks partner to bid ♠"`), from its own seat, `to` as the question was, with
-the same `call_index`. A human bidder answers by sending a message
-themselves. Robots don't otherwise chat. A chat message changes nothing on
+the same `call_index`. A message with a `card_index` about a card of the
+other side is a question about the card play the same way: if a **robot
+defender** played it, the robot answers with its carding agreement for
+that kind of card, with the same `card_index` — an opening lead
+(`"Opening lead: the top of a sequence (A-K, K-Q, Q-J, J-10, 10-9);
+otherwise from the longest suit, fourth best from four or more cards, …"`),
+a later lead, attitude on partner's lead, count on declarer's, a ruff or a
+discard ([`ROBOTS.md`](ROBOTS.md#answering-in-the-chat)). Declarer's and
+dummy's cards carry no agreement, so a robot declarer doesn't answer. A
+human answers by sending a message themselves. Robots don't otherwise
+chat. A chat message changes nothing on
 the call itself (its `alert`, `question`): that is what the
 [Alerts](#alerts) endpoints are for, and those write their question and
 answer into the chat as well.
@@ -984,21 +998,25 @@ One message, in every payload (`App\Http\Resources\BoardMessageResource`):
   "user_id": 5,
   "to": "opponents",
   "call_index": 2,
+  "card_index": null,
   "body": "What does 2♥ show?",
   "created_at": "2026-10-05T12:00:00.000000Z"
 }
 ```
 
 `seat` is the sender's seat (the client names them from `players`),
-`call_index` the call's place in `auction` (from 0) or null.
+`call_index` the call's place in `auction` (from 0) or null, `card_index`
+the card's place in the play (from 0, trick by trick, as `tricks` lists
+them) or null; at most one of the two is set.
 
 #### `GET /tables/{table}/messages`
 
 - **200**, message `"Messages retrieved successfully."`, `data`
   `{playing_id, messages}`: the current board's playing (null before the
   first deal, with `messages: []`) and the messages **the caller may
-  read**, oldest first — during the board, every one but partner's
-  `opponents` messages; once it is finished, all of them.
+  read**, oldest first — during the board, every `table` message and
+  every `opponents` message but partner's; once it is finished, all of
+  them.
 - **403** for anyone not seated at this table, and for a banned user;
   **401** for guests; **404** for an unknown table.
 
@@ -1009,17 +1027,19 @@ One message, in every payload (`App\Http\Resources\BoardMessageResource`):
 | `body` | required string, 1–500 characters after trimming, plain text (render it as text, never as HTML) |
 | `to` | required, `opponents` or `table` |
 | `call_index` | optional integer from 0: the call of the current auction the message is about |
+| `card_index` | optional integer from 0: the card of the current play the message is about; not with `call_index` |
 
 - **201**, message `"Message sent."`, `data` the message. It goes out as
   [`BoardMessageSent`](#event-boardmessagesent) to every human who may read
   it, the sender included — never on the table channel.
-- **409** with the reason: `"Partners can't talk while the board is bid or
-  played: send it to the opponents."` (`to: "table"` in `auction` or
-  `play`), `"The table has no board yet: the chat opens with the first
-  deal."`.
+- **409** `"The table has no board yet: the chat opens with the first
+  deal."` before the first deal. Either `to` is accepted in every phase
+  once there is a board.
 - **422** for a missing, blank or too long `body`, a `to` that isn't one of
-  the two, or a `call_index` that isn't a call of the current auction
-  (`"There is no call 5 in the auction."`).
+  the two, a `call_index` that isn't a call of the current auction
+  (`"There is no call 5 in the auction."`), a `card_index` that isn't a
+  card played yet (`"There is no card 5 in the play."`), or both indexes
+  at once.
 - **403** for anyone not seated at this table, and for a banned user (the
   ban's envelope, as on every game action); **429** past 10 messages in 30
   seconds (per user); **401** for guests; **404** for an unknown table.
@@ -1931,8 +1951,9 @@ Class `App\Events\BoardMessageSent`, on `private-App.Models.User.{id}`
 `POST /tables/{table}/messages`, a robot's answer, or a question or answer
 through the [Alerts](#alerts) endpoints: one event to each **human seated
 at the table who may read it**, the sender included (so their other tabs
-see it). An `opponents` message during the board never reaches the
-sender's partner, and no message ever goes on the table channel.
+see it). A `table` message reaches all four humans in every phase; an
+`opponents` message during the board never reaches the sender's partner,
+and no message ever goes on the table channel.
 
 ```json
 {
@@ -1944,6 +1965,7 @@ sender's partner, and no message ever goes on the table channel.
     "user_id": 3,
     "to": "opponents",
     "call_index": 2,
+    "card_index": null,
     "body": "Transfer: 0–17 HCP, 5+ ♠, asks partner to bid ♠",
     "created_at": "2026-10-05T12:00:01.000000Z"
   }
@@ -1992,7 +2014,8 @@ channel stays open.
 - Robots bid a SAYC-style system and play by rules of thumb
   ([`ROBOTS.md`](ROBOTS.md)); better card play is planned as a separate
   issue. Robots never redouble or claim. Robots don't chat, beyond
-  answering a question about one of their calls.
+  answering a question about one of their calls or, as defenders, their
+  cards.
 - No presence channel ("who is online"): idle players are detected by the
   heartbeat only.
 
@@ -2026,10 +2049,10 @@ You can currently only:
    dummy — or is passed out. Every call is pushed as `PlayingUpdated`. Alert
    your conventional calls to the opponents, ask them about theirs, and
    answer their questions ([Alerts](#alerts)); robots alert and answer too.
-   Talk to the opponents during the board, and to the whole table between
-   boards, in the board's [chat](#chat) (`GET`/`POST
-   /tables/{table}/messages`, pushed as `BoardMessageSent`); a question
-   about a robot's call gets its answer at once.
+   Talk to the whole table, or to the opponents only, at any time in the
+   board's [chat](#chat) (`GET`/`POST /tables/{table}/messages`, pushed as
+   `BoardMessageSent`); a question about a robot's call, or a robot
+   defender's card, gets its answer at once.
 10. Play the 13 tricks with `POST /tables/{table}/cards` — declarer plays
     dummy's cards, dummy is face up after the opening lead, follow suit is
     enforced and each trick's winner leads the next. Every card is pushed as

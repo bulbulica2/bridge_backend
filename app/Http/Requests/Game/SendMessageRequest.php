@@ -27,11 +27,14 @@ class SendMessageRequest extends FormRequest
       'to' => ['required', 'string', Rule::in(BoardMessage::TO)],
       // the call the message is about, its place in the auction from 0
       'call_index' => ['nullable', 'integer', 'min:0'],
+      // or the card it is about, its place in the play from 0
+      'card_index' => ['nullable', 'integer', 'min:0', 'prohibits:call_index'],
     ];
   }
 
   /**
-   * `call_index` must be a call of the current board's auction.
+   * `call_index` must be a call of the current board's auction, and
+   * `card_index` a card already played.
    *
    * @return list<callable>
    */
@@ -39,15 +42,22 @@ class SendMessageRequest extends FormRequest
   {
     return [
       function (Validator $validator) {
-        if ($validator->errors()->has('call_index') || $this->input('call_index') === null) {
-          return;
-        }
-
-        $index = (int) $this->input('call_index');
         $playing = app(PlayingStateService::class)->currentPlaying($this->route('table'));
 
-        if ($index >= ($playing?->auctions->count() ?? 0)) {
-          $validator->errors()->add('call_index', "There is no call $index in the auction.");
+        if (! $validator->errors()->has('call_index') && $this->input('call_index') !== null) {
+          $index = (int) $this->input('call_index');
+
+          if ($index >= ($playing?->auctions->count() ?? 0)) {
+            $validator->errors()->add('call_index', "There is no call $index in the auction.");
+          }
+        }
+
+        if (! $validator->errors()->has('card_index') && $this->input('card_index') !== null) {
+          $index = (int) $this->input('card_index');
+
+          if ($index >= ($playing?->cardPlays->count() ?? 0)) {
+            $validator->errors()->add('card_index', "There is no card $index in the play.");
+          }
         }
       },
     ];

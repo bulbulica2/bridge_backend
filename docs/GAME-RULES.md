@@ -136,12 +136,16 @@ opponent may also **ask** about any call of the other side, alerted or not,
 and its bidder answers them the same way. Once the board is over nothing is
 hidden: every alert is shown to all.
 
-**Table talk.** For the same reason partners may not talk to each other
-while a board is bid or played: anything partner says beyond the calls and
-cards is unauthorised information. A player may talk to the **opponents**
-— to ask what a call shows and hear the answer in the bidder's own words,
-which partner must not read along — and the whole table may talk once the
-board is over. After the board, everything said at it is open to all.
+**Table talk.** Players at a table are often strangers, so the whole
+table may talk at any time — greet each other, wish good luck, apologise,
+ask the other side about their bidding or their leads and signals ("fourth
+best, or third and fifth?") and hear the answer. What partners may **not**
+have is a private line: anything partner says beyond the calls and cards
+is unauthorised information, so whatever partner reads the opponents read
+too. A player may also talk to the **opponents** only — to ask what a call
+or a card shows and hear the answer in its player's own words, which
+partner must not read along. After the board, everything said at it is
+open to all.
 
 **In code:**
 - `bids` is a static list of the 38 possible calls (`BidSeeder`): `P` Pass,
@@ -201,17 +205,19 @@ board is over. After the board, everything said at it is open to all.
   director. The question and the answer are also written into the board's
   chat (below).
 - **Table talk** (implemented): the board's chat, `board_messages`
-  (`BoardChatService`, `GET`/`POST /tables/{table}/messages`). During the
-  auction and the play a message may only go `to: opponents` — the sender
-  and both opponents read it, never partner (`BoardMessage::visibleTo()`),
-  and it is pushed only on those players' own channels
-  (`BoardMessageSent`), never the table channel; `to: table` (all four) is
-  a 409 until the board is `finished`. Once it is, every message of the
-  board is visible to all four and in the review (`GET /playings/{playing}`).
-  A message with `call_index` about the other side's call is a question; a
-  robot bidder answers it at once (§9). Not enforced: what is said — a
-  player could tell the opponents something meant for partner's ears, who
-  reads it once the board is over; there is no director.
+  (`BoardChatService`, `GET`/`POST /tables/{table}/messages`). In every
+  phase a message goes `to: table` — all four read it, partner included —
+  or `to: opponents` — the sender and both opponents read it, never
+  partner until the board is finished (`BoardMessage::visibleTo()`). There
+  is no partner-only message. Each is pushed only on its readers' own
+  channels (`BoardMessageSent`), never the table channel. Once the board is
+  `finished` every message of it is visible to all four and in the review
+  (`GET /playings/{playing}`). A message with `call_index` about the other
+  side's call, or `card_index` about the other side's card, is a question;
+  a robot bidder, or a robot defender, answers it at once (§9). Not
+  enforced: what is said — a player could tell the whole table something
+  meant for partner's ears, or tell the opponents something partner reads
+  once the board is over; there is no director.
 - `AuctionSeeder` bids through `AuctionService`, picking random calls among
   the legal ones, so seeded auctions are legal and their results saved the
   same way. `AuctionFactory` still makes a **random, non-legal** call: test
@@ -702,8 +708,10 @@ Rules the robots keep, and that keep them honest:
   opponents, with its system's explanation, and answers a question about
   any of its calls at once (`RobotBidder::read()`, "Natural" for a call no
   rule makes), through the question endpoint or in the board's chat — the
-  list is in [`ROBOTS.md`](ROBOTS.md#alerts). Robots don't otherwise
-  chat.
+  list is in [`ROBOTS.md`](ROBOTS.md#alerts). Asked in the chat about a
+  card it played as a defender, a robot answers with its carding agreement
+  for it (`RobotCarding`: leads, attitude, count, discards). Robots don't
+  otherwise chat.
 - **No peeking.** A robot decides from what its own seat is served
   (`PlayingStateService::stateFor()`): its hand, dummy once face up, a
   claimer's face-up hand and the cards played — never the other hands.
