@@ -45,7 +45,7 @@ php artisan queue:work --sleep=0.1  # sends queued broadcasts to Reverb, moves t
                                   # (RUNNING.md "Keeping the worker running": a restart loop, its stop log, GET /api/health)
 php artisan schedule:work         # runs tables:release-idle-seats and tables:delete-unattended every minute, tables:check-away every 10 s
 php artisan tables:release-idle-seats  # free idle players' seats once, by hand
-php artisan tables:check-away     # mark quiet players away mid-set and forfeit overdue sets, once, by hand
+php artisan tables:check-away     # mark quiet players away mid-set and hand overdue turns' seats to robots, once, by hand
 php artisan tables:delete-unattended   # delete tables only robots have kept, once, by hand
 php artisan migrate:fresh --seed  # rebuild DB with sample data
 php artisan route:list            # actual registered routes
@@ -195,7 +195,7 @@ vendor/bin/pint --test            # check formatting without changing files
   force while `lifted_at` is null and `until` is ahead
   (`UserBan::active()`, `User::activeBan()`), so it ends by itself with
   nothing scheduled, and a new ban closes the one in force. `ban()` frees
-  the seat through `remove(..., walkOut: true)` (mid-set: forfeit at once),
+  the seat through `remove(..., walkOut: kicked)` (mid-set: a robot takes it at once),
   deletes the user's `sessions` rows, replaces their `remember_token` and
   dispatches `UserBanned` on their own channel. A banned user can still log
   in (`GET /api/user` adds `ban`), but the `not-banned` route middleware
@@ -218,28 +218,39 @@ vendor/bin/pint --test            # check formatting without changing files
   mid-set (`BoardSelectionService::currentSet()` null), re-checking each
   seat under its table lock. Reverb can't report disconnects back to
   Laravel, which is why this is a heartbeat and not a presence channel.
-- **Away mid-set / set forfeit**: in the middle of a set a player's going
-  costs their side the set, once the board has waited 3 minutes for them.
-  `table_seats.away_since` marks
+- **Turn clock / away mid-set / walking out**: in the middle of a set the
+  player the board waits for has `bridge.turn_seconds` (60) to act, or a
+  robot takes their seat for the rest of the set. The clock starts at
+  `board_table.turn_started_at`, set by the deal, every call, every card
+  and `BoardTable::clearClaim()` — never a heartbeat, chat or alert;
+  `PlayingStateService::turnDeadline()` (the state's `turn_deadline`, also
+  in `PlayingUpdated`) runs it only for a human non-admin `actingUserId()`
+  in a set's auction or play with no claim pending. `table_seats.away_since` marks
   a held seat: `TableSeatService::leave()` (every player's own Leave, both
   `DELETE` seat routes, answering 202) sets it to now mid-set instead of
   freeing the seat, `touch()` clears it (with a `TableUpdated`), and
   `checkAway()` (`tables:check-away`, `CheckAwayPlayers`, scheduled
   `everyTenSeconds()`) sets it to `last_seen_at` after
-  `bridge.away_seconds` (60) of silence. Only the away player **on turn**
-  (`actingUserId()`; nobody between boards or while a claim is pending)
-  has a clock, `table_seats.forfeit_at`, set to now +
-  `bridge.set_forfeit_minutes` (3) by `syncForfeitClock()` when the board
-  begins waiting for them and cleared when it stops; `leave()`,
-  `remove()`, `touch()`, `checkAway()` and the `RunForfeitClock` listener
-  (after every `PlayingUpdated`, not queued) run it. `checkAway()` takes
-  the player whose clock ran out through `remove()`; once a set is over
-  it frees anyone still away. `remove()` forfeits
-  (`BoardSelectionService::forfeitSet()`, `ended: forfeit`, `forfeited_by`
-  the side from `Seats::side()`) instead of abandoning when the player is
-  away (a sweep or a kick) or `$walkOut` (a move from `seat()`), as decided
-  by `costsTheSet()`: never a robot or an admin, and nobody while an admin
-  at the table is away (no clock runs for those either).
+  `bridge.away_seconds` (60) of silence; away changes nothing about the
+  turn clock. `checkAway()` also finds playings with no move for
+  `turn_seconds` and takes the player whose clock ran out through
+  `remove(..., walkOut: turn_timeout|away)`; once a set is over it frees
+  anyone still away. Sets are never forfeited: `remove()` calls
+  `replaceWithRobot()` instead of abandoning when `$walkOut` says so
+  (`turn_timeout`/`away` from the check, `moved` from `seat()`, `kicked`
+  from a ban) or the player is away (a kick: `kicked`), as decided by
+  `replacementReason()`/`walksOut()`: never a robot or an admin, only while
+  another human stays at the table, and, except for running out of time,
+  nobody while an admin at the table is away. A `RobotPool` robot sits down
+  ready; it takes over the set's seat (`table_set_seats.replaced_user_id`,
+  `replaced_reason` from `TableSetSeat::REASONS`, `replaced_at`) and the
+  open board's hand (`board_table_seats.replaced_user_id`, which board
+  selection still counts as the human's), the board waits afresh
+  (`turn_started_at`), and `PlayingUpdated` gets the robots moving.
+  `seat()` refuses the replaced human at that table until the set is over;
+  `seatedAsIn()` compares the table with the set's seats, so the robot is
+  one of the four. Counting a walk-out against the player (an "abandon")
+  is #121's.
 - **Boards**: `App\Services\BoardSelectionService` owns which board a table
   plays and when. Filling the table deals nothing by itself: each human
   presses **Start** (`start()`, `POST /tables/{table}/start`, sets
@@ -270,9 +281,9 @@ vendor/bin/pint --test            # check formatting without changing files
   `moveOn()` 409s ("The set is over: press Start for a new one.") and
   `start()` accepts a Start with the same four seated; robots don't ask
   then. `remove()` ends an unfinished set as `abandoned` (`abandonSet()`),
-  even between boards, or `forfeit` (see Away mid-set). Sets outlive their
-  table; `PlayingResource` and `TableResource` show
-  `set: {id, number, board, of, finished, ended, forfeited_by}`.
+  even between boards, unless a robot takes over (see Turn clock). Sets
+  outlive their table; `PlayingResource` and `TableResource` show
+  `set: {id, number, board, of, finished, ended, replaced}`.
   After a board finishes it stays on the table (the state then shows the
   whole `deal` and `ready`) until that timer, or until `moveOn()`
   (`POST /tables/{table}/playing/next`, `Game\PlayingController@next`, an
@@ -425,8 +436,9 @@ vendor/bin/pint --test            # check formatting without changing files
   lands a second before. The `sync` test queue runs the job at once (not
   due, so a no-op): tests travel in time and run it themselves.
 - **Robots**: `users.is_robot` players from a `robot-<n>` pool
-  (`App\Services\RobotService::seatRobot()`, always with the asking human
-  as `$by`, so a busy robot is never moved). They can't log in
+  (`App\Services\RobotPool`; `RobotService::seatRobot()` seats one, always
+  with the asking human as `$by`, so a busy robot is never moved, and
+  `TableSeatService::remove()` one in a walked-out player's seat). They can't log in
   (`LoginRequest` adds `is_robot = false`), and registration refuses
   `robot-*` usernames. The queued listener `App\Listeners\DriveRobots`
   (auto-discovered, delay `bridge.robot_delay_seconds`) runs

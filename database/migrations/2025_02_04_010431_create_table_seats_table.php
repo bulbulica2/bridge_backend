@@ -26,13 +26,9 @@ return new class extends Migration
       $table->timestamp('ready_at')->nullable();
       // mid-set only: since when the player has been away, i.e. their last
       // sign of life once tables:check-away noticed a minute without one, or
-      // when they pressed Leave
+      // when they pressed Leave. Their seat is held; the turn clock
+      // (board_table.turn_started_at) decides when the board stops waiting
       $table->timestamp('away_since')->nullable();
-      // the forfeit clock: set only for an away player the board is waiting
-      // for (on turn), to bridge.set_forfeit_minutes after it began waiting
-      // for them. Their side forfeits the set then unless they come back
-      // first. Null for everyone else, admins included
-      $table->timestamp('forfeit_at')->nullable();
       $table->timestamps();
 
       // one user per seat at a table

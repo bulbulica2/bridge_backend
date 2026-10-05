@@ -45,7 +45,7 @@ class SweepRaceTest extends TestCase
     // freeing the first table's seat, its last players leave the second
     $this->onFirst(TableSeat::class, 'deleted', fn () => $second->delete());
 
-    $this->assertSame(['away' => 0, 'forfeited' => 0, 'freed' => 1], $this->seats->checkAway());
+    $this->assertSame(['away' => 0, 'timed_out' => 0, 'freed' => 1], $this->seats->checkAway());
 
     $this->assertNull($firstAway->seats()->first());
     $this->assertModelExists($first);

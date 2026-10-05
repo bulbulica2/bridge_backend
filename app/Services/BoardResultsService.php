@@ -98,8 +98,9 @@ class BoardResultsService
    * The winner is the side with the higher total score, the boards'
    * `score_ns` added up: matchpoints only compare a pair with the other
    * tables, and a board played at one table has none to give. Null while
-   * the set is unfinished, when it was abandoned, and on a tie; a forfeit
-   * hands it to the other side.
+   * the set is unfinished, when it was abandoned, and on a tie. A side a
+   * robot played for after its human walked out (`replaced`) can still win
+   * it.
    *
    * @return array<string, mixed>
    */
@@ -146,8 +147,8 @@ class BoardResultsService
       'finished_at' => $set->finished_at,
       'finished' => $set->isFinished(),
       'ended' => $set->ended,
-      'forfeited_by' => $set->forfeited_by,
       'players' => $players,
+      'replaced' => $set->replacements(),
       'boards' => $boards->all(),
       'totals' => [
         'score' => ['ns' => $scoreNs, 'ew' => -$scoreNs],
@@ -155,7 +156,6 @@ class BoardResultsService
         'top' => $top,
       ],
       'winner' => match (true) {
-        $set->ended === TableSet::ENDED_FORFEIT => $set->forfeited_by === 'NS' ? 'EW' : 'NS',
         $set->ended !== TableSet::ENDED_COMPLETED, $scoreNs === 0 => null,
         default => $scoreNs > 0 ? 'NS' : 'EW',
       },

@@ -40,7 +40,8 @@ class PlayingResource extends JsonResource
 
   /**
    * Leave out what only means something at a live table: `ready`, who has
-   * asked for the next board, and `next_board_at`, when it is dealt. Add
+   * asked for the next board, `next_board_at`, when it is dealt, and
+   * `turn_deadline`, when the player on turn runs out of time. Add
    * each call's `alert` and the board's chat, `messages`, all public once
    * the board is over, and the double dummy analysis, `double_dummy`.
    */
@@ -68,6 +69,7 @@ class PlayingResource extends JsonResource
         'players' => null,
         'turn' => null,
         'acting_user_id' => null,
+        'turn_deadline' => null,
         'auction' => null,
         'contract' => null,
         ...self::play(null),
@@ -103,6 +105,8 @@ class PlayingResource extends JsonResource
       'players' => $players,
       'turn' => $state->turn($playing),
       'acting_user_id' => $state->actingUserId($playing),
+      // when the acting user's turn clock runs out, if they have one
+      'turn_deadline' => $this->when($this->live, fn () => $state->turnDeadline($playing)),
       'auction' => $this->auction($playing),
       // null during the auction, and for good on a passed out board
       'contract' => $playing->contractBid === null ? null : [
@@ -152,10 +156,11 @@ class PlayingResource extends JsonResource
    * Where a table is in a set: its id (for `GET /sets/{set}`), its number at
    * the table, `board`, the board's place in it, `of`, how many boards it
    * has, and `finished`, true once it is over — after its last board, or as
-   * `ended` says, earlier (`abandoned` when one of its four left,
-   * `forfeit` when a player of `forfeited_by`'s side was away too long).
+   * `ended` says, earlier (`abandoned` when one of its four left), and
+   * `replaced`, the players a robot took a seat over from mid-set
+   * (`TableSet::replacements()`).
    *
-   * @return array{id: int, number: int, board: int, of: int, finished: bool, ended: string|null, forfeited_by: string|null}
+   * @return array{id: int, number: int, board: int, of: int, finished: bool, ended: string|null, replaced: list<array{seat: string, user_id: int, reason: string}>}
    */
   public static function set(TableSet $set, int $board): array
   {
@@ -166,7 +171,7 @@ class PlayingResource extends JsonResource
       'of' => $set->size,
       'finished' => $set->isFinished(),
       'ended' => $set->ended,
-      'forfeited_by' => $set->forfeited_by,
+      'replaced' => $set->replacements(),
     ];
   }
 

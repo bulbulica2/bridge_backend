@@ -38,8 +38,9 @@ use RuntimeException;
  * Start opens a set with its first board, the rest follow as above, and
  * after the last one Next is refused and it takes everyone's Start again to
  * open the next set. A set one of its four players leaves is over too
- * (`abandonSet()`), and one a player is away from too long is lost by their
- * side (`forfeitSet()`).
+ * (`abandonSet()`), except when they walk out on it (their turn clock runs
+ * out, they move tables, are kicked while away or banned): a robot takes
+ * their seat and the set goes on (`TableSeatService::remove()`).
  */
 class BoardSelectionService
 {
@@ -153,6 +154,8 @@ class BoardSelectionService
       'table_set_id' => $set->id,
       'set_position' => $set->playings()->reorder()->count() + 1,
       'started_at' => now(),
+      // the dealer's turn clock, if they have one
+      'turn_started_at' => now(),
     ]);
 
     foreach ($seats as $seat) {
@@ -220,24 +223,6 @@ class BoardSelectionService
       ->where('table_id', $table->id)
       ->whereNull('finished_at')
       ->each(fn (TableSet $set) => $set->end(TableSet::ENDED_ABANDONED));
-
-    $table->unsetRelation('latestSet');
-  }
-
-  /**
-   * End the table's set as lost by `$side` (`NS` or `EW`): one of its
-   * players was away too long, or walked out on it for another table
-   * (`TableSeatService::remove()`). The board on the table goes as on any
-   * leave (`abandonPlaying()`), unscored.
-   *
-   * Does nothing once the set is over.
-   */
-  public function forfeitSet(Table $table, string $side): void
-  {
-    TableSet::query()
-      ->where('table_id', $table->id)
-      ->whereNull('finished_at')
-      ->each(fn (TableSet $set) => $set->forfeit($side));
 
     $table->unsetRelation('latestSet');
   }
@@ -372,7 +357,13 @@ class BoardSelectionService
         return null;
       }
 
-      if ($playing->seats()->whereNull('ready_at')->whereHas('user', fn ($user) => $user->humans())->exists()) {
+      // a player a robot has taken over from since this board isn't asked
+      $waiting = $playing->seats()
+        ->whereNull('ready_at')
+        ->whereIn('user_id', $table->seats()->select('user_id'))
+        ->whereHas('user', fn ($user) => $user->humans());
+
+      if ($waiting->exists()) {
         PlayingUpdated::dispatch($table);
 
         return null;
@@ -390,12 +381,13 @@ class BoardSelectionService
    * Deal the set's next board by itself once finished playing `$playingId`
    * has been on show for `bridge.next_board_seconds` (`nextBoardAt()`), for
    * the same four, as the last human's Next would (`moveOn()`), with the
-   * same events. Away players are dealt to as well: their turn waits, and
-   * the away clock runs on.
+   * same events. Robots that took over a seat mid-set play on. Away
+   * players are dealt to as well: once the board waits
+   * for them, their turn clock runs as anyone's does.
    *
    * Deals nothing when, by now, the table has moved on (everyone asked, or
    * this ran twice), the playing has left its table, a seat is empty or has
-   * changed hands, or the set is over (its last board, or a forfeit) —
+   * changed hands, or the set is over (its last board, or abandoned) —
    * or the time hasn't come yet. Run by `DealNextBoard`.
    *
    * Returns the new playing, or null when nothing was dealt. Mutates
@@ -510,7 +502,9 @@ class BoardSelectionService
    * should rotate as much as possible, so players never recognise a deal.
    *
    * Robots' history doesn't count: they don't remember deals, and a busy
-   * robot pool would soon have played every board.
+   * robot pool would soon have played every board. A human a robot took a
+   * hand over from mid-board (`board_table_seats.replaced_user_id`) has seen
+   * that deal, so it counts as theirs.
    *
    * @param  Collection<int, \App\Models\TableSeat>  $seats  with their users
    */
@@ -519,8 +513,9 @@ class BoardSelectionService
     $seats = $seats->reject(fn ($seat) => $seat->user->is_robot);
 
     // 1. a board none of these four has ever played
+    $ids = $seats->pluck('user_id');
     $playedByAnyone = BoardTable::query()
-      ->whereHas('seats', fn (Builder $q) => $q->whereIn('user_id', $seats->pluck('user_id')))
+      ->whereHas('seats', fn (Builder $q) => $q->whereIn('user_id', $ids)->orWhereIn('replaced_user_id', $ids))
       ->select('board_id');
 
     $board = $this->unplayedAtTable($table)->whereNotIn('id', $playedByAnyone)->inRandomOrder()->first();
@@ -534,9 +529,9 @@ class BoardSelectionService
       ->whereHas('seats', function (Builder $q) use ($seats) {
         $q->where(function (Builder $pairs) use ($seats) {
           foreach ($seats as $seat) {
-            $pairs->orWhere(
-              fn (Builder $pair) => $pair->where('user_id', $seat->user_id)->where('seat', $seat->seat)
-            );
+            $pairs->orWhere(fn (Builder $pair) => $pair
+              ->where(fn (Builder $who) => $who->where('user_id', $seat->user_id)->orWhere('replaced_user_id', $seat->user_id))
+              ->where('seat', $seat->seat));
           }
         });
       })

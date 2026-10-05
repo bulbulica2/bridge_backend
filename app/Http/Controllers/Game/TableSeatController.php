@@ -28,8 +28,8 @@ class TableSeatController extends BaseController
     TableSeatService $seatService,
     PlayingStateService $state
   ): JsonResponse {
-    // a move off a table mid-set loses that set: say so
-    $forfeited = $seatService->moveForfeits($table, $request->user());
+    // a move off a table mid-set hands the seat there to a robot: say so
+    $replaced = $seatService->moveReplaces($table, $request->user());
 
     try {
       $seatService->seat($table, $request->user(), $request->validated('seat'));
@@ -43,7 +43,7 @@ class TableSeatController extends BaseController
     // the table may hold a finished board: hand back the caller's state
     return $this->sendResponse(
       (new TableResource($table))->withPlaying($state->dealtStateFor($table, $request->user())),
-      'Seat taken successfully.'.($forfeited ? ' You walked out on a set at your old table, so your side forfeited it.' : ''),
+      'Seat taken successfully.'.($replaced ? ' You walked out on a set at your old table, so a robot took your seat there.' : ''),
       201
     );
   }
@@ -129,9 +129,8 @@ class TableSeatController extends BaseController
         return $this->leaveResponse($table, $seatService->leave($table, $user));
       }
 
-      // kicking a player who is away mid-set costs their side the set, as
-      // their time running out would
-      $forfeited = $seatService->removalForfeits($table, $user);
+      // kicking a player who is away mid-set hands their seat to a robot
+      $replaced = $seatService->removalReplaces($table, $user);
       $tableDeleted = $seatService->remove($table, $user, $request->user());
     } catch (SeatUnavailableException $e) {
       // the seat is addressed in the URL, so "nobody sits there" is a 404
@@ -141,7 +140,7 @@ class TableSeatController extends BaseController
     return $this->removalResponse(
       $table,
       $tableDeleted,
-      'Player removed from the table.'.($forfeited ? ' They were away mid-set, so their side forfeited it.' : '')
+      'Player removed from the table.'.($replaced ? ' They were away mid-set, so a robot took their seat.' : '')
     );
   }
 
@@ -174,12 +173,12 @@ class TableSeatController extends BaseController
 
     $table->load('seats.user');
 
-    $minutes = config('bridge.set_forfeit_minutes');
+    $seconds = config('bridge.turn_seconds');
 
     return $this->sendResponse(
       new TableResource($table),
-      'You left in the middle of a set: your seat is held. Once the table is waiting for you, come back within '
-        .$minutes.' '.($minutes === 1 ? 'minute' : 'minutes').', or your side forfeits the set.',
+      'You left in the middle of a set: your seat is held. Once the table is waiting for you, you have '
+        .$seconds.' '.($seconds === 1 ? 'second' : 'seconds').' to play, or a robot takes your seat for the rest of the set.',
       202
     );
   }

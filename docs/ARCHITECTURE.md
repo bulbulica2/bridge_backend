@@ -91,8 +91,8 @@ the same pattern:
 
 | Service | Responsible for | Tests |
 |---|---|---|
-| `TableSeatService` | joining, moving, leaving and kicking (`seat()`, `leave()`, `remove()`), heartbeats (`touch()`), freeing idle seats (`releaseIdleSeats()`), the away rule and set forfeit (`checkAway()`, `costsTheSet()`) and deleting unattended tables (`deleteUnattendedTables()`) | `tests/Feature/Table*` |
-| `BoardSelectionService` | which board a table plays and when: Start (`start()`, `withdrawStart()`), deals once a full table's humans have all pressed it (`startIfReady()`) as the first board of a new set, moves on after a finished board within the set (by itself after `bridge.next_board_seconds`, `dealNext()` from the queued `App\Jobs\DealNextBoard`, or at once once every human asked, `moveOn()`), detaches a board abandoned mid-play (`abandonPlaying()`) and ends a set one of its players left (`abandonSet()`) or a side lost by going away (`forfeitSet()`) | `tests/Feature/Table/StartBoardTest`, `AssignBoardTest`, `SetForfeitTest`, `tests/Feature/Game/NextBoardTest`, `AutoNextBoardTest`, `BoardSetTest` |
+| `TableSeatService` | joining, moving, leaving and kicking (`seat()`, `leave()`, `remove()`), heartbeats (`touch()`), freeing idle seats (`releaseIdleSeats()`), the away rule and turn clock (`checkAway()`), a robot taking the seat of a player who walks out on a set (`replaceWithRobot()`, `walksOut()`) and deleting unattended tables (`deleteUnattendedTables()`) | `tests/Feature/Table*` |
+| `BoardSelectionService` | which board a table plays and when: Start (`start()`, `withdrawStart()`), deals once a full table's humans have all pressed it (`startIfReady()`) as the first board of a new set, moves on after a finished board within the set (by itself after `bridge.next_board_seconds`, `dealNext()` from the queued `App\Jobs\DealNextBoard`, or at once once every human asked, `moveOn()`), detaches a board abandoned mid-play (`abandonPlaying()`) and ends a set one of its players left (`abandonSet()`) | `tests/Feature/Table/StartBoardTest`, `AssignBoardTest`, `AwayMidSetTest`, `tests/Feature/Game/TurnTimerTest`, `tests/Feature/Game/NextBoardTest`, `AutoNextBoardTest`, `BoardSetTest` |
 | `PlayingStateService` | the one place that works out a playing's phase, calls, cards, turn, who acts (`actingUserId()`, with `dummyPlaysForDeclarer()`: a human dummy plays a robot declarer's cards), the hands, dummy and a human dummy's `declarer_hand` | feature tests (`HumanDummyPlaysTest` for the human dummy) |
 | `AuctionService` | one call (`call()`, with its self-alert), a question about a call (`ask()`) and its bidder's answer (`explain()`), both also written into the chat; `nextToCall`, `illegalReason`, `isOver`, `result` | `tests/Unit/AuctionServiceTest`, `tests/Feature/Game/BidAlertTest` |
 | `BoardChatService` | the board's chat: who may read a message (`messagesFor()`, `BoardMessage::visibleTo()`: never partner's `opponents` message until the board is finished), sending one (`send()`: `table` or `opponents` in every phase, a robot answering a question about its call with `robotReading()` or, as a defender, about its card with `RobotCarding::explain()`), and `post()`, which writes a message and pushes it to its human readers — `AuctionService` writes its questions and answers through it | `tests/Feature/Game/BoardChatTest` |
@@ -101,8 +101,9 @@ the same pattern:
 | `ScoringService` | duplicate scoring (`score()`, from declarer's side) and matchpoints (`matchpoints()`), pure static functions | `tests/Unit/ScoringTest` |
 | `BoardResultsService` | reads finished playings back for results across tables, a set's results (`set()`, `maySeeSet()`) and a player's history | feature tests (`BoardResultsTest`, `BoardSetTest`) |
 | `DoubleDummyService` | double dummy analysis: queues a board's table when it is dealt (`queueTable()`, from `deal()`) and a contract's opening leads when a playing finishes (`queueLeads()`, from `BoardTable::finish()`), solves and stores each once (`solveTable()`, `solveLeads()`, run by `App\Jobs\SolveDoubleDummyTable` / `SolveOpeningLeads`), and reads them back (`forBoard()`, `forPlaying()`: `ready`, `pending` — queueing what is missing — or `unavailable`) | `tests/Feature/Game/DoubleDummyTest` (fake solver), `tests/Unit/DdsSolverTest` (real DDS) |
-| `RobotService` | robot players: the pool they are seated from (`seatRobot()`), and one robot move at a time (`act()`: a call, a card or a claim, the robots' claim answers, ready) through the services above | `tests/Feature/Game/RobotPlayTest`, `tests/Feature/Table/RobotSeatingTest` |
-| `UserBanService` | an admin's bans (`ban()`, `lift()`): a ban frees the user's seat through `TableSeatService::remove()` as a walk-out (mid-set their side forfeits at once), deletes their `sessions` rows, replaces their remember token and sends `UserBanned`; a new ban replaces the one in force | `tests/Feature/User/UserBanTest` |
+| `RobotPool` | the robots seats are filled from: an idle one, made when every robot is busy (`idle()`); used by `RobotService::seatRobot()` and `TableSeatService::remove()` | through the seating tests |
+| `RobotService` | robot players: seating one on a manager's say-so (`seatRobot()`), and one robot move at a time (`act()`: a call, a card or a claim, the robots' claim answers, ready) through the services above | `tests/Feature/Game/RobotPlayTest`, `tests/Feature/Table/RobotSeatingTest` |
+| `UserBanService` | an admin's bans (`ban()`, `lift()`): a ban frees the user's seat through `TableSeatService::remove()` as a walk-out (mid-set a robot takes the seat at once), deletes their `sessions` rows, replaces their remember token and sends `UserBanned`; a new ban replaces the one in force | `tests/Feature/User/UserBanTest` |
 
 Things worth knowing before you change them:
 
@@ -145,24 +146,31 @@ Things worth knowing before you change them:
   completes the set on its last board — after which `moveOn()` 409s and
   `start()` accepts a Start even with the same four seated. `remove()` ends
   an unfinished set as `abandoned` (`abandonSet()`), even between boards —
-  or as lost by the leaver's side (`forfeitSet()`) when they were away or
-  are moving to another table.
+  unless the leaver walked out on it (ran out of time on their turn, moved
+  to another table, was kicked while away or banned) and another human
+  stays: then `replaceWithRobot()` sits a `RobotPool` robot in the seat,
+  hands it the set's seat (`table_set_seats.replaced_user_id`/`_reason`)
+  and the open board's hand (`board_table_seats.replaced_user_id`, which
+  board selection still counts as the human's), and the set and board go
+  on; `seat()` keeps the human out of that table until the set is over,
+  and `seatedAsIn()` compares the table with the set's seats.
 - **Away mid-set.** In the middle of a set a seat is never just freed by
   its player going: `TableSeatService::leave()` holds it on a Leave
   (`table_seats.away_since`), `checkAway()` marks quiet players away after
   `bridge.away_seconds` (60); `touch()` (any sign of life) brings them
-  back. Only the away player on turn has a forfeit clock
-  (`table_seats.forfeit_at`, `bridge.set_forfeit_minutes` (3) from when the
-  board began waiting for them): `syncForfeitClock()` sets and clears it
-  from `PlayingStateService::actingUserId()` (nobody on turn between boards
-  or while a claim is pending), run by `leave()`, `remove()`, `touch()`,
-  `checkAway()` and, after every `PlayingUpdated`, the
-  `App\Listeners\RunForfeitClock` listener (not queued: it runs right after
-  the move's commit, so the clock starts as the turn moves, not at the next
-  check). `checkAway()` takes the player whose clock ran out through
-  `remove()`, which forfeits the set for their side. `costsTheSet()` holds
-  the exceptions: robots are never away, an admin never has a clock, and
-  while an admin is away nobody does (Leave is then immediate).
+  back. Away or not, the player on turn has a **turn clock**:
+  `board_table.turn_started_at`, set by the deal, every call and card and a
+  cleared claim (never by a heartbeat), plus `bridge.turn_seconds` (60) —
+  `PlayingStateService::turnDeadline()`, the state's `turn_deadline`, null
+  for a robot or an admin, between boards and while a claim is pending.
+  Being stored on the playing and moved only by moves, it rides on the
+  `PlayingUpdated` each move sends anyway. `checkAway()` takes the player
+  whose clock ran out through `remove(..., walkOut: turn_timeout|away)`,
+  which hands their seat to a robot. `replacementReason()` and
+  `walksOut()` hold the exceptions: robots are never away, an admin is
+  never replaced, while an admin is away a Leave or move is immediate and
+  abandons (running out of time still hands the seat over), and with no
+  other human left the set is abandoned.
   Sets outlive their table like playings do; `TableResource` and
   `PlayingResource` show where the table is as `set`.
   Start, like Next, takes the table row lock that seat changes take. A playing abandoned mid-board is
@@ -287,8 +295,8 @@ to run it: [`RUNNING.md`](RUNNING.md#realtime-reverb)).
 
 | Event | Channel | Carries | Sent when |
 |---|---|---|---|
-| `TableUpdated` | `table.{id}` | the `TableResource` JSON, without `can_manage` | any seat change that didn't delete the table, a Start pressed or taken back, a board dealt, a player away or back, a forfeit clock started or stopped |
-| `PlayingUpdated` | `table.{id}` | the public game state (no hand, no `my_seat`) in its compact shape (`PlayingResource::compact()`: cards and bids as ids) | a board is dealt, and after every accepted call, card or claim action (a robot's too); `DriveRobots` and `RunForfeitClock` listen to it |
+| `TableUpdated` | `table.{id}` | the `TableResource` JSON, without `can_manage` | any seat change that didn't delete the table, a Start pressed or taken back, a board dealt, a player away or back, a robot taking a walked-out player's seat |
+| `PlayingUpdated` | `table.{id}` | the public game state (no hand, no `my_seat`) in its compact shape (`PlayingResource::compact()`: cards and bids as ids) | a board is dealt, after every accepted call, card or claim action (a robot's too), and when a robot takes a walked-out player's seat; `DriveRobots` listens to it |
 | `HandDealt` | `App.Models.User.{id}` | that player's 13 cards | a board is dealt (humans only) |
 | `DeclarerHandShown` | `App.Models.User.{id}` | declarer's 13 cards (`declarer_hand`) | an auction ends with a robot declarer and a human dummy, who plays both hands (to that human only; `AuctionService`) |
 | `CallAlerted` | `App.Models.User.{id}` | `index` of the call in the auction, its `explanation` | a call is alerted or its bidder explains it (a robot's too): to each human opponent of the bidder, never partner (`AuctionService::alertTo()`) |
@@ -375,9 +383,10 @@ Three long-running processes sit next to `php artisan serve`:
   robots have kept for `bridge.unattended_table_minutes` (10)); and every
   **ten seconds** `tables:check-away` (`App\Console\Commands\CheckAwayPlayers`,
   `TableSeatService::checkAway()`), since a minute is too coarse for the
-  three-minute set forfeit. It is a frequent check rather than a delayed
-  job per away player: being away starts with a heartbeat that *doesn't*
-  come, which no event marks.
+  one-minute turn clock. It is a frequent check rather than a delayed
+  job per turn or per away player: being away starts with a heartbeat that
+  *doesn't* come, which no event marks, and one check serves both rules
+  without queueing a job for every call and card.
 
 Reverb can't tell Laravel that a client disconnected, so the backend tracks
 presence with a heartbeat instead: `table_seats.last_seen_at` is set by
@@ -386,10 +395,11 @@ presence with a heartbeat instead: `table_seats.last_seen_at` is set by
 to any new one. `tables:release-idle-seats` frees seats idle for
 `config('bridge.idle_seat_minutes')` (5) at a table that isn't mid-set,
 through the normal `remove()`, so it behaves exactly like the player
-leaving; mid-set `tables:check-away` marks them away instead and forfeits
-the set after three minutes. Robots send no heartbeat, so both skip them;
-an admin's seat is never freed by either (`tables:check-away` may show an
-admin away, but never forfeits or frees for it).
+leaving; mid-set `tables:check-away` marks them away instead, and hands
+the seat of whoever lets their turn clock run out to a robot. Robots send
+no heartbeat, so both skip them; an admin's seat is never freed by either
+(`tables:check-away` may show an admin away, but never replaces or frees
+them for it).
 
 All three keep the old code loaded: restart them after changing PHP.
 

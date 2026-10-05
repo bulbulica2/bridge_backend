@@ -87,6 +87,9 @@ class MoveBetweenTablesTest extends TestCase
 
     $playing = BoardTable::where('table_id', $old->id)->firstOrFail();
 
+    // an admin is never replaced by a robot (AwayMidSetTest): their move
+    // abandons the set, and the board with it
+    $players['S']->forceFill(['is_admin' => true])->save();
     $this->seats->seat(Table::factory()->create(['board_id' => null]), $players['S'], 'N');
 
     // kept with its snapshot, cut loose from the table

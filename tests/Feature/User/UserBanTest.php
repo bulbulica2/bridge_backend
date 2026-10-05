@@ -8,6 +8,7 @@ use App\Events\UserBanned;
 use App\Models\Table;
 use App\Models\TableSeat;
 use App\Models\TableSet;
+use App\Models\TableSetSeat;
 use App\Models\User;
 use App\Models\UserBan;
 use App\Services\TableSeatService;
@@ -22,7 +23,7 @@ use Tests\TestCase;
 
 /**
  * POST/DELETE /users/{user}/ban — an admin keeping a user away from the
- * game for some days: their seat is freed (mid-set their side forfeits),
+ * game for some days: their seat is freed (mid-set a robot takes it),
  * they are logged out, and every game action is refused until the ban runs
  * out or is lifted. They may still log in and read why.
  */
@@ -86,7 +87,7 @@ class UserBanTest extends TestCase
     $this->assertDatabaseCount('user_bans', 0);
   }
 
-  public function test_banning_a_player_mid_set_forfeits_it_at_once_logs_them_out_and_tells_them(): void
+  public function test_banning_a_player_mid_set_hands_their_seat_to_a_robot_logs_them_out_and_tells_them(): void
   {
     $this->seed([CardSeeder::class, BidSeeder::class]);
     [$table, $players] = $this->fullTable();
@@ -102,7 +103,7 @@ class UserBanTest extends TestCase
 
     $this->ban($players['E'], 7, 'Playing two accounts at once.')
       ->assertCreated()
-      ->assertJsonPath('message', 'User banned until '.now()->addDays(7)->format('j M Y').'. They were in the middle of a set, so their side forfeited it.')
+      ->assertJsonPath('message', 'User banned until '.now()->addDays(7)->format('j M Y').'. They were in the middle of a set, so a robot took their seat.')
       ->assertJsonPath('data.user_id', $players['E']->id)
       ->assertJsonPath('data.reason', 'Playing two accounts at once.')
       ->assertJsonPath('data.until', now()->addDays(7)->toJSON())
@@ -110,12 +111,13 @@ class UserBanTest extends TestCase
       ->assertJsonPath('data.lifted_at', null)
       ->assertJsonPath('data.active', true);
 
-    // no grace period: the set is lost and the seat free right away
+    // no grace period: a robot plays their seat on right away
     $set = TableSet::sole();
-    $this->assertSame(TableSet::ENDED_FORFEIT, $set->ended);
-    $this->assertSame('EW', $set->forfeited_by);
+    $this->assertNull($set->ended);
+    $this->assertSame(TableSetSeat::REASON_KICKED, TableSetSeat::where('seat', 'E')->sole()->replaced_reason);
     $this->assertDatabaseMissing('table_seats', ['user_id' => $players['E']->id]);
-    Event::assertDispatched(TableUpdated::class, fn ($event) => $event->table['set']['ended'] === 'forfeit');
+    $this->assertTrue($table->seats()->where('seat', 'E')->sole()->user->is_robot);
+    Event::assertDispatched(TableUpdated::class, fn ($event) => $event->table['set']['replaced'][0]['reason'] === 'kicked');
 
     // logged out everywhere, remember-me included; nobody else is
     $this->assertDatabaseMissing('sessions', ['user_id' => $players['E']->id]);

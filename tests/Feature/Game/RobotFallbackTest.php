@@ -14,6 +14,7 @@ use App\Services\BoardSelectionService;
 use App\Services\CardPlayService;
 use App\Services\ClaimService;
 use App\Services\PlayingStateService;
+use App\Services\RobotPool;
 use App\Services\RobotService;
 use App\Services\TableSeatService;
 use Database\Seeders\game\BidSeeder;
@@ -125,6 +126,7 @@ class RobotFallbackTest extends TestCase
           app(CardPlayService::class),
           app(ClaimService::class),
           app(BoardSelectionService::class),
+          app(RobotPool::class),
         );
       }
 

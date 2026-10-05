@@ -58,6 +58,7 @@ class PlayingStateTest extends TestCase
           'declarer_hand' => null,
           'turn' => null,
           'acting_user_id' => null,
+          'turn_deadline' => null,
           'auction' => null,
           'contract' => null,
           'tricks' => null,

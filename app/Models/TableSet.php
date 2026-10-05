@@ -2,16 +2,19 @@
 
 namespace App\Models;
 
+use App\auxiliary\Seats;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
- * A set of boards (`bridge.set_size`) the same four players play in a row at
+ * A set of boards (`bridge.set_size`) the same four seats play in a row at
  * one table. Everyone's Start opens it, Next deals its boards one after
  * another, and it is over once its last board is finished — or earlier, if
- * one of its four leaves the table (`abandoned`) or is away from it too long
- * (`forfeit`). Like the playings in it, it outlives its
- * table (`table_id` goes null).
+ * one of its four leaves the table (`abandoned`). A player who walks out on
+ * it (their turn clock runs out, they move tables, are kicked while away or
+ * banned) doesn't end it: a robot takes their seat for the rest of it
+ * (`TableSetSeat::replaced_user_id`). Like the playings in it, it outlives
+ * its table (`table_id` goes null).
  */
 class TableSet extends Model
 {
@@ -20,12 +23,7 @@ class TableSet extends Model
   /** One of its four left before the last board was finished. */
   public const ENDED_ABANDONED = 'abandoned';
 
-  /** A side lost it: one of its players was away too long, or moved to another table, mid-set. */
-  public const ENDED_FORFEIT = 'forfeit';
-
-  public const ENDINGS = [self::ENDED_COMPLETED, self::ENDED_ABANDONED, self::ENDED_FORFEIT];
-
-  public const SIDES = ['NS', 'EW'];
+  public const ENDINGS = [self::ENDED_COMPLETED, self::ENDED_ABANDONED];
 
   protected $fillable = [
     'table_id',
@@ -34,7 +32,6 @@ class TableSet extends Model
     'started_at',
     'finished_at',
     'ended',
-    'forfeited_by',
   ];
 
   protected function casts(): array
@@ -80,23 +77,32 @@ class TableSet extends Model
   }
 
   /**
-   * End the set as lost by `$side` (`NS` or `EW`), whose player went away
-   * from it, unless it is over already.
-   */
-  public function forfeit(string $side): void
-  {
-    if ($this->isFinished()) {
-      return;
-    }
-
-    $this->update(['finished_at' => now(), 'ended' => self::ENDED_FORFEIT, 'forfeited_by' => $side]);
-  }
-
-  /**
-   * Whether `$userId` is one of the set's four players.
+   * Whether `$userId` is one of the set's four players, or played in it
+   * until a robot took their seat.
    */
   public function hasPlayer(int $userId): bool
   {
-    return $this->seats()->where('user_id', $userId)->exists();
+    return $this->seats()->where(fn ($seat) => $seat->where('user_id', $userId)->orWhere('replaced_user_id', $userId))->exists();
+  }
+
+  /**
+   * The players a robot took over from, in seat order: `{seat, user_id,
+   * reason}` (`TableSetSeat::REASONS`), the robot being the seat's player
+   * now. Empty while all four are the ones who opened the set.
+   *
+   * @return list<array{seat: string, user_id: int, reason: string}>
+   */
+  public function replacements(): array
+  {
+    return $this->seats
+      ->whereNotNull('replaced_user_id')
+      ->sortBy(fn (TableSetSeat $seat) => array_search($seat->seat, Seats::SEATS, true))
+      ->map(fn (TableSetSeat $seat) => [
+        'seat' => $seat->seat,
+        'user_id' => (int) $seat->replaced_user_id,
+        'reason' => $seat->replaced_reason,
+      ])
+      ->values()
+      ->all();
   }
 }

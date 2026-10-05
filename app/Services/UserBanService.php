@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Events\UserBanned;
+use App\Models\TableSetSeat;
 use App\Models\User;
 use App\Models\UserBan;
 use Illuminate\Support\Facades\DB;
@@ -21,14 +22,14 @@ class UserBanService
    *   shorter or longer;
    * - the user's seat, if they hold one, is freed through
    *   `TableSeatService::remove()`, as if they had walked out: in the middle
-   *   of a set their side forfeits it at once, with no grace period;
+   *   of a set a robot takes their seat at once, with no grace period;
    * - their sessions (the `sessions` rows, with the database driver) are
    *   deleted and their remember-me token is replaced, so their next request
    *   is a 401: they may log in again, to read why, but can't play;
    * - `UserBanned` goes to their own channel, so an open client logs them
    *   out and shows the reason.
    *
-   * Returns the ban, and whether freeing the seat forfeited a set.
+   * Returns the ban, and whether a robot took their seat mid-set.
    *
    * @return array{0: UserBan, 1: bool}
    */
@@ -47,13 +48,13 @@ class UserBanService
         'until' => now()->addDays($days),
       ]);
 
-      $forfeited = false;
+      $replaced = false;
       $seat = $user->seats()->with('table')->first();
 
       if ($seat !== null) {
         // read before remove(), which decides again under the table lock
-        $forfeited = $this->seats->removalForfeits($seat->table, $user, walkOut: true);
-        $this->seats->remove($seat->table, $user, $admin, walkOut: true);
+        $replaced = $this->seats->removalReplaces($seat->table, $user, TableSetSeat::REASON_KICKED);
+        $this->seats->remove($seat->table, $user, $admin, TableSetSeat::REASON_KICKED);
       }
 
       if (config('session.driver') === 'database') {
@@ -69,7 +70,7 @@ class UserBanService
 
       UserBanned::dispatch($ban);
 
-      return [$ban, $forfeited];
+      return [$ban, $replaced];
     });
   }
 

@@ -55,7 +55,7 @@ class BoardSetTest extends TestCase
     $boards = [];
 
     for ($board = 1; $board <= 4; $board++) {
-      $expected = ['id' => $set->id, 'number' => 1, 'board' => $board, 'of' => 4, 'finished' => false, 'ended' => null, 'forfeited_by' => null];
+      $expected = ['id' => $set->id, 'number' => 1, 'board' => $board, 'of' => 4, 'finished' => false, 'ended' => null, 'replaced' => []];
 
       $this->state('N')->assertJsonPath('data.phase', 'auction')->assertJsonPath('data.set', $expected);
       $this->actingAs($this->players['E'])->getJson("/tables/{$this->table->id}")->assertJsonPath('data.set', $expected);
@@ -160,7 +160,7 @@ class BoardSetTest extends TestCase
     $set = TableSet::sole();
     $abandoned = $this->table->fresh()->board_id;
 
-    // kicked while there (a Leave would hold the seat: SetForfeitTest)
+    // kicked while there (a Leave would hold the seat: AwayMidSetTest)
     $this->seats->remove($this->table, $this->players['E']);
 
     $set->refresh();
@@ -249,7 +249,7 @@ class BoardSetTest extends TestCase
       ->assertJsonPath('data.boards_dealt', 4)
       ->assertJsonPath('data.finished', true)
       ->assertJsonPath('data.ended', 'completed')
-      ->assertJsonPath('data.forfeited_by', null)
+      ->assertJsonPath('data.replaced', [])
       ->assertJsonPath('data.players.N.id', $this->players['N']->id)
       ->assertJsonPath('data.players.N.email', null)
       ->assertJsonCount(4, 'data.boards')
@@ -299,39 +299,21 @@ class BoardSetTest extends TestCase
       ->assertJsonPath('data.winner', null);
   }
 
-  public function test_a_forfeit_hands_the_set_to_the_other_side(): void
-  {
-    $this->startAll();
-    $this->finish('3NT', 'N', 0, 9);
-    $set = TableSet::sole();
-
-    // as tables:check-away would (SetForfeitTest)
-    $set->update(['finished_at' => now(), 'ended' => TableSet::ENDED_FORFEIT, 'forfeited_by' => 'NS']);
-
-    $this->actingAs($this->players['N'])->getJson("/sets/$set->id")
-      ->assertOk()
-      ->assertJsonPath('data.ended', 'forfeit')
-      ->assertJsonPath('data.forfeited_by', 'NS')
-      ->assertJsonPath('data.winner', 'EW');
-  }
-
   public function test_a_set_that_is_over_keeps_how_it_ended(): void
   {
     $this->startAll();
     $set = TableSet::sole();
 
-    $set->forfeit('EW');
+    $set->end(TableSet::ENDED_ABANDONED);
     $finishedAt = $set->fresh()->finished_at;
 
     $this->travel(1)->minutes();
 
-    // a later abandon or forfeit changes nothing
-    $set->end(TableSet::ENDED_ABANDONED);
-    $set->forfeit('NS');
+    // a later ending changes nothing
+    $set->end(TableSet::ENDED_COMPLETED);
 
     $set->refresh();
-    $this->assertSame(TableSet::ENDED_FORFEIT, $set->ended);
-    $this->assertSame('EW', $set->forfeited_by);
+    $this->assertSame(TableSet::ENDED_ABANDONED, $set->ended);
     $this->assertEquals($finishedAt, $set->finished_at);
   }
 

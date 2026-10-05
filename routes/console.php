@@ -12,9 +12,10 @@ Artisan::command('inspire', function () {
 // (run locally with `php artisan schedule:work`)
 Schedule::command('tables:release-idle-seats')->everyMinute()->withoutOverlapping();
 
-// mid-set, mark players who went quiet as away, and forfeit the set for the
-// side of one away too long: every ten seconds, since a minute is too coarse
-// for a three-minute deadline (schedule:work runs sub-minute tasks)
+// mid-set, mark players who went quiet as away, and hand the seat of the
+// player on turn to a robot once their turn clock runs out: every ten
+// seconds, since a minute is too coarse for a one-minute turn
+// (schedule:work runs sub-minute tasks)
 Schedule::command('tables:check-away')->everyTenSeconds()->withoutOverlapping();
 
 // delete tables only robots have kept since their last human left

@@ -38,7 +38,7 @@ class PlayingStateService
   /**
    * What `PlayingResource` reads from a playing, loaded up front.
    */
-  public const RELATIONS = ['board', 'tableSet', 'seats.user', 'auctions.bid', 'contractBid', 'cardPlays.card'];
+  public const RELATIONS = ['board', 'tableSet.seats', 'seats.user', 'auctions.bid', 'contractBid', 'cardPlays.card'];
 
   /**
    * The playing of the board the table is on now, or null while it has none
@@ -108,6 +108,41 @@ class PlayingStateService
     $userId = $playing->seats->firstWhere('seat', $turn)?->user_id;
 
     return $userId === null ? null : (int) $userId;
+  }
+
+  /**
+   * When the turn clock of the player the board waits for runs out:
+   * `bridge.turn_seconds` after the board began waiting for them
+   * (`turn_started_at`: the deal, the last call or card, or a claim
+   * cleared). Being there isn't playing: only a move resets it, never a
+   * heartbeat or a chat line.
+   *
+   * Only a human who is not an admin has a clock (`actingUserId()`:
+   * declarer on dummy's turn, a robot declarer's human dummy on
+   * declarer's), only in the auction and the play of a set's board, and
+   * not while a claim is pending (it expires by itself). Null whenever
+   * nobody's clock runs. Once it has passed, `tables:check-away` takes
+   * them out and a robot plays their seat for the rest of the set
+   * (`TableSeatService::checkAway()`).
+   */
+  public function turnDeadline(?BoardTable $playing): ?Carbon
+  {
+    if ($playing?->turn_started_at === null
+      || $playing->tableSet === null
+      || $playing->tableSet->isFinished()
+      || $playing->hasPendingClaim()) {
+      return null;
+    }
+
+    // nobody acts in `waiting` or once the board is finished
+    $actingUserId = $this->actingUserId($playing);
+    $user = $actingUserId === null ? null : $playing->seats->firstWhere('user_id', $actingUserId)?->user;
+
+    if ($user === null || $user->is_robot || $user->is_admin) {
+      return null;
+    }
+
+    return $playing->turn_started_at->copy()->addSeconds((int) config('bridge.turn_seconds'));
   }
 
   /**
@@ -303,9 +338,9 @@ class PlayingStateService
    * When the set's next board is dealt by itself (`DealNextBoard`):
    * `bridge.next_board_seconds` after `$playing` finished. Null while it
    * isn't finished, and whenever no automatic deal is coming: the set is
-   * over (its last board, or a forfeit), the playing has left its table, or
-   * the four seated now aren't the four who played it — a seat is empty, or
-   * somebody left and was replaced, and then the next board takes
+   * over (its last board, or abandoned), the playing has left its table, or
+   * the four seated now aren't the set's four — a seat is empty, or
+   * somebody left and somebody else sat down, and then the next board takes
    * everyone's Start.
    */
   public function nextBoardAt(BoardTable $playing): ?Carbon
@@ -321,14 +356,16 @@ class PlayingStateService
   }
 
   /**
-   * Whether the four seated at `$playing`'s table now are the four who
-   * played it, each in the same seat. Never true of a playing that has left
-   * its table.
+   * Whether the four seated at `$playing`'s table now are the four of its
+   * set (who played it, or the robot that took a seat over from one of them
+   * since: `TableSetSeat::replaced_user_id`), each in the same seat; with no
+   * set, the four who played it. Never true of a playing that has left its
+   * table.
    */
   public function seatedAsIn(BoardTable $playing): bool
   {
     $now = TableSeat::query()->where('table_id', $playing->table_id)->pluck('user_id', 'seat')->sortKeys()->all();
-    $then = $playing->seats()->pluck('user_id', 'seat')->sortKeys()->all();
+    $then = ($playing->tableSet?->seats() ?? $playing->seats())->pluck('user_id', 'seat')->sortKeys()->all();
 
     return $playing->table_id !== null && count($now) === count(Seats::SEATS) && $now == $then;
   }

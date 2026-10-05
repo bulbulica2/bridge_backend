@@ -18,18 +18,11 @@ use App\Robots\RobotBidder;
 use App\Robots\RobotCardPlayer;
 use App\Robots\RobotClaims;
 use App\Robots\RobotHand;
-use Illuminate\Database\QueryException;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Str;
 
 /**
- * Robot players: the pool they are seated from, and their moves.
- *
- * A robot is a `users` row with `is_robot` (`robot-<n>`), made the first
- * time the pool runs dry and reused after. `unique(user_id)` still holds, so
- * every robot sits at one table at a time. Robots can't log in.
+ * Robot players: seating one on a manager's say-so, and their moves. The
+ * robots themselves come from `RobotPool`.
  *
  * Their moves go through the same services as a human's (`AuctionService`,
  * `CardPlayService`, `ClaimService`, `BoardSelectionService::moveOn()`), so
@@ -40,12 +33,6 @@ use Illuminate\Support\Str;
  */
 class RobotService
 {
-  /**
-   * How many robots `seatRobot()` tries before giving up, when another
-   * request seats the one it picked at the same moment.
-   */
-  private const ATTEMPTS = 3;
-
   public function __construct(
     private TableSeatService $seats,
     private PlayingStateService $state,
@@ -53,6 +40,7 @@ class RobotService
     private CardPlayService $cards,
     private ClaimService $claims,
     private BoardSelectionService $boards,
+    private RobotPool $robots,
   ) {}
 
   /**
@@ -67,7 +55,7 @@ class RobotService
     $tried = [];
 
     for ($attempt = 1; ; $attempt++) {
-      $robot = $this->idleRobot($tried);
+      $robot = $this->robots->idle($tried);
       $tried[] = $robot->id;
 
       try {
@@ -76,55 +64,7 @@ class RobotService
       } catch (SeatUnavailableException $e) {
         // the robot was seated elsewhere at the same moment: try another,
         // unless it is the seat that has gone
-        if ($attempt >= self::ATTEMPTS || $table->seats()->where('seat', $seat)->exists()) {
-          throw $e;
-        }
-      }
-    }
-  }
-
-  /**
-   * A robot that sits nowhere, made if every robot is busy.
-   *
-   * @param  list<int>  $except  robots already tried
-   */
-  private function idleRobot(array $except): User
-  {
-    return User::robots()
-      ->whereDoesntHave('seats')
-      ->whereNotIn('id', $except)
-      ->orderBy('id')
-      ->first()
-      ?? $this->makeRobot();
-  }
-
-  /**
-   * A new `robot-<n>`: next number up, and another if a concurrent request
-   * took it. Its password is random and never stored anywhere else, and
-   * login refuses robots anyway.
-   */
-  private function makeRobot(): User
-  {
-    $number = User::robots()->count() + 1;
-
-    for ($attempt = 1; ; $attempt++, $number++) {
-      try {
-        return DB::transaction(function () use ($number) {
-          $robot = new User([
-            'name' => "Robot $number",
-            'username' => "robot-$number",
-            'email' => "robot-$number@robots.invalid",
-            'password' => Hash::make(Str::random(40)),
-            'description' => 'A robot player.',
-          ]);
-          $robot->is_robot = true;
-          $robot->email_verified_at = now();
-          $robot->save();
-
-          return $robot;
-        });
-      } catch (QueryException $e) {
-        if ((string) $e->getCode() !== '23000' || $attempt >= self::ATTEMPTS * 3) {
+        if ($attempt >= RobotPool::ATTEMPTS || $table->seats()->where('seat', $seat)->exists()) {
           throw $e;
         }
       }
