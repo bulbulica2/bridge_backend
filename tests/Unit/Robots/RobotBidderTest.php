@@ -170,7 +170,39 @@ class RobotBidderTest extends TestCase
       'free to pass when they bid' => [['1D', 'X', '1S'], '432.J32.432.K432', 'P'],
       'a raise of partner\'s overcall' => [['1C', '1S', 'P'], 'K32.Q432.K432.32', '2S'],
       'a new suit over partner\'s overcall' => [['1C', '1H', 'P'], 'KQ432.32.K432.32', '1S'],
-      'a jump raise with 11-13' => [['1C', '1S', 'P'], 'K32.AQ32.K432.32', '3S'],
+      'a jump raise with 11' => [['1C', '1S', 'P'], 'K32.AQ32.Q432.32', '3S'],
+      'a minor jump raise with 12 and no cue bid to make' => [['1NT', '2D', 'P'], 'K32.AQ32.K32.432', '4D'],
+    ];
+  }
+
+  /**
+   * The advancer's cue bid of opener's suit, the overcaller's answer and
+   * the advancer's placement.
+   */
+  public static function cueBids(): array
+  {
+    return [
+      'a cue bid with 12+ and no fit' => [['1C', '1S', 'P'], 'K2.AQ32.KJ32.432', '2C'],
+      'a cue bid with 12+ and a fit' => [['1C', '1S', 'P'], 'K32.AQ32.K432.32', '2C'],
+      'game with 14+ and a fit, not the cue bid' => [['1C', '1S', 'P'], 'K32.AQ32.K432.A2', '4S'],
+      'not with 11' => [['1C', '1S', 'P'], 'K2.AQ32.Q432.432', 'P'],
+      'a natural 2NT with their suit stopped' => [['1C', '1S', 'P'], 'K2.AQ32.Q432.K32', '2NT'],
+      'a five-card suit up to 15' => [['1C', '1S', 'P'], 'K2.AQ432.KJ32.32', '2H'],
+      'a cue bid with more' => [['1C', '1S', 'P'], 'K2.AQ432.KJ32.A2', '2C'],
+      'over a minor overcall, a fit and no stopper' => [['1D', '2C', 'P'], 'K32.AQ2.432.KJ32', '2D'],
+      'over their weak two' => [['2H', '2S', 'P'], 'K2.32.AQ32.KJ32', '3H'],
+      'no cue bid above the 3 level' => [['1C', '1S', '3C'], 'K2.AQ32.KJ32.432', 'P'],
+      'no cue bid over their 1NT' => [['1NT', '2H', 'P'], 'K2.32.AQ32.KJ432', 'P'],
+      'the overcaller rebids a minimum' => [['1C', '1S', 'P', '2C', 'P'], 'KQJ32.K32.32.432', '2S'],
+      'with extras, a new four-card suit' => [['1C', '1S', 'P', '2C', 'P'], 'AKJ32.KQ32.32.A2', '2H'],
+      'with extras, no trump with their suit stopped' => [['1C', '1S', 'P', '2C', 'P'], 'AKJ32.K32.Q2.KJ2', '2NT'],
+      'with extras and nothing else, a jump' => [['1C', '1S', 'P', '2C', 'P'], 'AKJ432.K32.K2.32', '3S'],
+      'the advancer raises to game with a fit' => [['1C', '1S', 'P', '2C', 'P', '2S', 'P'], 'K32.AQ32.K432.32', '4S'],
+      '3NT with their suit stopped' => [['1C', '1S', 'P', '2C', 'P', '2S', 'P'], 'K2.AQ432.KJ32.A2', '3NT'],
+      'game in the new suit partner showed' => [['1C', '1S', 'P', '2C', 'P', '2H', 'P'], 'K2.AQ32.KJ32.432', '4H'],
+      'otherwise the part-score' => [['1C', '1S', 'P', '2C', 'P', '2S', 'P'], 'K2.AQ32.KJ32.432', 'P'],
+      'back to partner\'s suit' => [['1C', '1S', 'P', '2C', 'P', '2H', 'P'], 'A2.AK2.KQJ32.432', '2S'],
+      'five of the minor fit with no stopper' => [['1D', '2C', 'P', '2D', 'P', '3C', 'P'], 'K32.AQ2.432.KJ32', '5C'],
     ];
   }
 
@@ -288,6 +320,7 @@ class RobotBidderTest extends TestCase
   #[DataProvider('preempts')]
   #[DataProvider('overcalls')]
   #[DataProvider('advances')]
+  #[DataProvider('cueBids')]
   #[DataProvider('responses')]
   #[DataProvider('rebids')]
   #[DataProvider('laterBids')]
@@ -317,6 +350,8 @@ class RobotBidderTest extends TestCase
       'an answer to Blackwood' => [['1H', 'P', '3H', 'P', '4NT', 'P', '5D'], 'Aces: one ace'],
       'a jump shift' => [['1C', 'P', '2S'], 'Jump shift: 19+ HCP, 4+ ♠, forcing to game'],
       'no trump over their suit' => [['1D', '1S', '2NT'], 'Invitation: 11–12 HCP, balanced, ♠ stopped, invites game'],
+      'a cue bid' => [['1C', '1S', 'P', '2C'], 'Cue bid: 12+ HCP, forcing, says nothing about ♣'],
+      'the overcaller\'s minimum answer' => [['1C', '1S', 'P', '2C', 'P', '2S'], 'Minimum: 8–13 HCP, 5+ ♠'],
       'a call the system doesn\'t make' => [['5C'], 'Natural'],
     ];
   }
@@ -346,6 +381,11 @@ class RobotBidderTest extends TestCase
       'fourth suit forcing' => [['1C', 'P', '1H', 'P', '1S', 'P', '2D'], true],
       'a negative double' => [['1C', '1S', 'X'], true],
       'a penalty double of their 1NT' => [['1NT', 'X'], true],
+      'a penalty double of their 1NT overcall' => [['1D', '1NT', 'X'], true],
+      'a penalty double of their suit over our 1NT' => [['1NT', '2H', 'X'], true],
+      'a penalty double of their low suit later' => [['1H', 'P', '1S', '2C', 'X'], true],
+      'a cue bid' => [['1C', '1S', 'P', '2C'], true],
+      'the answer to a cue bid' => [['1C', '1S', 'P', '2C', 'P', '2S'], false],
       'a natural opening' => [['1NT'], false],
       'a natural raise' => [['1H', 'P', '2H'], false],
       'the answer to Stayman' => [['1NT', 'P', '2C', 'P', '2D'], false],
@@ -373,6 +413,29 @@ class RobotBidderTest extends TestCase
     $this->assertSame('Strong 2♣: 22+ HCP, artificial, forcing', $bid['explanation']);
 
     $this->assertFalse(RobotBidder::bid($this->hand('AK2.KQ2.A432.432'), [], 'N')['alert']);
+  }
+
+  public function test_a_robot_alerts_its_cue_bid(): void
+  {
+    $bid = RobotBidder::bid($this->hand('K2.AQ32.KJ32.432'), $this->calls('N', ['1C', '1S', 'P']), 'W');
+
+    $this->assertSame('2C', $bid['call']);
+    $this->assertTrue($bid['alert']);
+    $this->assertSame('Cue bid: 12+ HCP, forcing, says nothing about ♣', $bid['explanation']);
+  }
+
+  public function test_a_humans_cue_bid_is_read_as_one(): void
+  {
+    // W, a human, cue-bids: E, a robot, reads strength, not clubs
+    $calls = $this->calls('N', ['1C', '1S', 'P', '2C', 'P']);
+    $advancer = RobotBidder::shown($calls, 'W');
+
+    $this->assertSame([12, 0], [$advancer['min'], $advancer['lengths']['C']]);
+
+    // clubs are still theirs: no trump needs them stopped
+    $view = new AuctionView($calls, RobotBidder::read($calls), 'E');
+    $this->assertSame(['C'], $view->theirSuits());
+    $this->assertSame('2S', RobotBidder::choose($this->hand('AKJ32.K32.Q2.432'), $calls, 'E'));
   }
 
   public function test_a_robot_explains_its_own_call(): void

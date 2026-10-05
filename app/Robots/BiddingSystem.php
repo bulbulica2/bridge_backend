@@ -212,6 +212,8 @@ class BiddingSystem
       'place-slam' => $this->placeSlam(),
       'negative' => $this->negativeDoubleAnswer(),
       'fourth-suit' => $this->fourthSuitAnswer(),
+      'cue' => $this->cueAnswer(),
+      'after-cue' => $this->afterCue(),
       default => null,
     };
   }
@@ -768,7 +770,10 @@ class BiddingSystem
   /**
    * Partner overcalled in a suit: raise it (a jump invites, a major game
    * with 14+, 3NT over a minor with their suits stopped and no singleton),
-   * show a five-card suit, or bid no trump with their suit stopped.
+   * show a five-card suit, or bid no trump with their suit stopped. Over
+   * a suit opening, the cue bid of opener's suit (`cueBid()`) takes the
+   * other 12+ hands: a fit without a direct game, and the strong hands
+   * with nothing natural to bid.
    */
   private function advanceOvercall(string $suit): void
   {
@@ -776,23 +781,32 @@ class BiddingSystem
     $their = $v->theirSuits();
     $support = fn (RobotHand $h) => $h->length($suit) >= 3;
     $jump = $v->jump($suit);
+    $cue = $this->cueBid();
 
     $this->add($v->cheapest($suit), new BidMeaning('Raise', 6, 10, [$suit => 3], suit: $suit),
       fn (RobotHand $h) => $support($h) && $this->between($h, 6, 10));
 
+    // with a cue bid to make, the invitation is 11 alone: 12+ cue-bids
+    $invite = $cue === null ? 13 : 11;
+
     if (in_array($suit, RobotHand::MAJORS, true)) {
       if ($jump !== "4$suit") {
-        $this->add($jump, new BidMeaning('Jump raise', 11, 13, [$suit => 3], invite: true, suit: $suit),
-          fn (RobotHand $h) => $support($h) && $this->between($h, 11, 13));
+        $this->add($jump, new BidMeaning('Jump raise', 11, $invite, [$suit => 3], invite: true, suit: $suit),
+          fn (RobotHand $h) => $support($h) && $this->between($h, 11, $invite));
       }
 
-      $this->add("4$suit", new BidMeaning('Game', $jump === "4$suit" ? 11 : 14, lengths: [$suit => 3], suit: $suit),
-        fn (RobotHand $h) => $support($h) && $h->hcp() >= 11);
+      $game = $jump === "4$suit" ? 11 : 14;
+      $this->add("4$suit", new BidMeaning('Game', $game, lengths: [$suit => 3], suit: $suit),
+        fn (RobotHand $h) => $support($h) && $h->hcp() >= $game);
     } else {
       $this->add('3NT', new BidMeaning('Game', 14, suit: 'NT', stopped: $their),
         fn (RobotHand $h) => $support($h) && $h->hcp() >= 14 && $h->stops($their) && $h->isSemiBalanced());
-      $this->add($jump, new BidMeaning('Jump raise', 11, lengths: [$suit => 3], invite: true, suit: $suit),
-        fn (RobotHand $h) => $support($h) && $h->hcp() >= 11);
+      $this->add($jump, new BidMeaning('Jump raise', 11, $cue === null ? null : $invite, [$suit => 3], invite: true, suit: $suit),
+        fn (RobotHand $h) => $support($h) && $h->hcp() >= 11 && ($cue === null || $h->hcp() <= $invite));
+    }
+
+    if ($cue !== null) {
+      $this->add($cue[0], $cue[1], fn (RobotHand $h) => $support($h) && $h->hcp() >= 12);
     }
 
     $others = array_values(array_diff(RobotHand::SUITS, $their, [$suit]));
@@ -807,6 +821,87 @@ class BiddingSystem
     }
 
     $this->naturalNt($their, [[8, 11], [12, 14], [15, null]]);
+
+    if ($cue !== null) {
+      $this->add($cue[0], $cue[1], fn (RobotHand $h) => $h->hcp() >= 12);
+    }
+  }
+
+  /**
+   * The advancer's cue bid: the cheapest bid in the suit the opponents
+   * opened (naturally), up to the 3 level — 12+ HCP, any shape, forcing
+   * for one round, and nothing about that suit, which stays theirs. Null
+   * over a no trump or artificial opening, or with no room for it.
+   *
+   * @return array{0: string, 1: BidMeaning}|null
+   */
+  private function cueBid(): ?array
+  {
+    $v = $this->v;
+    $opened = $v->meaning($v->opening())->suit;
+
+    if ($opened === null || ! in_array($opened, $v->theirSuits(), true)) {
+      return null;
+    }
+
+    $call = $v->cheapest($opened);
+
+    if ($call === null || AuctionView::level($call) > 3) {
+      return null;
+    }
+
+    return [$call, new BidMeaning('Cue bid', 12, note: 'forcing, says nothing about '.BidMeaning::symbol($opened), asks: 'cue', tag: 'cue', alert: true)];
+  }
+
+  /**
+   * Partner cue-bid over our overcall: with extra values (14+) a new
+   * four-card suit, no trump with their suits stopped, or a jump in our
+   * suit; with a minimum, our suit again at the cheapest level.
+   */
+  private function cueAnswer(): void
+  {
+    $v = $this->v;
+    $overcall = $v->meaning($v->actions($v->seat)[0]);
+    $mine = $overcall->suit;
+    $their = $v->theirSuits();
+    $new = array_values(array_filter(array_diff(RobotHand::SUITS, [$mine], $their),
+      fn ($suit) => self::levelOf($v->cheapest($suit)) <= 3));
+
+    foreach ($new as $suit) {
+      $this->add($v->cheapest($suit), new BidMeaning('Extra values', 14, lengths: [$suit => 4], asks: 'after-cue', suit: $suit),
+        fn (RobotHand $h) => $h->hcp() >= 14 && $h->longest($new, 4) === $suit);
+    }
+
+    $nt = $v->cheapest('NT');
+
+    if (self::levelOf($nt) <= 3) {
+      $this->add($nt, new BidMeaning('Extra values', 14, suit: 'NT', asks: 'after-cue', stopped: $their),
+        fn (RobotHand $h) => $h->hcp() >= 14 && $h->stops($their));
+    }
+
+    $this->add($v->jump($mine), new BidMeaning('Extra values', 14, lengths: [$mine => 5], asks: 'after-cue', suit: $mine),
+      fn (RobotHand $h) => $h->hcp() >= 14);
+    $this->add($v->cheapest($mine), new BidMeaning('Minimum', $overcall->min, 13, [$mine => 5], asks: 'after-cue', suit: $mine),
+      fn () => true);
+  }
+
+  /**
+   * We cue-bid and partner answered: game in our fit (a major, or a minor
+   * without their suits stopped), 3NT with them stopped; with neither,
+   * the part-score — pass partner's suit, or go back to it.
+   */
+  private function afterCue(): void
+  {
+    $v = $this->v;
+    $overcall = $v->suitsOf($v->partner())[0];
+
+    $this->games(new BidMeaning('Game', 12), fn (RobotHand $h) => $h->hcp() >= 12);
+
+    if (AuctionView::strain($v->call($v->lastContract())) === $overcall) {
+      $this->add(AuctionView::PASS, new BidMeaning('Part-score', known: false), fn () => true);
+    } else {
+      $this->add($v->cheapest($overcall), new BidMeaning('Preference', suit: $overcall), fn () => true);
+    }
   }
 
   /**
@@ -911,7 +1006,7 @@ class BiddingSystem
     $their = $v->theirSuits();
 
     if ($theirs !== 'NT' && AuctionView::level($last) <= 3) {
-      $this->add('X', new BidMeaning('Penalty double', 8, lengths: [$theirs => 4], tag: 'penalty'),
+      $this->add('X', new BidMeaning('Penalty double', 8, lengths: [$theirs => 4], tag: 'penalty', alert: true),
         fn (RobotHand $h) => $h->hcp() >= 8 && $h->length($theirs) >= 4);
     }
 
@@ -1455,7 +1550,7 @@ class BiddingSystem
         $this->add('X', new BidMeaning('Penalty double', max(8, 23 - $pmin), tag: 'penalty', alert: true),
           fn (RobotHand $h) => $h->hcp() >= 8 && $h->hcp() + $pmin >= 23);
       } else {
-        $this->add('X', new BidMeaning('Penalty double', max(10, 20 - $pmin), lengths: [$theirs => 4], tag: 'penalty'),
+        $this->add('X', new BidMeaning('Penalty double', max(10, 20 - $pmin), lengths: [$theirs => 4], tag: 'penalty', alert: true),
           fn (RobotHand $h) => $h->hcp() >= 10 && $h->hcp() + $pmin >= 20 && $h->length($theirs) >= 4 && $h->honours($theirs, 5) >= 2);
       }
     }

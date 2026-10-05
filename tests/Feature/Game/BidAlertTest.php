@@ -25,6 +25,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Testing\TestResponse;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 /**
@@ -398,6 +399,68 @@ class BidAlertTest extends TestCase
   }
 
   /**
+   * Robot N's conventional calls, with a human partner (S) and a human
+   * opponent (E): the dealer, N's hand (and W's, else W gets the smallest
+   * cards and passes throughout), the auction up to N's alerted call, and
+   * its explanation.
+   */
+  public static function robotConventions(): array
+  {
+    return [
+      'the strong 2♣' => ['N', ['N' => 'AKQ2.AKQ2.AK2.A2'], ['2C'], 'Strong 2♣: 22+ HCP, artificial, forcing'],
+      'the 2♦ waiting answer' => ['N', ['N' => '432.432.5432.432'], ['P', 'P', '2C', 'P', '2D'], 'Waiting: artificial, any strength'],
+      'Stayman' => ['N', ['N' => 'KJ32.Q32.K32.432'], ['P', 'P', '1NT', 'P', '2C'], 'Stayman: 8–17 HCP, asks for a four-card major'],
+      'a transfer' => ['N', ['N' => '32.KJ432.432.432'], ['P', 'P', '1NT', 'P', '2D'], 'Transfer: 0–17 HCP, 5+ ♥, asks partner to bid ♥'],
+      'Gerber' => ['S', ['N' => 'AQ2.AQ3.KQ32.Q32'], ['1NT', 'P', '4C'], 'Gerber: 18+ HCP, asks for aces'],
+      'the answer to Gerber' => ['N', ['N' => 'AK2.KQ2.A432.432'], ['1NT', 'P', '4C', 'P', '4S'], 'Aces: 2 aces'],
+      'Blackwood' => ['N', ['N' => 'A2.AKQ32.KQ32.K2'], ['1H', 'P', '4H', 'P', '4NT'], 'Blackwood: 20+ HCP, asks for aces'],
+      'the answer to Blackwood' => ['S', ['N' => 'A32.KJ32.A32.432'], ['1H', 'P', '3H', 'P', '4NT', 'P', '5H'], 'Aces: 2 aces'],
+      'fourth suit forcing' => ['S', ['N' => 'A32.AQ432.KQ2.32'], ['1D', 'P', '1H', 'P', '1S', 'P', '2C'], 'Fourth suit forcing: 15+ HCP, artificial, forcing to game'],
+      'a negative double' => ['S', ['N' => 'A4.QJ65.J654.765', 'W' => 'KQJ32.K32.32.432'], ['1C', '1S', 'X'], 'Negative double: 6+ HCP, 4+ ♥'],
+      'a penalty double of their 1NT' => ['E', ['N' => 'AK2.KQ32.KJ2.Q32'], ['1NT', 'P', 'P', 'X'], 'Penalty double: 15+ HCP'],
+      'a penalty double of their 1NT overcall' => ['S', ['N' => 'QJ2.KQ43.K32.J32', 'W' => 'AK3.AJ2.AQ5.T987'], ['1D', '1NT', 'X'], 'Penalty double: 10+ HCP'],
+      'a penalty double of their suit over our 1NT' => ['S', ['N' => 'Q43.KT98.AJ5.765', 'W' => 'K2.AQJ32.432.K32'], ['1NT', '2H', 'X'], 'Penalty double: 8+ HCP, 4+ ♥'],
+      'a penalty double of their low suit later' => ['N', ['N' => 'K2.AQJ43.2.KQJ32', 'W' => 'Q3.K2.A876.AT987'], ['1H', 'P', '1S', '2C', 'X'], 'Penalty double: 14+ HCP, 4+ ♣'],
+      'a cue bid' => ['E', ['N' => 'K2.AQ32.KJ32.432'], ['1C', '1S', 'P', '2C'], 'Cue bid: 12+ HCP, forcing, says nothing about ♣'],
+    ];
+  }
+
+  /**
+   * @param  array<string, string>  $hands
+   * @param  list<string>  $auction
+   */
+  #[DataProvider('robotConventions')]
+  public function test_a_robots_convention_is_alerted_to_its_human_opponent_not_partner(string $dealer, array $hands, array $auction, string $explanation): void
+  {
+    $this->partnersTable($dealer, $hands);
+
+    $seat = $dealer;
+
+    foreach ($auction as $call) {
+      if (isset($this->players[$seat])) {
+        $this->makeCall($seat, $call)->assertCreated();
+      }
+
+      $this->driveRobots();
+      $seat = Seats::next($seat);
+    }
+
+    $index = count($auction) - 1;
+    $state = $this->state('E')
+      ->assertJsonPath('data.phase', 'auction')
+      ->assertJsonPath('data.turn', 'E')
+      ->json('data.auction');
+
+    $this->assertSame($auction, array_map(fn ($call) => $call['bid']['call'], $state));
+    $this->assertSame('N', $state[$index]['seat']);
+    $this->assertSame(['explanation' => $explanation], $state[$index]['alert']);
+    $this->assertAlertedTo(['E'], $index, $explanation);
+
+    // partner learns of it only once the auction is over
+    $this->state('S')->assertJsonPath("data.auction.$index.alert", null);
+  }
+
+  /**
    * Four humans, board dealt by N.
    */
   private function humanTable(): void
@@ -448,6 +511,58 @@ class BidAlertTest extends TestCase
             ->update(['seat' => $seat]);
         }
       }
+    }
+  }
+
+  /**
+   * Humans E and S, robots N and W, `$dealer` dealing: N holds its hand
+   * (spades.hearts.diamonds.clubs), W its own or else the 13 smallest
+   * cards left, and the humans the rest.
+   *
+   * @param  array<string, string>  $hands
+   */
+  private function partnersTable(string $dealer, array $hands): void
+  {
+    foreach (['E', 'S'] as $seat) {
+      $this->players[$seat] = User::factory()->create();
+    }
+
+    $this->table = Table::create(['created_by' => $this->players['S']->id, 'moderated_by' => $this->players['S']->id]);
+
+    foreach (Seats::SEATS as $seat) {
+      isset($this->players[$seat])
+        ? app(TableSeatService::class)->seat($this->table, $this->players[$seat], $seat)
+        : app(RobotService::class)->seatRobot($this->table, $seat, $this->players['S']);
+    }
+
+    $this->startBoard($this->table);
+    $this->table->refresh();
+
+    Board::whereKey($this->table->board_id)->update(['dealer' => $dealer]);
+
+    $ranks = ['A' => 15, 'K' => 14, 'Q' => 13, 'J' => 12, 'T' => 10];
+    $cards = Card::orderBy('rank')->orderBy('id')->get()->keyBy(fn (Card $card) => $card->suit.$card->rank);
+    $seats = [];
+
+    foreach ($hands as $seat => $hand) {
+      foreach (array_combine(['S', 'H', 'D', 'C'], explode('.', $hand)) as $suit => $ranksHeld) {
+        foreach (str_split($ranksHeld) as $rank) {
+          $seats[$cards[$suit.($ranks[$rank] ?? $rank)]->id] = $seat;
+        }
+      }
+    }
+
+    $left = $cards->reject(fn (Card $card) => isset($seats[$card->id]))->values();
+    $rest = isset($hands['W']) ? ['E', 'S'] : ['W', 'E', 'S'];
+
+    foreach ($left as $position => $card) {
+      $seats[$card->id] = $rest[intdiv($position, 13)];
+    }
+
+    $this->assertCount(52, $seats);
+
+    foreach ($seats as $card => $seat) {
+      DB::table('board_card')->where('board_id', $this->table->board_id)->where('card_id', $card)->update(['seat' => $seat]);
     }
   }
 

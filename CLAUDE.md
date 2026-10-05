@@ -386,7 +386,10 @@ vendor/bin/pint --test            # check formatting without changing files
   the auction ends each human gets partner's alerts as
   `AuctionAlertsShown` (none if partner alerted nothing; `split()` over
   several events past the broadcast budget); a robot alerts the rules marked
-  `alert: true` in `BiddingSystem` and answers questions at once with
+  `alert: true` in `BiddingSystem` — every artificial or conventional call
+  and every penalty double, each made by a robot at a table in
+  `BidAlertTest::test_a_robots_convention_is_alerted_to_its_human_opponent_not_partner`
+  (add a case there with a new one) — and answers questions at once with
   `RobotBidder::read()`. `PlayingStateService::alerts()` adds `alert` and
   `question` to each `auction` entry in `stateFor()` only (null for
   partner's calls, but `alert` shows once the auction is over) — never in
@@ -474,7 +477,10 @@ vendor/bin/pint --test            # check formatting without changing files
   with 12+ HCP, with 11 given a second four-card or a six-card suit, with
   10 only on `RobotHand::isVeryGoodSuit()` with `losers()` ≤ 7 and
   `quickTricks()` ≥ 2) looks past it, and one of a suit and opener's suit
-  rebids show `BiddingSystem::OPENING` (10)+. Tests run the queue on
+  rebids show `BiddingSystem::OPENING` (10)+. The one cue bid is the
+  advancer's (`cueBid()`: opener's suit over partner's suit overcall,
+  12+, forcing, alerted, `asks: 'cue'` → `cueAnswer()` → `afterCue()`);
+  it shows no suit, so opener's suit stays in `theirSuits()`. Tests run the queue on
   `sync`, so the listener trampolines (a nested run only queues its table)
   instead of nesting 52 deep past xdebug's limit; fake `PlayingUpdated` to
   hold robots back while setting a table up. What they bid and play is in

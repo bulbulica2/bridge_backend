@@ -106,9 +106,9 @@ human the table is deleted. A robot is never the moderator.
 
 A robot bids a **SAYC**-style system (Standard American Yellow Card):
 five-card majors, a 15–17 1NT, a strong 2♣, weak twos, Stayman and Jacoby
-transfers, takeout and negative doubles, Blackwood and Gerber. This section
-is the whole system; a hand that fits none of it passes. Robots never
-redouble.
+transfers, takeout and negative doubles, the advancer's cue bid, Blackwood
+and Gerber. This section is the whole system; a hand that fits none of it
+passes. Robots never redouble.
 
 ### How a robot picks a call
 
@@ -153,9 +153,20 @@ are is marked on the rule itself in `BiddingSystem` (`alert: true` on its
 - **Gerber** (4♣ over no trump) and **Blackwood** (4NT), and the **ace
   answers** to either;
 - **fourth suit forcing**;
+- the advancer's **cue bid** of opener's suit
+  ([§8](#8-advancing-partner-overcalled-or-doubled)) — but not the
+  overcaller's answer to it;
 - the **negative double**;
-- the **penalty double of no trump**: of their 1NT/2NT opening, of a 1NT
-  overcall of partner's opening, and of their no trump later on.
+- every **penalty double**: of no trump (their 1NT/2NT opening, a 1NT
+  overcall of partner's opening, their no trump later on) and of a suit
+  (their bid over partner's no trump, and a low contract later on), since
+  a low double of a suit is takeout or negative unless said otherwise.
+
+`tests/Feature/Game/BidAlertTest` has a robot make each of these (but
+the super-accept and the later double of their no trump) at a table and
+checks its human opponent gets the alert (`CallAlerted` and
+`alert` in their state) while its human partner doesn't, until the
+auction is over.
 
 Natural calls aren't alerted — openings, raises, overcalls, the takeout
 double, no trump bids, the quantitative 4NT, passes — nor is a call that
@@ -237,7 +248,9 @@ decides reads the chat.
 - **Their suits**: the suits the opponents have bid **naturally**. An
   artificial call (Stayman, a strong 2♣, an answer to Blackwood…) shows
   no suit, a transfer shows its major, and a **cue bid** — a suit our side
-  bid first — isn't theirs.
+  bid first — isn't theirs. Our own cue bid of their suit
+  ([§8](#8-advancing-partner-overcalled-or-doubled)) shows no suit
+  either: the suit stays theirs, so no trump still needs it stopped.
 - **No trump over their suits**: every natural no trump bid with the
   opponents in the auction needs **their suits stopped** — by this hand,
   or already promised by partner's no trump — and says so: partner reads
@@ -512,14 +525,44 @@ five of a minor) at the 3 level or lower; otherwise pass.
 | Hand | Call |
 |---|---|
 | three of partner's suit, 6–10 HCP | the cheapest raise |
-| … a major, 11–13 HCP | a jump raise (invites) |
-| … a major, 14+ HCP | **4** of it |
+| … a major, 11 HCP (11–13 with no cue bid to make) | a jump raise (invites) |
+| … a major, 14+ HCP (11+ when the jump is to game) | **4** of it |
 | … a minor, 14+ HCP, their suits stopped, no singleton or void | **3NT** |
-| … a minor, 11+ HCP | a jump raise |
+| … a minor, 11 HCP (11+ with no cue bid to make) | a jump raise |
+| … 12+ HCP | the **cue bid** (below) |
 | a five-card suit of our own, 8–15 HCP, at the 2 level at most | that suit |
 | their suits stopped and balanced: 8–11 HCP (1NT still legal) / 12–14 | **1NT** / **2NT** (invites) |
 | … 15+ HCP, balanced or semi-balanced with a good six-card minor | **3NT** |
+| 12+ HCP, any shape | the **cue bid** |
 | anything else | Pass |
+
+The **cue bid** is the cheapest bid in the suit the opponents **opened**
+(1♣–1♠–P–**2♣**), when they opened a suit naturally and that bid is at the
+3 level or lower — never over their no trump or strong 2♣. It shows
+**12+ HCP**, says nothing about their suit (which stays theirs: no trump
+still needs it stopped), is **forcing** for one round and is alerted
+("Cue bid: 12+ HCP, forcing, says nothing about ♣"). It takes the 12+
+hands with a fit that have no direct game (12–13 with a major, 12+ with a
+minor and their suits unstopped), then, after the natural calls above,
+every other 12+ hand: no fit, no stopper for no trump, or too strong for a
+new suit. The overcaller answers (when the next opponent passes or
+doubles):
+
+| Overcaller's hand | Call |
+|---|---|
+| 14+ HCP, a four-card suit nobody has bid (the longest), at the 3 level at most | that suit |
+| 14+ HCP, their suits stopped | the cheapest no trump (3 level at most) |
+| 14+ HCP, anything else | a jump in the overcall suit |
+| a minimum (up to 13 HCP) | the overcall suit at the cheapest level |
+
+and the advancer places the contract: **game** in the strain our hands
+point to ([§10](#10-later-bids): four of a major with eight between us,
+3NT with their suits stopped — by this hand or by partner's no trump
+answer — else five of a minor fit); with none, the part-score: pass when
+partner's last bid was the overcall suit, else go back to it at the
+cheapest level. A human partner's cue bid is read the same way, and a
+robot overcaller answers it. When the opponent bids over the cue bid,
+the overcaller is free: later bids ([§10](#10-later-bids)) take over.
 
 **Partner's weak jump overcall**: as over a weak two
 ([§4](#4-partner-preempted)). **Partner's no trump overcall** (15–18, or
@@ -1057,7 +1100,9 @@ set — a human alone with three robots presses it once.
 ## What robots don't do
 
 - No redoubles, and no running from a penalty double.
-- No conventions beyond the ones above: no cue bids, Jacoby 2NT,
+- No conventions beyond the ones above: no cue bids but the advancer's
+  ([§8](#8-advancing-partner-overcalled-or-doubled)) — no responder's cue
+  raise (1♥–(1♠)–2♠), no stopper-asking cue bid — no Jacoby 2NT,
   splinters, new minor forcing, Michaels or the unusual 2NT, Lebensohl,
   Roman Key Card Blackwood or 5NT asking for kings, no 2NT asking a weak
   two for a feature, no negative doubles above 2♠, no lead-directing
@@ -1065,8 +1110,10 @@ set — a human alone with three robots presses it once.
 - No competing above the 3 level except to bid a game that is sure.
 - No asking for a stopper: with game values, no fit and their suit
   unstopped, a robot doesn't cue-bid it to ask partner for one — it plays
-  five of a minor fit, or a part-score, or passes. Slams in no trump don't
-  check stoppers.
+  five of a minor fit, or a part-score, or passes (the advancer's cue bid
+  shows strength, not a stopper question). Slams in no trump don't check
+  stoppers, and after the cue bid the advancer bids game but never looks
+  for a slam.
 - A call's meaning is read from its rules alone: when several rules make
   the same call, partner sees the widest of their ranges, not the hands the
   earlier rules have already taken.
