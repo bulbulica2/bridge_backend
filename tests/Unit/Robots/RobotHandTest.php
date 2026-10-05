@@ -67,21 +67,20 @@ class RobotHandTest extends TestCase
     $this->assertTrue($hand->isGoodSuit('S'));        // two of the top three
     $this->assertTrue($this->hand('QJT932.-.-.-')->isGoodSuit('S')); // three of the top five
     $this->assertFalse($this->hand('KJ9876.-.-.-')->isGoodSuit('S'));
+    $this->assertTrue($this->hand('AQT876.-.-.-')->isVeryGoodSuit('S'));   // A-Q-10
+    $this->assertFalse($this->hand('AQ9876.-.-.-')->isVeryGoodSuit('S'));  // good, not very good
+    $this->assertFalse($this->hand('QJT876.-.-.-')->isVeryGoodSuit('S'));  // one of the top three
     $this->assertTrue($hand->stops(['S', 'D']));
     $this->assertFalse($hand->stops(['S', 'C']));
   }
 
-  public function test_length_points_losers_and_quick_tricks(): void
+  public function test_losers_and_quick_tricks(): void
   {
     // board 10's East: the singleton queen is a loser, so 7 losers
     $east = $this->hand('Q.AT76532.65.A64');
 
-    $this->assertSame(3, $east->lengthPoints());
     $this->assertSame(7.0, $east->losers());
     $this->assertSame(2.0, $east->quickTricks());
-
-    $this->assertSame(0, $this->hand('AK32.K32.Q32.432')->lengthPoints());
-    $this->assertSame(2, $this->hand('AK432.Q5432.2.32')->lengthPoints());
 
     // Q-J-x is a winner and a half better than Q-x-x; Q-x and a bare Q are not
     $this->assertSame(2.0, $this->hand('QJT2.-.-.-')->losers());

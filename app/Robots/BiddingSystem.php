@@ -21,7 +21,7 @@ use Closure;
  * aren't alerted.
  *
  * Points are high-card points; only whether a 10–11 HCP hand opens also
- * weighs its length, losers and quick tricks (`opens()`).
+ * weighs its suits, losers and quick tricks (`opens()`).
  */
 class BiddingSystem
 {
@@ -35,8 +35,8 @@ class BiddingSystem
   public const GRAND = 37;
 
   /**
-   * The fewest high-card points an opening of one of a suit shows (a light
-   * one, `opens()`), and so opener's suit rebids.
+   * The fewest high-card points an opening of one of a suit shows
+   * (`opens()`), and so opener's suit rebids.
    */
   public const OPENING = 10;
 
@@ -169,16 +169,23 @@ class BiddingSystem
   }
 
   /**
-   * Worth one of a suit: 12+ HCP, or a light opening — 10–11 HCP, not
-   * balanced, 12+ points with length (`RobotHand::lengthPoints()`), at most
-   * seven losers and two quick tricks. The losers are where honours are
-   * weighed: a singleton queen is a loser, Q-J-10 a trick.
+   * Worth one of a suit: always with 12+ HCP; with 11 when the hand has a
+   * continuation — a second four-card suit to bid next, or a six-card suit
+   * to rebid — balanced or not; with 10 only on a very good six-card suit,
+   * at most seven losers and two quick tricks (a singleton honour is a
+   * loser there, so it doesn't make the opening).
    */
   private function opens(RobotHand $h): bool
   {
-    return $h->hcp() >= 12
-      || ($h->hcp() >= self::OPENING && ! $h->isBalanced() && $h->hcp() + $h->lengthPoints() >= 12
-        && $h->losers() <= 7 && $h->quickTricks() >= 2);
+    $long = fn (int $length) => array_filter(RobotHand::SUITS, fn ($suit) => $h->length($suit) >= $length);
+
+    return match (true) {
+      $h->hcp() >= 12 => true,
+      $h->hcp() === 11 => count($long(4)) >= 2 || $long(6) !== [],
+      $h->hcp() === self::OPENING => array_filter($long(6), $h->isVeryGoodSuit(...)) !== []
+        && $h->losers() <= 7 && $h->quickTricks() >= 2,
+      default => false,
+    };
   }
 
   // ---------------------------------------------------------------- answers
@@ -542,7 +549,7 @@ class BiddingSystem
 
     $stopped = fn (RobotHand $h) => $h->isBalanced() && $h->stops($their);
     $this->add($v->cheapest('NT'), new BidMeaning('Rebid', 12, 14, balanced: true, suit: 'NT', stopped: $their),
-      fn (RobotHand $h) => $stopped($h) && $h->hcp() <= 14);
+      fn (RobotHand $h) => $stopped($h) && $this->between($h, 12, 14));
     $this->add($v->jump('NT'), new BidMeaning('Jump rebid', 18, 19, balanced: true, suit: 'NT', stopped: $their),
       fn (RobotHand $h) => $stopped($h) && $h->hcp() >= 18);
 
@@ -1160,7 +1167,7 @@ class BiddingSystem
 
     $balanced = fn (RobotHand $h) => $h->isBalanced() && $h->stops($opponents);
     $this->add($twoLevel ? '2NT' : '1NT', new BidMeaning('Rebid', 12, 14, balanced: true, suit: 'NT', stopped: $opponents),
-      fn (RobotHand $h) => $balanced($h) && $h->hcp() <= 14);
+      fn (RobotHand $h) => $balanced($h) && $this->between($h, 12, 14));
     $this->add($twoLevel ? '3NT' : '2NT', new BidMeaning('Rebid', 18, 19, balanced: true, suit: 'NT', stopped: $opponents),
       fn (RobotHand $h) => $balanced($h) && $this->between($h, 18, 19));
 
@@ -1186,7 +1193,7 @@ class BiddingSystem
     $this->add($v->cheapest($mine), new BidMeaning('Rebid', self::OPENING, 18, [$mine => 5], suit: $mine),
       fn (RobotHand $h) => $h->length($mine) >= 5);
     $this->add('1NT', new BidMeaning('Rebid', 12, 14, suit: 'NT', stopped: $opponents),
-      fn (RobotHand $h) => $h->hcp() <= 14 && $h->stops($opponents));
+      fn (RobotHand $h) => $this->between($h, 12, 14) && $h->stops($opponents));
     $this->add($v->cheapest($theirs), new BidMeaning('Raise', self::OPENING, 18, [$theirs => 3], suit: $theirs),
       fn (RobotHand $h) => $h->length($theirs) >= 3);
     $this->add($v->cheapest($mine), new BidMeaning('Rebid', self::OPENING, 18, [$mine => $opened], suit: $mine), fn () => true);

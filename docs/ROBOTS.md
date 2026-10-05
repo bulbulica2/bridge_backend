@@ -198,8 +198,9 @@ decides reads the chat.
 - **HCP** (high-card points): ace 4, king 3, queen 2, jack 1. Every range
   and every sum between partners is in HCP; only whether a 10–11 HCP hand
   opens (below) also looks at its shape and honours.
-- **Length points**: one for every card past the fourth in each suit (a
-  seven-card suit 3, 5-5 2).
+- **Very good suit** (to open on with 10 HCP): two of the top three
+  honours **and** three of the top five — A-K-J, A-Q-10, K-Q-J and the
+  like. A-Q-9-x-x-x is only a good suit.
 - **Losers** (the losing trick count): in each suit, the top three cards —
   two of a doubleton, one of a singleton — that aren't the A, K or Q (in a
   doubleton A or K, in a singleton the A only). A queen without the ace or
@@ -208,10 +209,15 @@ decides reads the chat.
   honours that make tricks count, honours that fall don't.
 - **Quick tricks** (defence): A-K 2, A-Q 1½, A 1, K-Q 1, a K with
   another card ½.
-- **Light opening**: 10–11 HCP, not balanced, HCP + length points 12 or
-  more, **at most 7 losers** and **2+ quick tricks**. Length points alone
-  would open a hand whose points are wasted honours; the losers check that
-  its strength is in tricks, the quick tricks that it still defends.
+- **Opening strength** for one of a suit:
+  - **12+ HCP**: always opens.
+  - **11 HCP**: opens when the hand has a **continuation** — a second
+    four-card suit to bid next (1♣, then 1♠ over partner's 1♦/1♥), or a
+    six-card suit to rebid — balanced or not. 11 with one long suit
+    (5-3-3-2, 4-3-3-3) passes.
+  - **10 HCP**: only on a **very good** six-card (or longer) suit, with at
+    most **7 losers** and **2+ quick tricks**. A balanced 10 never opens.
+
   Partner reads every opening of one of a suit as 10+ HCP.
 - **Balanced**: no void, no singleton, at most one doubleton — 4-3-3-3,
   4-4-3-2 or 5-3-3-2.
@@ -250,36 +256,37 @@ Checked in this order:
 | 22+ HCP | **2♣**: strong, artificial, forcing |
 | 20–21 HCP, balanced | **2NT** |
 | 15–17 HCP, balanced | **1NT** |
-| 12+ HCP, or a light opening, with a five-card major | **1♠** or **1♥**, the longer; **1♠** with 5-5 |
-| 12+ HCP, or a light opening, no five-card major | **1♦** with more diamonds than clubs, or four of each; else **1♣** |
+| opening strength (12+, or 10–11, see above) with a five-card major | **1♠** or **1♥**, the longer; **1♠** with 5-5 |
+| opening strength, no five-card major | **1♦** with more diamonds than clubs, or four of each; else **1♣** |
 | 5–11 HCP, exactly six cards in ♠, ♥ or ♦, a good suit, no four-card side major | a **weak two** (2♠/2♥/2♦) |
 | 5–10 HCP, eight or more cards in a major, a good suit | **4♥** / **4♠** |
 | 5–10 HCP, seven or more cards in a suit, a good suit | **three** of it (a preempt) |
 | anything else | Pass (shows 0–11) |
 
 Nobody preempts or opens a weak two in fourth seat. One of a suit shows
-**10–21** HCP: 12+, or a light opening (see
-[Hand evaluation](#hand-evaluation)), which is checked first, so a 10–11
-HCP hand with a six- or seven-card suit, seven losers and two quick tricks
-opens one of it rather than preempting; a weak two or a preempt stays for
-the rest (and a good seven-card suit under 10 HCP still bids three).
+**10–21** HCP ([opening strength](#hand-evaluation)). It is checked before
+the weak twos and preempts, so a hand that opens one of a suit never
+preempts; a 10 HCP hand with a suit that is good but not very good still
+opens a weak two, and a good seven-card suit under 10 HCP still bids three.
 
-Why losers and not the Rule of 20 (HCP + the two longest suits ≥ 20):
-neither counts a singleton queen as worthless or Q-J-10 as a trick, and
-the Rule of 20 opens 10 HCP with a 5-5 shape and scattered honours.
-Examples, all 10 HCP:
+Examples:
 
-| Hand | Losers | Call |
+| Hand | HCP | Call |
 |---|---|---|
-| ♠Q ♥AT76532 ♦65 ♣A64 (board 10's East) | 7 — the ♠Q is a loser | **1♥** (13 points, 2 quick tricks) |
-| ♠QJT ♥AK8765 ♦32 ♣32 | 7 — Q-J-10 is a trick | **1♥** |
-| ♠Q32 ♥AK8765 ♦32 ♣J2 | 7½ | **2♥** (weak two) |
-| ♠Q ♥KJ9876 ♦K32 ♣J32 | 8 | Pass |
-| ♠AK432 ♥K432 ♦32 ♣32 | 7 | Pass: 11 points |
+| ♠KJ32 ♥Q2 ♦K32 ♣Q432 | 11, two four-card suits | **1♣**, then 1♠ over 1♦/1♥ |
+| ♠KJ32 ♥Q32 ♦K32 ♣Q32 | 11, 4-3-3-3 | Pass |
+| ♠K2 ♥KJ9876 ♦Q32 ♣Q2 | 11, a six-card suit | **1♥** |
+| ♠AQT876 ♥A32 ♦54 ♣32 | 10, very good suit, 7 losers | **1♠** |
+| ♠AQ9876 ♥A32 ♦54 ♣32 | 10, good suit only | **2♠** (weak two) |
+| ♠Q ♥AKJ876 ♦432 ♣432 | 10, but the ♠Q is a loser: 8 | **2♥** (weak two) |
+| ♠AK32 ♥K432 ♦32 ♣432 | 10, no six-card suit | Pass |
 
-On board 10 West (third seat, ♠AJ984 ♥KJ4 ♦42 ♣QT2: 11 HCP, 12 points)
-still passes on its 8½ losers, and North (fourth seat, 11 HCP, 4-2-4-3)
-on its balanced shape. A fourth-seat rule (the Rule of 15) isn't
+**Board 10** (dealer East): East's ♠Q ♥AT76532 ♦65 ♣A64 is 10 HCP
+without a very good suit (A-10 only) — and the ♠Q, a singleton, is worth
+nothing — so East passes, as does West (third seat, ♠AJ984 ♥KJ4 ♦42
+♣QT2: 11 HCP and no second suit). North (fourth seat, ♠K652 ♥Q8 ♦KT98
+♣K75: 11 HCP with two four-card suits) now opens **1♦**, so the board is
+no longer passed out. A fourth-seat rule (the Rule of 15) isn't
 implemented.
 
 ### 2. Partner opened no trump
@@ -413,10 +420,11 @@ since. A no trump or preempt opener goes straight to
 [later bids](#10-later-bids), and so does opener after a raise or a 2NT/3NT
 answer.
 
-A suit rebid's range starts at **10**, as the opening's does, since a
-light opener (never balanced) makes the same rebids: partner adds its
-points to 10, not 12 (so 1♣–1♥–2♥ needs 15 for responder to bid game, and
-14 invites). The balanced no trump rebids keep their 12–14.
+A suit rebid's range starts at **10**, as the opening's does: partner
+adds its points to 10, not 12 (so 1♣–1♥–2♥ needs 15 for responder to bid
+game, and 14 invites). The no trump rebids keep their 12–14 and need 12+
+HCP, so an 11 HCP opener goes on to its continuation instead: its second
+suit (1♦–1♠–**2♣**), or its own suit again.
 
 **Partner bid a new suit** (forcing, so this never passes):
 

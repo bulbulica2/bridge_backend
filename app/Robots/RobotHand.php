@@ -76,14 +76,6 @@ class RobotHand
   }
 
   /**
-   * One point for every card past the fourth in each suit.
-   */
-  public function lengthPoints(): int
-  {
-    return array_sum(array_map(fn ($suit) => max(0, $this->length($suit) - 4), self::SUITS));
-  }
-
-  /**
    * The losing trick count: in each suit, the top three cards (fewer in a
    * shorter suit) that aren't the ace, king or queen. A singleton queen is
    * a loser, a queen without the ace or king counts half a loser more
@@ -153,6 +145,15 @@ class RobotHand
   public function isGoodSuit(string $suit): bool
   {
     return $this->honours($suit, 3) >= 2 || $this->honours($suit, 5) >= 3;
+  }
+
+  /**
+   * A suit good enough to open on with 10 HCP: two of the top three
+   * honours and three of the top five (A-K-J, A-Q-10, K-Q-J …).
+   */
+  public function isVeryGoodSuit(string $suit): bool
+  {
+    return $this->honours($suit, 3) >= 2 && $this->honours($suit, 5) >= 3;
   }
 
   /**
