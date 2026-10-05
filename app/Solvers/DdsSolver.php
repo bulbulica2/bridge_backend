@@ -58,7 +58,16 @@ class DdsSolver implements DoubleDummySolver
 
   private const RANK_CHARS = [10 => 'T', 12 => 'J', 13 => 'Q', 14 => 'K', 15 => 'A'];
 
-  private ?FFI $ffi = null;
+  /**
+   * One FFI instance per library for the whole process, never freed. FFI
+   * caches the type it parses for a literal like `'struct dealPBN'` against
+   * the instance that parsed it: once that instance is freed, a new one
+   * allocated at the same address reuses the dangling type, and a field
+   * resolves to another struct's (CI saw `trump` turn into an `int[13]`).
+   *
+   * @var array<string, FFI>
+   */
+  private static array $libraries = [];
 
   /**
    * @param  string  $library  path to `libdds.so` / `dds.dll` (`bridge.dds_library`)
@@ -159,7 +168,7 @@ class DdsSolver implements DoubleDummySolver
       throw new RuntimeException('DDS_LIBRARY is set, but PHP\'s FFI extension is not loaded: enable extension=ffi in php.ini.');
     }
 
-    return $this->ffi ??= FFI::cdef(self::HEADER, $this->library);
+    return self::$libraries[$this->library] ??= FFI::cdef(self::HEADER, $this->library);
   }
 
   /**
