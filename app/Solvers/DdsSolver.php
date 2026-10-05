@@ -20,7 +20,9 @@ use RuntimeException;
  * while FFI binds the library as it comes. The library is loaded once per
  * worker and kept; and since only `queue:work` solves (the CLI, where FFI
  * works under the default `ffi.enable=preload`), the web server never
- * needs FFI.
+ * needs FFI. Loading it, the solver caps DDS's memory and threads
+ * (`SetResources`, `bridge.dds_memory_mb`/`dds_threads`): left to itself,
+ * DDS sizes its tables for every core of the machine.
  *
  * DDS numbers hands N=0, E=1, S=2, W=3 (our `Seats::SEATS` order) and
  * strains S=0, H=1, D=2, C=3, NT=4; ranks run 2…14 (A=14), where our
@@ -48,6 +50,7 @@ class DdsSolver implements DoubleDummySolver
     };
     int CalcDDtablePBN(struct ddTableDealPBN tableDealPBN, struct ddTableResults *tablep);
     int SolveBoardPBN(struct dealPBN dl, int target, int solutions, int mode, struct futureTricks *futp, int threadIndex);
+    void SetResources(int maxMemoryMB, int maxThreads);
     C;
 
   /** DDS's strain order: the four suits as it numbers them, then NT. */
@@ -71,8 +74,10 @@ class DdsSolver implements DoubleDummySolver
 
   /**
    * @param  string  $library  path to `libdds.so` / `dds.dll` (`bridge.dds_library`)
+   * @param  int  $memoryMb  the most memory DDS may take (`bridge.dds_memory_mb`, 0: DDS's choice)
+   * @param  int  $threads  the most threads DDS may run (`bridge.dds_threads`, 0: DDS's choice)
    */
-  public function __construct(private string $library) {}
+  public function __construct(private string $library, private int $memoryMb = 0, private int $threads = 0) {}
 
   public function table(array $deal): array
   {
@@ -162,13 +167,34 @@ class DdsSolver implements DoubleDummySolver
     return 'N:'.implode(' ', $hands);
   }
 
-  private function ffi(): FFI
+  /**
+   * The library, bound the first time and its resources set then, once.
+   *
+   * @return FFI
+   */
+  private function ffi(): object
+  {
+    if (! isset(self::$libraries[$this->library])) {
+      $ffi = $this->load();
+      $ffi->SetResources($this->memoryMb, $this->threads);
+      self::$libraries[$this->library] = $ffi;
+    }
+
+    return self::$libraries[$this->library];
+  }
+
+  /**
+   * Bind the library. Overridden only by tests, which bind a stand-in.
+   *
+   * @return FFI
+   */
+  protected function load(): object
   {
     if (! extension_loaded('ffi')) {
       throw new RuntimeException('DDS_LIBRARY is set, but PHP\'s FFI extension is not loaded: enable extension=ffi in php.ini.');
     }
 
-    return self::$libraries[$this->library] ??= FFI::cdef(self::HEADER, $this->library);
+    return FFI::cdef(self::HEADER, $this->library);
   }
 
   /**

@@ -103,4 +103,34 @@ return [
 
   'dds_library' => env('DDS_LIBRARY'),
 
+  /*
+  |--------------------------------------------------------------------------
+  | DDS's memory
+  |--------------------------------------------------------------------------
+  |
+  | Left to itself DDS sizes its transposition tables for every core of the
+  | machine (about 1 GB of native memory on 20 cores, which PHP doesn't
+  | count). The solver caps it at this many megabytes and threads when it
+  | loads the library (DDS's `SetResources`). A board's table takes about a
+  | tenth of a second, so a couple of threads is plenty. 0 lets DDS pick.
+  |
+  */
+
+  'dds_memory_mb' => (int) env('BRIDGE_DDS_MEMORY_MB', 256),
+
+  'dds_threads' => (int) env('BRIDGE_DDS_THREADS', 2),
+
+  /*
+  |--------------------------------------------------------------------------
+  | Queue worker
+  |--------------------------------------------------------------------------
+  |
+  | On, `queue:work` logs a `debug` line after every job with its PHP
+  | memory (`LogJobMemory`), to find what makes it grow. A worker's stop is
+  | logged either way (`LogWorkerStopping`).
+  |
+  */
+
+  'log_job_memory' => (bool) env('BRIDGE_LOG_JOB_MEMORY', false),
+
 ];

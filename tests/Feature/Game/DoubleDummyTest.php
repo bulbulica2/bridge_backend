@@ -236,11 +236,13 @@ class DoubleDummyTest extends TestCase
     (new AppServiceProvider($this->app))->register();
     $this->assertFalse($this->app->bound(DoubleDummySolver::class));
 
-    config(['bridge.dds_library' => '/usr/lib/x86_64-linux-gnu/libdds.so.0']);
+    config(['bridge.dds_library' => '/usr/lib/x86_64-linux-gnu/libdds.so.0', 'bridge.dds_memory_mb' => 128, 'bridge.dds_threads' => 3]);
     (new AppServiceProvider($this->app))->register();
 
-    // loaded only when it first solves something
-    $this->assertInstanceOf(DdsSolver::class, app(DoubleDummySolver::class));
+    // loaded only when it first solves something, then capped as configured
+    $solver = app(DoubleDummySolver::class);
+    $this->assertInstanceOf(DdsSolver::class, $solver);
+    $this->assertSame([128, 3], (fn () => [$this->memoryMb, $this->threads])->call($solver));
   }
 
   private function doubleDummy(string $seat): TestResponse

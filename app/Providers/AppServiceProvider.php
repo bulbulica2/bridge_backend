@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use App\Services\QueueHealthService;
 use App\Solvers\DdsSolver;
 use App\Solvers\DoubleDummySolver;
 use Barryvdh\Debugbar\Facades\Debugbar;
@@ -21,15 +22,27 @@ class AppServiceProvider extends ServiceProvider
     // enable() bypasses debugbar's own "off when testing" check, and the
     // injected HTML breaks assertNoContent(), so only force it on locally.
     // It also overrides the config, so DEBUGBAR_ENABLED=false (see
-    // RUNNING.md) has to be checked here or it does nothing
-    if ($this->app->environment('local') && config('debugbar.enabled') !== false) {
+    // RUNNING.md) has to be checked here or it does nothing. Never in the
+    // console, which enable() would bypass too: in queue:work or
+    // reverb:start it collects every transaction (with a backtrace, and no
+    // limit) for a page that never comes, until the worker reaches
+    // --memory and stops (#127). `php artisan serve`'s requests aren't
+    // console, so they keep it
+    if ($this->app->environment('local') && ! $this->app->runningInConsole() && config('debugbar.enabled') !== false) {
       Debugbar::enable();
     }
+
+    // one per process: a worker remembers its last heartbeat
+    $this->app->singleton(QueueHealthService::class);
 
     // the double dummy solver only when DDS_LIBRARY names the library: with
     // none bound, nothing is solved (DoubleDummyService::available())
     if (filled(config('bridge.dds_library'))) {
-      $this->app->singleton(DoubleDummySolver::class, fn () => new DdsSolver(config('bridge.dds_library')));
+      $this->app->singleton(DoubleDummySolver::class, fn () => new DdsSolver(
+        config('bridge.dds_library'),
+        config('bridge.dds_memory_mb'),
+        config('bridge.dds_threads'),
+      ));
     }
   }
 

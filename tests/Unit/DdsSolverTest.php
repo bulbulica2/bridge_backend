@@ -7,6 +7,7 @@ use App\Models\Card;
 use App\Solvers\DdsSolver;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use RuntimeException;
 
 /**
  * The DDS solver on the three deals DDS publishes with its examples
@@ -124,6 +125,51 @@ class DdsSolverTest extends TestCase
     $this->expectExceptionMessage('FFI extension is not loaded');
 
     (new DdsSolver('dds.dll'))->table([]);
+  }
+
+  public function test_loading_the_library_caps_its_memory_and_threads_once(): void
+  {
+    // a stand-in for the library: it records SetResources, and stops the
+    // solve at its first struct
+    $library = new class
+    {
+      public array $resources = [];
+
+      public function SetResources(int $maxMemoryMb, int $maxThreads): void
+      {
+        $this->resources[] = [$maxMemoryMb, $maxThreads];
+      }
+
+      public function new(string $type): never
+      {
+        throw new RuntimeException("stand-in: $type");
+      }
+    };
+
+    $solver = new class('stand-in-'.uniqid(), 256, 2, $library) extends DdsSolver
+    {
+      public function __construct(string $path, int $memoryMb, int $threads, private object $library)
+      {
+        parent::__construct($path, $memoryMb, $threads);
+      }
+
+      protected function load(): object
+      {
+        return $this->library;
+      }
+    };
+
+    foreach ([1, 2] as $solve) {
+      try {
+        $solver->table([]);
+        $this->fail('The stand-in solved something.');
+      } catch (RuntimeException $e) {
+        $this->assertSame('stand-in: struct ddTableDealPBN', $e->getMessage());
+      }
+    }
+
+    // the library stays loaded, so its resources are set the first time only
+    $this->assertSame([[256, 2]], $library->resources);
   }
 
   private function solver(): DdsSolver

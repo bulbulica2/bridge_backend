@@ -111,8 +111,11 @@ Config of note (`.env`):
   Sanctum's stateful domains; not in `.env.example`, so it defaults to
   `http://localhost:3000`
 - `SESSION_DRIVER=database`, `QUEUE_CONNECTION=database`, `CACHE_STORE=database`
-- `DEBUGBAR_ENABLED` — unset, debugbar is on with `APP_ENV=local`; `false`
-  turns it off and makes each request cheaper (see [Local speed](#local-speed))
+- `DEBUGBAR_ENABLED` — unset, debugbar is on for requests with
+  `APP_ENV=local`; `false` turns it off and makes each request cheaper (see
+  [Local speed](#local-speed)). It is never on in an artisan command
+  (`queue:work`, `reverb:start`, …): see
+  [Keeping the worker running](#keeping-the-worker-running)
 - `PHP_CLI_SERVER_WORKERS` — `artisan serve` workers, Linux/macOS only; 1
   on Windows, where the built-in server can't fork
 - `BROADCAST_CONNECTION=reverb` and the `REVERB_*` keys — see below
@@ -149,6 +152,47 @@ other players ~0.3 s after the HTTP response. In production use a Redis queue
 
 Restart `queue:work` and `reverb:start` after changing PHP code — both are
 long-running and keep the old code loaded.
+
+### Keeping the worker running
+
+Everything the table waits for runs in `queue:work`: a worker that stops
+freezes every table (robots, live updates, claim expiry, the next deal)
+while the screens still look live. Three things look after it:
+
+- **Every stop is logged.** `App\Listeners\LogWorkerStopping` writes a
+  `warning` to `storage/logs/laravel.log` with the exit code, what it
+  means and the worker's PHP memory: `12` is `--memory` reached (128 MB by
+  default), `0` an asked-for stop (`queue:restart`, `--max-jobs`,
+  `--max-time`, a lost database connection). With
+  `BRIDGE_LOG_JOB_MEMORY=true` in `.env` it also logs a `debug` line after
+  every job with its memory (`LogJobMemory`), to find a leak; leave it off
+  otherwise, the robots alone run a job a second.
+- **`GET /api/health`** says whether a worker is running: each one writes a
+  heartbeat to the cache every 10 s as it loops, and the worker counts as
+  stopped a minute after the last one ([`API.md`](API.md#get-apihealth)).
+- **Restart it when it stops.** Locally, run it in a loop that starts it
+  again; `--max-time=3600` also recycles it every hour, as production does:
+  ```powershell
+  # PowerShell
+  while ($true) { php -d xdebug.mode=off artisan queue:work --sleep=0.1 --max-time=3600; Start-Sleep 1 }
+  ```
+  ```bash
+  # bash
+  while true; do php -d xdebug.mode=off artisan queue:work --sleep=0.1 --max-time=3600; sleep 1; done
+  ```
+  In production run it under Supervisor or systemd, which restart it the
+  same way ([Laravel's docs](https://laravel.com/docs/11.x/queues#supervisor-configuration)).
+
+Why it used to stop (`69-queue-worker-stops`, #127): `AppServiceProvider`
+force-enabled debugbar with `APP_ENV=local` in every process, `queue:work`
+included, where nothing ever sends its page. Its query collector stops
+storing queries after 500 but keeps **every transaction** (begin and
+commit, each with a backtrace) without a limit, and the database queue
+opens one on every poll (ten a second with `--sleep=0.1`, even idle) and
+every robot move another. Measured with three robots and a human playing,
+the worker grew ~10 MB a minute and stopped at 128 MB with exit code 12,
+silently. Debugbar is now on only for requests (`php artisan serve`'s and
+Apache's aren't console), and the same worker stays flat.
 
 `.env` keys (`.env.example` has working local values):
 
@@ -287,6 +331,15 @@ everything else works the same.
 | Key | Default | Meaning |
 |---|---|---|
 | `DDS_LIBRARY` | *(empty)* | full path of the DDS shared library (`config/bridge.php`, `bridge.dds_library`); set, `AppServiceProvider` binds `App\Solvers\DdsSolver` as the solver |
+| `BRIDGE_DDS_MEMORY_MB` | `256` | the most memory DDS may take (`bridge.dds_memory_mb`, `0` lets DDS choose) |
+| `BRIDGE_DDS_THREADS` | `2` | the most threads DDS may run (`bridge.dds_threads`, `0` lets DDS choose) |
+
+**DDS's memory.** Left to itself DDS sizes its transposition tables for
+every core: about 1 GB of native memory on a 20-core machine, the first
+time it solves (PHP's `memory_get_usage()` doesn't see it, so `--memory`
+doesn't either). `DdsSolver` calls DDS's `SetResources` with the two keys
+above once, when it loads the library. A board's table takes about a
+tenth of a second, so two threads cost nothing that matters.
 
 FFI is only needed by the CLI that runs `queue:work`, and PHP's default
 `ffi.enable=preload` already allows it there, so the web server needs
@@ -390,7 +443,8 @@ measured in [bridge#55](https://github.com/bulbulica2/bridge/issues/55):
    `DEBUGBAR_ENABLED=false` in `.env` to turn it off. It costs
    ~0.01–0.02 s on a light request and ~0.14 s on `POST /tables` with
    robots, which runs many queries. Before `39-fast-table-entry` the key was
-   ignored (`AppServiceProvider` force-enabled it).
+   ignored (`AppServiceProvider` force-enabled it). It is never on in the
+   console, whatever the key says ([why](#keeping-the-worker-running)).
 4. **One request at a time.** `PHP_CLI_SERVER_WORKERS` gives
    `artisan serve` worker processes, but only on Linux and macOS: PHP's
    built-in server needs `fork()` for them, which Windows doesn't have, so

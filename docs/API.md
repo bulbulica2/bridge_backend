@@ -84,6 +84,7 @@ lobby, profiles, histories, results — stays open.
 | GET | `/api/user` | closure | `auth:sanctum` | current authenticated `User` (the caller's own record, email, `is_admin` and `ban` included) |
 | PATCH | `/api/user` | `UserController@update` | `auth:sanctum` | edit your own `name` / `description` |
 | GET | `/api/user/playings` | `UserController@ownPlayings` | `auth:sanctum` | your own finished playings, as `GET /users/{user}/playings` |
+| GET | `/api/health` | `HealthController@show` | none | whether a queue worker is running (`data.queue.running`, `last_seen_at`) — see [below](#get-apihealth) |
 | GET, POST | `/broadcasting/auth` | Laravel's `BroadcastController@authenticate` | session (`web` group) | signs a websocket subscription to a private channel, or 403 — see [Realtime](#realtime-websocket) and [`AUTH.md`](AUTH.md#websocket-channels-reverb) |
 
 Example:
@@ -92,6 +93,26 @@ curl http://127.0.0.1:8000/cards
 curl http://127.0.0.1:8000/cards/1
 curl http://127.0.0.1:8000/bids
 ```
+
+### `GET /api/health`
+Whether a `queue:work` is running, which a client can't tell by itself: a
+stopped worker leaves the table on screen as it was, while robots, live
+updates, claim expiry and the next deal all wait for it. Every worker
+writes a heartbeat to the cache at most every 10 s as it loops
+(`App\Listeners\BeatQueueHeartbeat`, `App\Services\QueueHealthService`);
+`running` is whether the last one is under 60 s old. No auth; always 200.
+
+```json
+{
+  "status": 200,
+  "message": "The queue worker is running.",
+  "data": { "queue": { "running": true, "last_seen_at": "2026-10-05T16:04:43Z" } }
+}
+```
+With no worker, `running` is `false` and the message is "The queue worker
+is not running: robots, live updates, claim expiry and the next deal wait
+for it."; `last_seen_at` is the last heartbeat, or `null` if the cache has
+none. (Laravel's own `GET /up` only says the app boots.)
 
 ### `GET /bids`
 The 38 calls a player can make, each with the id that
