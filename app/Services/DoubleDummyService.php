@@ -79,6 +79,46 @@ class DoubleDummyService
   }
 
   /**
+   * Queue everything still missing, for `dds:solve-missing`: the table of
+   * every dealt board without one, and the opening leads of every contract
+   * a finished playing reached without them. That fills in what was played
+   * before the server had a solver; a read would queue each one too, but
+   * only once someone looks. Only with a solver (`available()`): the
+   * caller checks, since without one every job would fail.
+   *
+   * @return array{tables: int, leads: int} how many of each were missing
+   */
+  public function queueMissing(): array
+  {
+    // only boards with their 52 cards: the others are never dealt
+    $boards = Board::whereHas('cards')->doesntHave('doubleDummy')->pluck('id');
+
+    foreach ($boards as $boardId) {
+      SolveDoubleDummyTable::dispatch($boardId);
+    }
+
+    // each declarer and strain once, however many playings reached it; a
+    // passed out board has no contract, so the join leaves it out
+    $contracts = BoardTable::query()
+      ->join('bids', 'bids.id', '=', 'board_table.contract_bid_id')
+      ->leftJoin('board_lead_analyses as analyses', fn ($join) => $join
+        ->on('analyses.board_id', '=', 'board_table.board_id')
+        ->on('analyses.declarer_seat', '=', 'board_table.declarer_seat')
+        ->on('analyses.strain', '=', 'bids.strain'))
+      ->whereNotNull('board_table.finished_at')
+      ->whereNull('analyses.id')
+      ->distinct()
+      ->toBase()
+      ->get(['board_table.board_id', 'board_table.declarer_seat', 'bids.strain']);
+
+    foreach ($contracts as $contract) {
+      SolveOpeningLeads::dispatch($contract->board_id, $contract->declarer_seat, $contract->strain);
+    }
+
+    return ['tables' => $boards->count(), 'leads' => $contracts->count()];
+  }
+
+  /**
    * Solve and store the board's table, if nobody has yet. Run by
    * `SolveDoubleDummyTable`.
    */

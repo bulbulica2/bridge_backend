@@ -36,6 +36,9 @@ terminal (see [Realtime](#realtime-reverb) below):
 php artisan reverb:start            # websocket server, ws://localhost:8080
 php artisan queue:work --sleep=0.1  # sends the queued broadcasts to Reverb
 ```
+(With the double dummy solver on XAMPP the worker runs as
+`php -d extension=ffi -d xdebug.mode=off artisan queue:work --sleep=0.1`,
+see [Double dummy](#double-dummy-dds).)
 The API works without them: seat changes still succeed, the broadcasts just
 wait in the `jobs` table until a worker runs.
 
@@ -146,7 +149,7 @@ What runs where:
 |---|---|---|
 | API | `php artisan serve --host=localhost` (or Apache, see [Local speed](#local-speed)) | HTTP, including `POST /broadcasting/auth` |
 | Websocket server | `php artisan reverb:start` (add `--debug` to log every frame) | holds the players' connections on port 8080 |
-| Queue worker | `php artisan queue:work --sleep=0.1` | broadcasts are queued jobs; the worker sends them to Reverb. It also runs the robots' moves (`DriveRobots`), expires unanswered claims (`ExpireClaim`), deals a set's next board when its pause is up (`DealNextBoard`) and solves the double dummy analysis (`SolveDoubleDummyTable`, `SolveOpeningLeads`; see [Double dummy](#double-dummy-dds)) |
+| Queue worker | `php artisan queue:work --sleep=0.1`; with the double dummy solver on XAMPP, `php -d extension=ffi -d xdebug.mode=off artisan queue:work --sleep=0.1` | broadcasts are queued jobs; the worker sends them to Reverb. It also runs the robots' moves (`DriveRobots`), expires unanswered claims (`ExpireClaim`), deals a set's next board when its pause is up (`DealNextBoard`) and solves the double dummy analysis (`SolveDoubleDummyTable`, `SolveOpeningLeads`; see [Double dummy](#double-dummy-dds)) |
 
 Broadcast events implement `ShouldBroadcast`, so they go through the queue: a
 Reverb server that is down fails a queued job, not the player's request. The
@@ -181,8 +184,9 @@ screens still look live. (Claim expiry alone survives it: requests and
 - **Restart it when it stops.** Locally, run it in a loop that starts it
   again; `--max-time=3600` also recycles it every hour, as production does:
   ```powershell
-  # PowerShell
-  while ($true) { php -d xdebug.mode=off artisan queue:work --sleep=0.1 --max-time=3600; Start-Sleep 1 }
+  # PowerShell (-d extension=ffi for the double dummy solver; harmless, if
+  # noisy, when php.ini loads FFI already)
+  while ($true) { php -d extension=ffi -d xdebug.mode=off artisan queue:work --sleep=0.1 --max-time=3600; Start-Sleep 1 }
   ```
   ```bash
   # bash
@@ -338,8 +342,10 @@ when a playing finishes. So **`queue:work` must be running**, or the
 analysis stays `pending`.
 
 It is optional. With `DDS_LIBRARY` unset (the default) nothing is solved,
-nothing is queued, and the analysis answers `status: "unavailable"`;
-everything else works the same.
+nothing is queued, and the analysis answers `status: "unavailable"` for
+every board; everything else works the same. When it stays `unavailable`
+(or `pending`) after setting it up, `php artisan dds:check` says what is
+missing (see *Check it* below).
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -356,25 +362,46 @@ tenth of a second, so two threads cost nothing that matters.
 
 FFI is only needed by the CLI that runs `queue:work`, and PHP's default
 `ffi.enable=preload` already allows it there, so the web server needs
-neither FFI nor the library.
+neither FFI nor the library. That CLI also needs **Xdebug off**: in any
+other mode (`debug`, XAMPP's default, but `develop` and `coverage` too)
+FFI loads the library and then fails to parse its first struct
+(`FFI\ParserException: unexpected character 'escape_char(ch)'`).
 
-**Windows / XAMPP**
-1. In `C:\xampp\php\php.ini`, uncomment `extension=ffi` (XAMPP ships
-   `php_ffi.dll`).
-2. Get a **64-bit** `dds.dll` (XAMPP's PHP is x64). DDS publishes no current
-   Windows binaries, so build it from the sources: v2.9.0 with Visual Studio
-   (`src/Makefiles/Makefile_Visual`, from an *x64 Native Tools* prompt) or
-   v3 with Bazel (`docs/BUILD_SYSTEM.md` in the DDS repo). Both export the
-   legacy C API (`CalcDDtablePBN`, `SolveBoardPBN`) that `DdsSolver` calls.
-   Put it somewhere stable, e.g. `C:\dds\dds.dll`, with any DLL it needs
-   next to it.
-3. In `.env`: `DDS_LIBRARY=C:\dds\dds.dll`.
-4. Run the worker **with Xdebug off**: with XAMPP's `xdebug.mode=debug`,
-   FFI fails to parse its declarations (`FFI\ParserException: unexpected
-   '<EOF>'`), so
-   ```bash
-   php -d xdebug.mode=off artisan queue:work --sleep=0.1
+**Windows / XAMPP** — a few minutes, no build tools:
+1. Get a ready **64-bit** `dds.dll` (XAMPP's PHP is x64). DDS publishes no
+   Windows binaries, but the [`endplay`](https://pypi.org/project/endplay/)
+   Python package ships one in its Windows wheel (`endplay/_dds/dds.dll`,
+   225 KB, DDS's legacy C API: `CalcDDtablePBN`, `SolveBoardPBN`,
+   `SetResources`). A wheel is a zip, so no Python is needed:
+   ```powershell
+   # PowerShell: endplay 0.5.12's wheel for CPython 3.10 (any of its win_amd64 wheels has the same DLL)
+   New-Item -ItemType Directory -Force C:\dds
+   Invoke-WebRequest https://files.pythonhosted.org/packages/48/df/8ced604920dc012255888af1ead84394708cefb6ac6da8bbaa33673c9d6b/endplay-0.5.12-cp310-cp310-win_amd64.whl -OutFile $env:TEMP\endplay.zip
+   Expand-Archive $env:TEMP\endplay.zip $env:TEMP\endplay -Force
+   Copy-Item $env:TEMP\endplay\endplay\_dds\dds.dll C:\dds\dds.dll
    ```
+   With pip, `pip download endplay --no-deps --only-binary=:all: --platform win_amd64 --python-version 3.10`
+   fetches the same wheel. The DLL needs the **Visual C++ 2015+ runtime**
+   (`MSVCP140.dll`, `VCRUNTIME140.dll`, `VCRUNTIME140_1.dll`), which most
+   machines have; otherwise install Microsoft's *Visual C++ Redistributable
+   (x64)*. Licences: DDS is Apache-2.0, endplay MIT.
+2. In `.env`: `DDS_LIBRARY=C:\dds\dds.dll`.
+3. Run the worker with FFI on and Xdebug off, as flags, so `php.ini` stays
+   as it is (Apache never loads FFI, and Xdebug keeps working everywhere
+   else):
+   ```powershell
+   php -d extension=ffi -d xdebug.mode=off artisan queue:work --sleep=0.1
+   ```
+   Or enable it for every CLI instead: uncomment `extension=ffi` in
+   `C:\xampp\php\php.ini` (XAMPP ships `php_ffi.dll`), and keep
+   `-d xdebug.mode=off`.
+4. Check it (below), with the same flags.
+
+The alternative to the endplay DLL is building DDS from its sources:
+v2.9.0 with Visual Studio (`src/Makefiles/Makefile_Visual`, from an
+*x64 Native Tools* prompt) or v3 with Bazel (`docs/BUILD_SYSTEM.md` in the
+DDS repo). Both export the same C API. Put the DLL somewhere stable, with
+any DLL it needs next to it.
 
 **Ubuntu / Debian**
 ```bash
@@ -383,19 +410,43 @@ sudo apt install libdds0   # DDS 2.9.0, in universe
 ```
 and in `.env`: `DDS_LIBRARY=/usr/lib/x86_64-linux-gnu/libdds.so.0`.
 
-Then restart `queue:work`. To check the library before relying on it, run
-its test, which solves the deals DDS publishes and compares the results:
+**Check it** with `dds:check`, in the PHP the worker runs in (same flags):
+```powershell
+php -d extension=ffi -d xdebug.mode=off artisan dds:check   # XAMPP
+php artisan dds:check                                       # Linux
+```
+It names everything missing at once — `DDS_LIBRARY` unset, no file at
+that path, FFI not loaded, Xdebug on — and once nothing is, it solves the
+first deal DDS publishes with its examples and compares the table and the
+opening leads with DDS's published results. It exits 0 only when they
+match (`DDS works: it solved its example deal as published, in … ms.`).
+A file that is there but won't load (`Failed loading`) is a 32-bit DLL or
+a missing Visual C++ runtime.
+
+Then restart `queue:work`, and queue the boards played before the solver
+was there:
+```bash
+php artisan dds:solve-missing
+```
+It queues the table of every dealt board that has none and the opening
+leads of every finished contract (declarer and strain) that has none, and
+nothing that is already stored; the worker solves them. Without it, each
+one is queued only when somebody first opens its analysis.
+
+To test the library itself, run its unit test, which solves all three of
+DDS's example deals:
 ```bash
 DDS_TEST_LIBRARY=/usr/lib/x86_64-linux-gnu/libdds.so.0 vendor/bin/phpunit tests/Unit/DdsSolverTest.php
 # PowerShell, XAMPP:
-#   $env:DDS_TEST_LIBRARY='C:\dds\dds.dll'; php -d xdebug.mode=off vendor/bin/phpunit tests/Unit/DdsSolverTest.php
+#   $env:DDS_TEST_LIBRARY='C:\dds\dds.dll'; php -d extension=ffi -d xdebug.mode=off vendor/bin/phpunit tests/Unit/DdsSolverTest.php
 ```
 (skipped, not failed, without the variable or FFI).
 
 A solve that fails (wrong path, missing FFI, a DDS error code) fails its
 job: `php artisan queue:failed` shows why, `php artisan queue:retry all`
-runs it again. Boards dealt before the library was set up have no table:
-the first read of their analysis queues it. Each job is queued once at a
+runs it again. Boards dealt before the library was set up have no table
+until `dds:solve-missing` or the first read of their analysis queues it.
+Each job is queued once at a
 time (`ShouldBeUnique`, for up to 10 minutes), and what is stored is never
 solved again.
 
@@ -546,7 +597,8 @@ test; that is Dotenv probing for the file and is harmless (plain
 `phpunit.xml` also forces `DDS_LIBRARY` empty, so the suite never loads
 DDS even when `.env` sets it: the double dummy tests bind a fake solver
 (`tests/Support/FakeDoubleDummySolver`). Only `tests/Unit/DdsSolverTest`
-runs the real one, when `DDS_TEST_LIBRARY` names it (see
+and one test of `tests/Feature/DdsCheckTest` (`dds:check` end to end, with
+FFI loaded and Xdebug off) run the real one, when `DDS_TEST_LIBRARY` names it (see
 [Double dummy](#double-dummy-dds)).
 
 ### Coverage
@@ -603,7 +655,8 @@ from the run page and open `index.html`); it fails when line coverage of
 or file name whose case doesn't match can pass locally and fail there.
 `tests` and `coverage` also enable FFI and `apt-get install libdds0`, with
 `DDS_TEST_LIBRARY` pointing at it, so `DdsSolverTest` runs the real DDS
-there (and covers `DdsSolver`); nothing else in the suite loads it.
+there (and covers `DdsSolver`), as does `DdsCheckTest`'s real check;
+nothing else in the suite loads it.
 
 It also sets `QUEUE_CONNECTION=sync`, so the robots' queued moves run inside
 the request that made them due (one after another, not nested) and a test

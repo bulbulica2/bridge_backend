@@ -1416,7 +1416,7 @@ the same for every table. No body; 403/404/401 as above.
 
 | Field | Meaning |
 |---|---|
-| `status` | `ready`; `pending` while the queued job hasn't solved it yet (poll again, or look again later); `unavailable` when the server has no solver (`DDS_LIBRARY` unset, see [`RUNNING.md`](RUNNING.md#double-dummy-dds)) |
+| `status` | `ready`; `pending` while the queued job hasn't solved it yet (poll again, or look again later); `unavailable` when **this server has no solver** (`DDS_LIBRARY` unset, see [`RUNNING.md`](RUNNING.md#double-dummy-dds)) — then it is `unavailable` for every board, so say "double dummy analysis isn't set up on this server", never that something is wrong with this board |
 | `table` | declarer's seat → strain (`C`, `D`, `H`, `S`, `NT`) → tricks declarer takes (0–13). `null` unless `status` is `ready` |
 
 The table is solved **once per board, in the queue** (`queue:work`), when
@@ -1476,7 +1476,7 @@ contract:
 
 | Field | Meaning |
 |---|---|
-| `status` | `ready` once both `table` and `leads` are in; `pending` while either queued job hasn't run; `unavailable` with no solver on the server |
+| `status` | `ready` once both `table` and `leads` are in; `pending` while either queued job hasn't run; `unavailable` when this server has no solver, for every board alike (see the board endpoint's `status`) |
 | `table` | as in [`GET /boards/{board}/double-dummy`](#get-boardsboarddouble-dummy); `null` until solved |
 | `leads` | every card the opening leader (declarer's left) held, in hand order (spades, hearts, diamonds, clubs, high to low), with `tricks`: what declarer makes after that lead with best play from there on. It depends on declarer and strain only (not the level or doubling), so every table that reached that contract shares it; solved in the queue when the first of them finishes. `null` until solved, and **always `null` on a passed out board**, which is `ready` with its `table` alone |
 

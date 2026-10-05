@@ -101,7 +101,7 @@ the same pattern:
 | `ScoringService` | duplicate scoring (`score()`, from declarer's side) and matchpoints (`matchpoints()`), pure static functions | `tests/Unit/ScoringTest` |
 | `BoardResultsService` | reads finished playings back for results across tables, a set's results (`set()`, `maySeeSet()`) and a player's history | feature tests (`BoardResultsTest`, `BoardSetTest`) |
 | `PlayerStatsService` | a player's stats (`stats()`, `GET /users/{user}/stats`): boards played and compared, won and mean matchpoint %, completed sets and won, sets walked out on by reason — worked out on every read in a handful of queries, never stored | `tests/Feature/User/PlayerStatsTest` |
-| `DoubleDummyService` | double dummy analysis: queues a board's table when it is dealt (`queueTable()`, from `deal()`) and a contract's opening leads when a playing finishes (`queueLeads()`, from `BoardTable::finish()`), solves and stores each once (`solveTable()`, `solveLeads()`, run by `App\Jobs\SolveDoubleDummyTable` / `SolveOpeningLeads`), and reads them back (`forBoard()`, `forPlaying()`: `ready`, `pending` — queueing what is missing — or `unavailable`) | `tests/Feature/Game/DoubleDummyTest` (fake solver), `tests/Unit/DdsSolverTest` (real DDS) |
+| `DoubleDummyService` | double dummy analysis: queues a board's table when it is dealt (`queueTable()`, from `deal()`) and a contract's opening leads when a playing finishes (`queueLeads()`, from `BoardTable::finish()`), solves and stores each once (`solveTable()`, `solveLeads()`, run by `App\Jobs\SolveDoubleDummyTable` / `SolveOpeningLeads`), and reads them back (`forBoard()`, `forPlaying()`: `ready`, `pending` — queueing what is missing — or `unavailable`); `queueMissing()` queues every table and contract still without one, for `dds:solve-missing` | `tests/Feature/Game/DoubleDummyTest` (fake solver), `tests/Unit/DdsSolverTest` (real DDS), `tests/Feature/DdsCheckTest` (`dds:check`) |
 | `RobotPool` | the robots seats are filled from: an idle one, made when every robot is busy (`idle()`); used by `RobotService::seatRobot()` and `TableSeatService::remove()` | through the seating tests |
 | `RobotService` | robot players: seating one on a manager's say-so (`seatRobot()`), and one robot move at a time (`act()`: a call, a card or a claim, the robots' claim answers, ready) through the services above | `tests/Feature/Game/RobotPlayTest`, `tests/Feature/Table/RobotSeatingTest` |
 | `UserBanService` | an admin's bans (`ban()`, `lift()`): a ban frees the user's seat through `TableSeatService::remove()` as a walk-out (mid-set a robot takes the seat at once), deletes their `sessions` rows, replaces their remember token and sends `UserBanned`; a new ban replaces the one in force | `tests/Feature/User/UserBanTest` |
@@ -196,7 +196,17 @@ Things worth knowing before you change them:
   request: a full table is 20 solves. The jobs are `ShouldBeUnique`, so
   repeated reads while `pending` queue one each. Tests bind
   `Tests\Support\FakeDoubleDummySolver`; `phpunit.xml` forces `DDS_LIBRARY`
-  empty. Show it only after `BoardPolicy::view`, like the deal.
+  empty. Show it only after `BoardPolicy::view`, like the deal. Two
+  commands, both by hand: `dds:check` (`App\Console\Commands\CheckDds`)
+  names every missing piece at once — `DDS_LIBRARY`, the file, FFI, and
+  Xdebug, which in any mode but `off` breaks FFI's parsing (what this PHP
+  has comes from `App\Solvers\PhpRuntime`, which tests replace) — then
+  solves DDS's first example deal through the bound solver and compares it
+  with DDS's published table and leads (exit 0 only on a match);
+  `dds:solve-missing` (`SolveMissingDoubleDummy`,
+  `DoubleDummyService::queueMissing()`) queues the table of every dealt
+  board without one and the leads of every finished contract without them,
+  for a server that gets DDS after boards were played.
 
 ## Robots
 
@@ -395,6 +405,10 @@ Three long-running processes sit next to `php artisan serve`:
   job per turn or per away player: being away starts with a heartbeat that
   *doesn't* come, which no event marks, and one check serves both rules
   without queueing a job for every call and card.
+- `php artisan dds:check` and `dds:solve-missing` are run by hand, never
+  scheduled: the first says whether the double dummy solver works in the
+  PHP it runs in, the second queues what was played before it did (see
+  [Game services](#game-services), *Double dummy*).
 
 Reverb can't tell Laravel that a client disconnected, so the backend tracks
 presence with a heartbeat instead: `table_seats.last_seen_at` is set by

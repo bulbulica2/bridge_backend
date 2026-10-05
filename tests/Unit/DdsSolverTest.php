@@ -3,7 +3,6 @@
 namespace Tests\Unit;
 
 use App\auxiliary\Seats;
-use App\Models\Card;
 use App\Solvers\DdsSolver;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -18,8 +17,6 @@ use RuntimeException;
  */
 class DdsSolverTest extends TestCase
 {
-  private const RANKS = ['2' => 2, '3' => 3, '4' => 4, '5' => 5, '6' => 6, '7' => 7, '8' => 8, '9' => 9, 'T' => 10, 'J' => 12, 'Q' => 13, 'K' => 14, 'A' => 15];
-
   /**
    * The deal, and its double dummy table from N, E, S, W declaring in
    * C, D, H, S, NT.
@@ -73,13 +70,26 @@ class DdsSolverTest extends TestCase
   public function test_the_deal_goes_to_dds_in_pbn_from_north(): void
   {
     $pbn = 'N:73.QJT.AQ54.T752 QT6.876.KJ9.AQ84 5.A95432.7632.K6 AKJ9842.K.T8.J93';
-    $this->assertSame($pbn, DdsSolver::pbn(self::deal($pbn)));
+    $this->assertSame($pbn, DdsSolver::pbn(DdsSolver::deal($pbn)));
 
     // a void is an empty suit
     $this->assertSame(
       'N:AK96.KQ8.A98.K63 QJT5432.T.6.QJ82 .J97543.K7532.94 87.A62.QJT4.AT75',
-      DdsSolver::pbn(self::deal('E:QJT5432.T.6.QJ82 .J97543.K7532.94 87.A62.QJT4.AT75 AK96.KQ8.A98.K63'))
+      DdsSolver::pbn(DdsSolver::deal('E:QJT5432.T.6.QJ82 .J97543.K7532.94 87.A62.QJT4.AT75 AK96.KQ8.A98.K63'))
     );
+  }
+
+  public function test_a_pbn_deal_reads_back_as_cards(): void
+  {
+    $deal = DdsSolver::deal('E:QJT5432.T.6.QJ82 .J97543.K7532.94 87.A62.QJT4.AT75 AK96.KQ8.A98.K63');
+
+    $this->assertSame(['E', 'S', 'W', 'N'], array_keys($deal));
+    $this->assertSame(['SQ', 'SJ', 'ST', 'S5', 'S4', 'S3', 'S2', 'HT', 'D6', 'CQ', 'CJ', 'C8', 'C2'], array_map([DdsSolver::class, 'cardName'], $deal['E']));
+    $this->assertSame([12, 13, 10], [$deal['E'][1]->rank, $deal['E'][0]->rank, $deal['E'][7]->rank]);
+
+    // every card its own id
+    $ids = array_merge(...array_map(fn ($hand) => array_map(fn ($card) => $card->id, $hand), array_values($deal)));
+    $this->assertCount(52, array_unique($ids));
   }
 
   /**
@@ -88,7 +98,7 @@ class DdsSolverTest extends TestCase
   #[DataProvider('tables')]
   public function test_it_solves_the_double_dummy_table(string $pbn, array $expected): void
   {
-    $table = $this->solver()->table(self::deal($pbn));
+    $table = $this->solver()->table(DdsSolver::deal($pbn));
 
     $this->assertSame(
       array_map(fn ($tricks) => array_combine(['C', 'D', 'H', 'S', 'NT'], $tricks), $expected),
@@ -102,13 +112,13 @@ class DdsSolverTest extends TestCase
   #[DataProvider('leads')]
   public function test_it_solves_every_opening_lead(string $pbn, string $declarer, string $strain, array $expected): void
   {
-    $deal = self::deal($pbn);
+    $deal = DdsSolver::deal($pbn);
     $leads = $this->solver()->leads($deal, $declarer, $strain);
 
     $byName = [];
 
     foreach ($deal[Seats::next($declarer)] as $card) {
-      $byName[$card->suit.array_search($card->rank, self::RANKS, true)] = $leads[$card->id];
+      $byName[DdsSolver::cardName($card)] = $leads[$card->id];
     }
 
     ksort($byName);
@@ -181,38 +191,5 @@ class DdsSolverTest extends TestCase
     }
 
     return new DdsSolver($library);
-  }
-
-  /**
-   * A PBN deal as the solver takes it: each seat's cards, as `Card`
-   * models (not saved) with ids of their own.
-   *
-   * @return array<string, list<Card>>
-   */
-  private static function deal(string $pbn): array
-  {
-    [$first, $hands] = explode(':', $pbn);
-    $seat = $first;
-    $deal = [];
-
-    foreach (explode(' ', $hands) as $hand) {
-      $deal[$seat] = [];
-
-      foreach (array_combine(['S', 'H', 'D', 'C'], explode('.', $hand)) as $suit => $ranks) {
-        foreach (str_split($ranks) as $rank) {
-          if ($rank === '') {
-            continue;
-          }
-
-          $card = new Card(['suit' => $suit, 'rank' => self::RANKS[$rank], 'rank_name' => $rank]);
-          $card->id = array_search($suit, ['C', 'D', 'H', 'S'], true) * 16 + self::RANKS[$rank];
-          $deal[$seat][] = $card;
-        }
-      }
-
-      $seat = Seats::next($seat);
-    }
-
-    return $deal;
   }
 }

@@ -12,7 +12,7 @@ Files here:
   new to bridge)
 - [`RUNNING.md`](RUNNING.md) — how to start the app locally, including the
   Reverb websocket server, queue worker and scheduler (and why Reverb),
-  installing the DDS double dummy solver, and how fast it runs locally: opcache, debugbar, `localhost` and Apache for
+  installing and checking the DDS double dummy solver (a ready DLL on Windows), and how fast it runs locally: opcache, debugbar, `localhost` and Apache for
   parallel requests, with measurements
 - [`AUTH.md`](AUTH.md) — how login/registration/session auth works
 - [`API.md`](API.md) — every route, method, params, response shape, and the

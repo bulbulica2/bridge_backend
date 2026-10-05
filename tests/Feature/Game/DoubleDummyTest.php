@@ -6,6 +6,7 @@ use App\auxiliary\Seats;
 use App\Jobs\SolveDoubleDummyTable;
 use App\Jobs\SolveOpeningLeads;
 use App\Models\Bid;
+use App\Models\Board;
 use App\Models\BoardDoubleDummy;
 use App\Models\BoardLeadAnalysis;
 use App\Models\BoardTable;
@@ -13,6 +14,7 @@ use App\Models\Card;
 use App\Models\Table;
 use App\Models\User;
 use App\Providers\AppServiceProvider;
+use App\Services\BoardSelectionService;
 use App\Services\CardPlayService;
 use App\Services\DoubleDummyService;
 use App\Services\PlayingStateService;
@@ -224,6 +226,54 @@ class DoubleDummyTest extends TestCase
     $this->review('N')
       ->assertJsonPath('data.double_dummy.status', 'unavailable')
       ->assertJsonPath('data.double_dummy.leads', null);
+
+    Queue::assertNothingPushed();
+  }
+
+  public function test_solve_missing_queues_only_what_has_no_analysis(): void
+  {
+    // played before the solver existed: the dealer's 1C here, and the same
+    // declarer and strain elsewhere, plus North's 2H, which has its leads
+    $declarer = $this->finishWithContract();
+    $this->finishElsewhere($declarer, '3C');
+    $this->finishElsewhere('N', '2H');
+    $this->assertSame(2, BoardLeadAnalysis::count());
+    BoardDoubleDummy::query()->delete();
+    BoardLeadAnalysis::where('strain', 'C')->delete();
+
+    // a board with no cards (never dealt), and a dealt board with its
+    // table, passed out at a table (no contract, so no leads)
+    Board::factory()->create();
+    $solved = app(BoardSelectionService::class)->dealBoard();
+    BoardDoubleDummy::create(['board_id' => $solved->id, 'tricks' => FakeDoubleDummySolver::TABLE]);
+    BoardTable::factory()->create(['board_id' => $solved->id, 'auction_ended_at' => now()])->finish(null);
+
+    Queue::fake(self::JOBS);
+
+    $this->artisan('dds:solve-missing')
+      ->expectsOutputToContain('Queued 1 table and the opening leads of 1 contract.')
+      ->assertSuccessful();
+
+    Queue::assertPushed(SolveDoubleDummyTable::class, 1);
+    Queue::assertPushed(SolveDoubleDummyTable::class, fn ($job) => $job->boardId === $this->playing->board_id);
+    Queue::assertPushed(SolveOpeningLeads::class, 1);
+    Queue::assertPushed(SolveOpeningLeads::class, fn ($job) => [$job->boardId, $job->declarer, $job->strain] === [$this->playing->board_id, $declarer, 'C']);
+
+    // the worker solves them: nothing is left to queue
+    Queue::pushed(SolveDoubleDummyTable::class)->each(fn ($job) => app()->call([$job, 'handle']));
+    Queue::pushed(SolveOpeningLeads::class)->each(fn ($job) => app()->call([$job, 'handle']));
+    $this->assertSame(['tables' => 0, 'leads' => 0], app(DoubleDummyService::class)->queueMissing());
+  }
+
+  public function test_solve_missing_needs_a_solver(): void
+  {
+    BoardDoubleDummy::query()->delete();
+    $this->app->forgetInstance(DoubleDummySolver::class);
+    Queue::fake(self::JOBS);
+
+    $this->artisan('dds:solve-missing')
+      ->expectsOutputToContain('There is no double dummy solver')
+      ->assertFailed();
 
     Queue::assertNothingPushed();
   }
