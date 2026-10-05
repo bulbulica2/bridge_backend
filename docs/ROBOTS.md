@@ -29,12 +29,16 @@ version of this page).
 each of the three seats the creator didn't take. A table manager can also
 fill any free seat: `POST /tables/{table}/seats/robots {"seat": "E"}`.
 And a robot **steps in by itself** for a human who walks out on a set (their
-turn clock runs out, they move tables, are kicked while away or banned:
+turn clock or their time for the set runs out, they move tables, are
+kicked while away or banned:
 `TableSeatService::remove()`, see `API.md` "Away mid-set, and the turn
 clock"): it sits in their seat, ready, and takes their hand over where the
 board is — the auction so far, the cards left — so their partner plays the
 set out with it. It decides from its own state as any robot does: nothing
-it does depends on having taken over.
+it does depends on having taken over. Robots have **no clock**: neither the
+turn clock nor a time bank for the set (`set.time_left` is `null` for a
+robot's seat, one that took over included), so a robot's turn costs nobody
+any time.
 
 **Ready to start.** A robot is ready from the moment it sits down: its
 seat's `ready_at` is set then (`TableSeatService::seat()`), so it shows as

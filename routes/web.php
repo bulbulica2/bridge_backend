@@ -39,6 +39,9 @@ Route::middleware('auth')->group(function () {
   Route::middleware('not-banned')->group(function () {
     Route::post('tables', [TableController::class, 'store'])->name('tables.store');
 
+    // a table manager changes its settings (set_minutes), between sets
+    Route::patch('tables/{table}', [TableController::class, 'update'])->name('tables.update');
+
     // take or give up a seat at an existing table
     Route::post('tables/{table}/seats', [TableSeatController::class, 'store'])->name('tables.seats.store');
     Route::delete('tables/{table}/seats', [TableSeatController::class, 'destroy'])->name('tables.seats.destroy');

@@ -26,6 +26,9 @@ return new class extends Migration
       $table->unsignedInteger('number');
       // how many boards the set was dealt for (bridge.set_size when it opened)
       $table->unsignedTinyInteger('size');
+      // each player's time bank for the whole set, in minutes
+      // (tables.set_minutes when it opened)
+      $table->unsignedTinyInteger('minutes')->default(16);
       $table->timestamp('started_at')->useCurrent();
       // set once the set is over, however it ended
       $table->timestamp('finished_at')->nullable();
@@ -48,11 +51,18 @@ return new class extends Migration
       $table->enum('seat', Seats::SEATS);
       // the human a robot (user_id) took over from mid-set, and why: their
       // turn clock ran out (turn_timeout, or away if they were away then),
+      // their time for the set ran out (set_time),
       // they moved to another table, or were kicked while away or banned.
       // They may not sit down at the table again until the set is over
       $table->foreignId('replaced_user_id')->nullable()->constrained('users');
       $table->enum('replaced_reason', TableSetSeat::REASONS)->nullable();
       $table->timestamp('replaced_at')->nullable();
+      // what is left of the seat's human's time bank (minutes × 60 000 when
+      // the set opened), as of board_table.turn_started_at: every call, card
+      // or claim takes the time they took off it. Null for a robot or an
+      // admin, who have none; a robot taking the seat over leaves its
+      // human's last value
+      $table->unsignedInteger('time_left_ms')->nullable();
       $table->timestamps();
 
       $table->unique(['table_set_id', 'seat']);

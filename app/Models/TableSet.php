@@ -13,8 +13,9 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * one of its four leaves the table (`abandoned`). A player who walks out on
  * it (their turn clock runs out, they move tables, are kicked while away or
  * banned) doesn't end it: a robot takes their seat for the rest of it
- * (`TableSetSeat::replaced_user_id`). Like the playings in it, it outlives
- * its table (`table_id` goes null).
+ * (`TableSetSeat::replaced_user_id`). Each human has a time bank of
+ * `minutes` for the whole of it (`TableSetSeat::time_left_ms`). Like the
+ * playings in it, it outlives its table (`table_id` goes null).
  */
 class TableSet extends Model
 {
@@ -29,6 +30,7 @@ class TableSet extends Model
     'table_id',
     'number',
     'size',
+    'minutes',
     'started_at',
     'finished_at',
     'ended',
@@ -40,6 +42,7 @@ class TableSet extends Model
     return [
       'number' => 'integer',
       'size' => 'integer',
+      'minutes' => 'integer',
       'started_at' => 'datetime',
       'finished_at' => 'datetime',
       'ended_by' => 'integer',

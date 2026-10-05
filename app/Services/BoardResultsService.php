@@ -149,6 +149,9 @@ class BoardResultsService
       'ended' => $set->ended,
       'players' => $players,
       'replaced' => $set->replacements(),
+      'minutes' => $set->minutes,
+      'time_left' => PlayingResource::timeLeft($set),
+      'time_used' => self::timeUsed($set),
       'boards' => $boards->all(),
       'totals' => [
         'score' => ['ns' => $scoreNs, 'ew' => -$scoreNs],
@@ -160,6 +163,26 @@ class BoardResultsService
         default => $scoreNs > 0 ? 'NS' : 'EW',
       },
     ];
+  }
+
+  /**
+   * The seconds each seat's human used of their time bank for the set,
+   * `{N, E, S, W}`: up to the board's last move, or, for a seat a robot
+   * took over, up to the takeover. Null for a seat a robot or an admin
+   * played from the start.
+   *
+   * @return array<string, int|null>
+   */
+  private static function timeUsed(TableSet $set): array
+  {
+    $used = [];
+
+    foreach (Seats::SEATS as $seat) {
+      $row = $set->seats->firstWhere('seat', $seat);
+      $used[$seat] = $row?->time_left_ms === null ? null : $set->minutes * 60 - intdiv($row->time_left_ms, 1000);
+    }
+
+    return $used;
   }
 
   /**

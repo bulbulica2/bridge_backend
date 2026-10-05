@@ -634,6 +634,32 @@ away or sit there with the tab open:
 - Once the set is over (completed or abandoned), anyone still away is no
   longer held for it: their seat is freed (an admin's is kept).
 
+**The set clock: a time bank for the whole set.** The turn clock alone
+doesn't bound a set — a player who always takes 55 seconds never runs out,
+and four boards could take an hour. So, like a chess clock, each human
+(not an admin) also has a **time bank for the whole set**: 8, 12, 16 or 20
+minutes for its 4 boards, chosen for the table (`tables.set_minutes`,
+default `BRIDGE_SET_MINUTES`, 16; changed by the moderator between sets
+only) and copied into the set when it opens (`table_sets.minutes`).
+
+- It runs down only while the board waits for **that** player — the same
+  player whose turn clock runs: in the auction and the play, declarer on
+  dummy's turn, a robot declarer's human dummy on declarer's. Nobody's runs
+  between boards, while a claim is pending, or with no board.
+- Every accepted call, card or claim takes the time the move was awaited
+  off the acting player's bank (never below 0). A claim pauses it: the
+  acting player is charged up to the claim, nobody while it is pending.
+  Nothing else charges it.
+- The turn ends at whichever runs out first, the 1-minute turn clock or the
+  bank (`turn_deadline`, `turn_deadline_by`: `move` or `set`). Running out
+  of the bank is handled as a turn timeout: a robot takes the seat for the
+  rest of the set (`replaced`: `set_time`), and the set isn't forfeited.
+- The bank is **per player**, not per side or per table. Robots and admins
+  have none, nor does a robot that takes a seat over. The set's results
+  show each seat's time used.
+- 8 minutes is tight: about 2 minutes a board, and declarer plays dummy's
+  cards too, on their own clock.
+
 A set **is never forfeited**: there is no losing side by default. Whether a
 walk-out counts against the player (an "abandon" in their stats) is for
 player stats (#121); today it is only recorded on the set.
@@ -654,7 +680,7 @@ once it took a seat over, the human in `replaced_user_id` with
 opens a set on a Start (`openSet()`) and continues it on Next;
 `BoardTable::finish()` completes the set when its last board ends;
 `TableSeatService::remove()` calls `BoardSelectionService::abandonSet()`,
-or, when the player going ran out of time, is away or is moving tables
+or, when the player going ran out of time (turn clock or set clock), is away or is moving tables
 mid-set (`replacementReason()`, `TableSetSeat::REASONS`; `walksOut()` holds
 the admin exceptions), `replaceWithRobot()`: a robot from `RobotPool` takes
 the seat, the set's seat and the open board's snapshot
@@ -672,12 +698,20 @@ those still away once the set is over. The clock starts at
 (`BoardSelectionService::deal()`), every call (`AuctionService::call()`)
 and card (`CardPlayService::play()`) and a cleared claim
 (`BoardTable::clearClaim()`); `PlayingStateService::turnDeadline()` says
-whether it runs for `actingUserId()` and when it runs out.
+whether it runs for `actingUserId()` and when it runs out. The set clock
+is `table_sets.minutes` and `table_set_seats.time_left_ms`, filled by
+`openSet()` (null for robots and admins); `BoardTable::chargeTurn()`
+takes the time since `turn_started_at` off the bank of
+`PlayingStateService::clockedUser()` on every call, card, claim and robot
+takeover, and `PlayingStateService::turnClock()` makes `turn_deadline` the
+earlier of the two clocks (`by`: `move` or `set`); `checkAway()` replaces
+the player with `set_time` when it was the bank.
 `moveOn()` refuses after the last board, and `start()` accepts a Start once
 the set is over even with the same four seated. A set outlives its table,
 like the playings in it. Its results are `GET /sets/{set}`
 (`BoardResultsService::set()`); the game state and table payloads carry
-`set: {id, number, board, of, finished, ended, replaced}`.
+`set: {id, number, board, of, finished, ended, replaced, minutes,
+time_left}`.
 
 Status today: the data layer for steps 1–6 exists (migrations, models,
 seed data played through the game services, the seating unique indexes, board dealer and vulnerability

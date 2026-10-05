@@ -186,9 +186,11 @@ class BoardSelectionService
 
   /**
    * Open the table's next set for the four seated now, numbered on from the
-   * last one played here, `bridge.set_size` boards long.
+   * last one played here, `bridge.set_size` boards long, with the table's
+   * time bank (`set_minutes`) for each human who isn't an admin: robots and
+   * admins have none.
    *
-   * @param  Collection<int, TableSeat>  $seats  all four
+   * @param  Collection<int, TableSeat>  $seats  all four, with their users
    */
   private function openSet(Table $table, Collection $seats): TableSet
   {
@@ -199,11 +201,16 @@ class BoardSelectionService
       'table_id' => $table->id,
       'number' => (int) TableSet::where('table_id', $table->id)->max('number') + 1,
       'size' => max(1, (int) config('bridge.set_size')),
+      'minutes' => $table->set_minutes,
       'started_at' => now(),
     ]);
 
     foreach ($seats as $seat) {
-      $set->seats()->create(['user_id' => $seat->user_id, 'seat' => $seat->seat]);
+      $set->seats()->create([
+        'user_id' => $seat->user_id,
+        'seat' => $seat->seat,
+        'time_left_ms' => $seat->user->is_robot || $seat->user->is_admin ? null : $set->minutes * 60_000,
+      ]);
     }
 
     return $set;

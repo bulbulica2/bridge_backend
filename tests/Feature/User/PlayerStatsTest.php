@@ -52,7 +52,7 @@ class PlayerStatsTest extends TestCase
           'sets' => ['played' => 0, 'won' => 0, 'win_rate' => null, 'average_percent' => null],
           'leaving' => [
             'abandoned' => 0,
-            'abandoned_by_reason' => ['turn_timeout' => 0, 'away' => 0, 'moved' => 0, 'kicked' => 0, 'left' => 0],
+            'abandoned_by_reason' => ['turn_timeout' => 0, 'set_time' => 0, 'away' => 0, 'moved' => 0, 'kicked' => 0, 'left' => 0],
             'left_rate' => null,
           ],
         ],
@@ -202,7 +202,7 @@ class PlayerStatsTest extends TestCase
     $this->assertSame(['ended' => TableSet::ENDED_ABANDONED, 'ended_by' => $this->me->id], $table->sets()->sole()->only('ended', 'ended_by'));
     $this->stats($this->me)
       ->assertJsonPath('data.leaving.abandoned', 1)
-      ->assertJsonPath('data.leaving.abandoned_by_reason', ['turn_timeout' => 0, 'away' => 0, 'moved' => 0, 'kicked' => 0, 'left' => 1])
+      ->assertJsonPath('data.leaving.abandoned_by_reason', ['turn_timeout' => 0, 'set_time' => 0, 'away' => 0, 'moved' => 0, 'kicked' => 0, 'left' => 1])
       ->assertJsonPath('data.leaving.left_rate', 1);
   }
 

@@ -162,7 +162,12 @@ aren't contiguous. `rank_name` is `"2"`…`"10"`, `"Jack"`, `"Queen"`,
 ### Table (`tables`)
 Fields: `name` (string, nullable; at most `Table::NAME_MAX`, 50 characters, since `TableUpdated` broadcasts it), `created_by` (FK users, nullable),
 `moderated_by` (FK users, nullable), `board_id` (FK boards, nullable),
-`unattended_since` (timestamp, nullable, indexed, cast to datetime). All are
+`unattended_since` (timestamp, nullable, indexed, cast to datetime),
+`set_minutes` (unsigned tinyint, default 16, cast `integer`: each human's
+time bank for a set, in minutes, one of `Table::SET_MINUTES` — 8, 12, 16,
+20; a `creating` hook fills in `bridge.set_minutes`, `BRIDGE_SET_MINUTES`,
+when none is given; `POST /tables` and, between sets, `PATCH
+/tables/{table}` set it, and a set copies it when it opens). All are
 fillable. There is **no** `closed_at` and no closed/archived state.
 **Active table** = at least one `table_seats` row points at it; query with the
 `Table::active()` scope. A table lives only while somebody sits at it: the last
@@ -314,16 +319,19 @@ Seats are managed through `App\Services\TableSeatService`:
   60, and `bridge.turn_seconds`, 60), run every ten seconds by the
   scheduled `tables:check-away` command: mid-set it marks quiet humans
   away, and takes out, through `remove()`, the player on turn whose
-  `turn_deadline` (`PlayingStateService::turnDeadline()`) has passed, and a
-  robot takes their seat (`turn_timeout`, or `away` if they were away);
+  `turn_deadline` (`PlayingStateService::turnDeadline()`: the turn clock,
+  or their time for the set when that ends first) has passed, and a robot
+  takes their seat (`set_time` when it was the set's time, else
+  `turn_timeout`, or `away` if they were away);
   once a set is over it frees anyone still away (an admin is only
   un-marked). It looks at tables with a seat away or quiet mid-set and at
-  those whose unfinished playing has had no move for `bridge.turn_seconds`;
+  those whose unfinished playing has had no move for `bridge.turn_seconds`
+  or whose set has a seat with less than a turn's time left;
   each table is checked under its lock. Returns
   `{away, timed_out, freed}`.
   `remove(..., $walkOut)` hands the seat to a robot (`replaceWithRobot()`,
   with the reason) instead of abandoning the set when the player going ran
-  out of time (`turn_timeout`/`away`), is moving to another table
+  out of time (`turn_timeout`/`set_time`/`away`), is moving to another table
   (`moved`), is banned (`kicked`) or is kicked while away (`kicked`),
   mid-set, while another human stays at the table, except an admin or —
   for anything but running out of time — while an admin there is away
@@ -479,13 +487,18 @@ Fields:
 - `turn_started_at` (nullable timestamp, cast to `datetime`): when the board
   began waiting for whoever is on turn now — set by the deal
   (`BoardSelectionService::deal()`), every call (`AuctionService::call()`),
-  every card (`CardPlayService::play()`) and a cleared claim
-  (`clearClaim()`), never by a heartbeat or a chat line. The **turn clock**
+  every card (`CardPlayService::play()`), a claim made
+  (`ClaimService::claim()`) or cleared (`clearClaim()`) and a robot taking
+  a seat over, never by a heartbeat or a chat line. Each of them but the
+  deal and `clearClaim()` first takes the time since it off the acting
+  player's time bank for the set (`chargeTurn()`, see
+  `TableSetSeat::time_left_ms`). The **turn clock**
   runs `bridge.turn_seconds` (60) from it for the acting user, when they
   are a human and not an admin, in the auction and the play of a set's
   board, with no claim pending (`PlayingStateService::turnDeadline()`,
-  shown as `turn_deadline`); `tables:check-away` takes them out once it has
-  run out. Null on rows made outside the services (factories).
+  shown as `turn_deadline`, which is the end of their time for the set
+  instead when that comes first); `tables:check-away` takes them out once
+  it has run out. Null on rows made outside the services (factories).
 - `table_set_id` (FK table_sets, nullable) and `set_position` (tinyint,
   nullable): the [set](#tableset-table_sets) the board was dealt in and its
   place there, 1 to the set's `size`. Set on every playing the services
@@ -564,6 +577,9 @@ Fields (all fillable):
 - `size` (tinyint): how many boards it has, `bridge.set_size` (4,
   `BRIDGE_SET_SIZE`) when it was opened — a set keeps it if the config
   changes.
+- `minutes` (tinyint, default 16, cast `integer`): each human's time bank
+  for the whole set, the table's `set_minutes` when it opened — a set
+  keeps it if the table's setting changes.
 - `started_at` (defaults to now), `finished_at` (nullable): set once the set
   is over, however it ended.
 - `ended` (enum `TableSet::ENDINGS`, nullable): null while it goes on, then
@@ -598,8 +614,13 @@ taken the seat over from a human who walked out
 (`TableSeatService::remove()`), `replaced_user_id` (FK users, nullable:
 that human, who may not sit down at the table again until the set is
 over), `replaced_reason` (enum `TableSetSeat::REASONS`: `turn_timeout`,
-`away`, `moved`, `kicked`) and `replaced_at` (cast `datetime`); all
-fillable, timestamps. Unique `(table_set_id, seat)` and
+`set_time`, `away`, `moved`, `kicked`) and `replaced_at` (cast
+`datetime`); and `time_left_ms` (unsigned int, nullable, cast `integer`):
+what is left of the seat's human's time bank for the set, in ms, as of
+the playing's `turn_started_at` — `minutes` × 60 000 when the set opened,
+null for a robot or an admin, taken down by `BoardTable::chargeTurn()`
+(never below 0); a robot taking the seat over leaves the human's last
+value, for `time_used` in `GET /sets/{set}`. All fillable, timestamps. Unique `(table_set_id, seat)` and
 `(table_set_id, user_id)`, index `user_id`.
 Relations: `user` (belongsTo). `GET /sets/{set}` lets these four, and the
 humans a robot replaced, see the set's results (`TableSetPolicy::view`).

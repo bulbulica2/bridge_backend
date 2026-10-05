@@ -134,6 +134,33 @@ class BoardTable extends Model
   }
 
   /**
+   * Take the time the board has waited for its acting player
+   * (`PlayingStateService::clockedUser()`) since `turn_started_at` off their
+   * time bank for the set (`TableSetSeat::time_left_ms`), never below 0. In
+   * whole seconds, as `turn_started_at` keeps them. Nobody is charged
+   * when nobody's clock runs (no set, between boards, a claim pending, a
+   * robot or an admin on turn).
+   *
+   * Run by every call, card, claim and robot takeover, before it changes
+   * whose turn it is, in the transaction that then resets
+   * `turn_started_at`: so a seat's bank is always what it was as of
+   * `turn_started_at`.
+   */
+  public function chargeTurn(): void
+  {
+    $user = app(PlayingStateService::class)->clockedUser($this);
+    $seat = $user === null ? null : $this->tableSet->seats->firstWhere('user_id', $user->id);
+
+    if ($seat?->time_left_ms === null) {
+      return;
+    }
+
+    $spent = max(0, now()->getTimestamp() - $this->turn_started_at->getTimestamp()) * 1000;
+
+    $seat->update(['time_left_ms' => max(0, $seat->time_left_ms - $spent)]);
+  }
+
+  /**
    * Forget a claim that was rejected, withdrawn or expired, and lock claims
    * until the next card is played (`claim_locked`): play has to go on, and
    * whoever is on turn gets a fresh turn clock (`turn_started_at`).

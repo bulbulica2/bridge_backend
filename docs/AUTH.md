@@ -221,11 +221,13 @@ Policies live in `app/Policies/` and are auto-discovered by name
 
   It gates `POST /tables/{table}/seats/users` (seat another user) through
   `AddUserToSeatRequest::authorize()`, `POST /tables/{table}/seats/robots`
-  (seat a robot) through `AddRobotToSeatRequest::authorize()`, and kicks
-  through `kick` below. A failure is a **403** in Laravel's default
+  (seat a robot) through `AddRobotToSeatRequest::authorize()`,
+  `PATCH /tables/{table}` (change `set_minutes`) through
+  `UpdateTableRequest::authorize()`, and kicks through `kick` below. A failure is a **403** in Laravel's default
   `{message}` shape, returned before the body is validated.
   See [`API.md`](API.md#post-tablestableseatsusers),
-  [`API.md`](API.md#post-tablestableseatsrobots) and
+  [`API.md`](API.md#post-tablestableseatsrobots),
+  [`API.md`](API.md#patch-tablestable) and
   [`API.md`](API.md#delete-tablestableseatsuser).
 
   Clients don't re-implement it: every HTTP table payload carries
