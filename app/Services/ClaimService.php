@@ -20,7 +20,9 @@ use Illuminate\Support\Facades\DB;
  * which finishes the board, or one rejects it or the claimer withdraws it,
  * which clears it and play goes on. Silence counts as a reject: a claim
  * still pending `bridge.claim_seconds` after it was made expires
- * (`ExpireClaim`, `expire()`). A claim that ends without being accepted
+ * (`ExpireClaim`, `expire()`), or, should no queue worker run that job, on
+ * the next request that loads the playing (`expireOverdue()`) or the next
+ * `tables:check-away` (`expireAllOverdue()`). A claim that ends without being accepted
  * locks claims, everyone's, until the next card is played
  * (`claim_locked`, cleared by `CardPlayService::play()`). A human dummy who
  * plays a robot declarer's cards claims, answers and withdraws for
@@ -97,6 +99,41 @@ class ClaimService
 
       return true;
     });
+  }
+
+  /**
+   * expire() the claim at `$table` if it is overdue: a request that loads
+   * the playing (`ExpireOverdueClaim`) must not find a claim whose time is
+   * up still pending because no queue worker ran `ExpireClaim`. The lock in
+   * expire() makes sure only the first of them, or the job, clears it.
+   *
+   * @return bool whether the claim expired
+   */
+  public function expireOverdue(Table $table): bool
+  {
+    $playing = $this->state->currentPlaying($table);
+
+    return $playing !== null && $playing->claimExpired()
+      && $this->expire($playing->id, $playing->claim_expires_at->getTimestamp());
+  }
+
+  /**
+   * expire() every overdue claim of a playing still at a table, for
+   * `tables:check-away`: four players who only wait send no request that
+   * would expire it.
+   *
+   * @return int how many claims expired
+   */
+  public function expireAllOverdue(): int
+  {
+    return BoardTable::query()
+      ->whereNotNull('table_id')
+      ->whereNotNull('claim_seat')
+      ->whereNull('finished_at')
+      ->where('claim_expires_at', '<=', now())
+      ->get(['id', 'claim_expires_at'])
+      ->filter(fn (BoardTable $playing) => $this->expire($playing->id, $playing->claim_expires_at->getTimestamp()))
+      ->count();
   }
 
   /**
