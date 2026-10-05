@@ -78,7 +78,8 @@ lobby, profiles, histories, results — stays open.
 | GET | `/users/{user}/playings` | `UserController@playings` | `auth` | that user's finished playings, latest first, paginated |
 | GET | `/boards/{board}` | `Game\BoardController@show` | `auth` + finished that board (`BoardPolicy::view`) | the board with all four hands as dealt |
 | GET | `/boards/{board}/results` | `Game\BoardController@results` | `auth` + finished that board (`BoardPolicy::view`) | every finished playing of the board, with matchpoints |
-| GET | `/playings/{playing}` | `Game\PlayingController@review` | `auth` + finished that playing's board (`BoardPolicy::view`) | one finished playing with its auction and tricks, to review it |
+| GET | `/boards/{board}/double-dummy` | `Game\BoardController@doubleDummy` | `auth` + finished that board (`BoardPolicy::view`) | the board's double dummy table (tricks for each declarer and strain), or `pending` until the queue has solved it |
+| GET | `/playings/{playing}` | `Game\PlayingController@review` | `auth` + finished that playing's board (`BoardPolicy::view`) | one finished playing with its auction, tricks and double dummy analysis, to review it |
 | GET | `/sets/{set}` | `Game\TableSetController@show` | `auth` + one of the set's players, or finished all its boards (`TableSetPolicy::view`) | a set of boards' results: each board's result and matchpoints, totals per side, the winner |
 | GET | `/api/user` | closure | `auth:sanctum` | current authenticated `User` (the caller's own record, email, `is_admin` and `ban` included) |
 | PATCH | `/api/user` | `UserController@update` | `auth:sanctum` | edit your own `name` / `description` |
@@ -1214,7 +1215,8 @@ game any more).
 ## Boards (results across tables)
 
 A board is played at many tables; these compare what each table made of it
-(duplicate bridge, `GAME-RULES.md` §6). All three endpoints are only for players
+(duplicate bridge, `GAME-RULES.md` §6), and what it held double dummy. All
+four endpoints are only for players
 who have **finished** the board at some table — a `board_table_seats` row on
 one of its playings with `finished_at` set (`BoardPolicy::view`, through
 `BoardResultsService::hasFinished()`). Anyone else might still be dealt it,
@@ -1222,7 +1224,7 @@ so they get **403** (Laravel's default `{message}` shape) — including a
 player who left mid-board (their playing was detached unfinished), and
 admins. **401** for guests, **404** for an unknown board id.
 
-All three read `board_table` and its seat snapshot, which outlive the table: a
+All four read `board_table` and its seat snapshot, which outlive the table: a
 playing at a table that has since been deleted is still a result (its
 `table_id` is `null`), and still counts as "finished it" for its players.
 
@@ -1289,6 +1291,38 @@ table or detached, are left out. Built by
 
 IMPs (teams) aren't built.
 
+### `GET /boards/{board}/double-dummy`
+The board's **double dummy table**: how many tricks each declarer makes in
+each strain with all four hands in view and both sides playing their best
+(`GAME-RULES.md` §6, *Double dummy*). It depends only on the deal, so it is
+the same for every table. No body; 403/404/401 as above.
+
+```json
+{
+  "status": 200,
+  "message": "Double dummy analysis retrieved successfully.",
+  "data": {
+    "status": "ready",
+    "table": {
+      "N": {"C": 7, "D": 5, "H": 6, "S": 5, "NT": 6},
+      "E": {"C": 5, "D": 7, "H": 6, "S": 8, "NT": 6},
+      "S": {"C": 7, "D": 5, "H": 6, "S": 5, "NT": 6},
+      "W": {"C": 5, "D": 7, "H": 6, "S": 8, "NT": 6}
+    }
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `status` | `ready`; `pending` while the queued job hasn't solved it yet (poll again, or look again later); `unavailable` when the server has no solver (`DDS_LIBRARY` unset, see [`RUNNING.md`](RUNNING.md#double-dummy-dds)) |
+| `table` | declarer's seat → strain (`C`, `D`, `H`, `S`, `NT`) → tricks declarer takes (0–13). `null` unless `status` is `ready` |
+
+The table is solved **once per board, in the queue** (`queue:work`), when
+the board is first dealt, and stored; nothing is solved in a request. A
+board dealt before this existed has none stored: the first read queues it
+and answers `pending`. **Par** (the par contract and score) isn't built.
+
 ### `GET /playings/{playing}`
 One **finished** playing after the fact — how the board was bid and played —
 so a player can review their own board, or see how another table reached a
@@ -1323,6 +1357,30 @@ alerted. There is no `question`.
 `messages` is the board's whole [chat](#chat), oldest first, in the
 message shape — every message, `opponents` ones included, since the board
 is over. `[]` when nobody wrote.
+
+`double_dummy` is the board's double dummy analysis, for this playing's
+contract:
+
+```json
+"double_dummy": {
+  "status": "ready",
+  "table": {"N": {"C": 7, "D": 5, "H": 6, "S": 5, "NT": 6}, "E": {...}, "S": {...}, "W": {...}},
+  "leads": [
+    {"card": {"id": 50, "suit": "S", "rank": 13, "rank_name": "Queen"}, "tricks": 8},
+    {"card": {"id": 49, "suit": "S", "rank": 12, "rank_name": "Jack"}, "tricks": 8},
+    ...
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `status` | `ready` once both `table` and `leads` are in; `pending` while either queued job hasn't run; `unavailable` with no solver on the server |
+| `table` | as in [`GET /boards/{board}/double-dummy`](#get-boardsboarddouble-dummy); `null` until solved |
+| `leads` | every card the opening leader (declarer's left) held, in hand order (spades, hearts, diamonds, clubs, high to low), with `tricks`: what declarer makes after that lead with best play from there on. It depends on declarer and strain only (not the level or doubling), so every table that reached that contract shares it; solved in the queue when the first of them finishes. `null` until solved, and **always `null` on a passed out board**, which is `ready` with its `table` alone |
+
+Compare the lead actually made (`tricks[0].cards[0]`) with the rest:
+`leads` with fewer `tricks` were better for the defence.
 
 A board that ended by an accepted claim has only the tricks played up to the
 claim (the unfinished one in `current_trick`, dummy's unplayed cards in
@@ -2104,7 +2162,10 @@ You can currently only:
     (`GET /boards/{board}`); list any player's finished boards
     (`GET /users/{user}/playings`, yours at `GET /api/user/playings`); and
     review any finished playing of it call by call and trick by trick
-    (`GET /playings/{playing}`), even after its table is gone.
+    (`GET /playings/{playing}`), even after its table is gone, with what
+    each hand could make double dummy and what each opening lead would have
+    given (`double_dummy`, the table alone at
+    `GET /boards/{board}/double-dummy`).
 
 So a full lobby flow (browse, create, sit down, stand up, kick) works end to
 end, through the auction, the play, the score and the next board — with

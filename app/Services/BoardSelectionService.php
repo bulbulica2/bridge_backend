@@ -162,6 +162,10 @@ class BoardSelectionService
       ]);
     }
 
+    // the double dummy table depends only on the deal: solved once, in the
+    // queue, the first time the board is dealt
+    app(DoubleDummyService::class)->queueTable($board);
+
     // a Start deals one board; robots stay ready
     $table->seats()->whereHas('user', fn ($user) => $user->humans())->update(['ready_at' => null]);
 

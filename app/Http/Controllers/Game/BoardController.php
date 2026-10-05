@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Game;
 use App\Http\Controllers\BaseController;
 use App\Models\Board;
 use App\Services\BoardResultsService;
+use App\Services\DoubleDummyService;
 use App\Services\PlayingStateService;
 use Illuminate\Http\JsonResponse;
 
@@ -37,5 +38,17 @@ class BoardController extends BaseController
     $this->authorize('view', $board);
 
     return $this->sendResponse($results->results($board), 'Results retrieved successfully.');
+  }
+
+  /**
+   * The board's double dummy table: declarer's tricks for each declarer
+   * and strain with best play all round, `pending` until the queue has
+   * solved it.
+   */
+  public function doubleDummy(Board $board, DoubleDummyService $doubleDummy): JsonResponse
+  {
+    $this->authorize('view', $board);
+
+    return $this->sendResponse($doubleDummy->forBoard($board), 'Double dummy analysis retrieved successfully.');
   }
 }

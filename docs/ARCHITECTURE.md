@@ -100,6 +100,7 @@ the same pattern:
 | `ClaimService` | claims and concessions (`claim`, `respond`, `withdraw`, and `expire`, which the queued `App\Jobs\ExpireClaim` runs `bridge.claim_seconds` after a claim: silence rejects it) | `tests/Unit/ClaimServiceTest`, `tests/Feature/Game/ClaimTest` |
 | `ScoringService` | duplicate scoring (`score()`, from declarer's side) and matchpoints (`matchpoints()`), pure static functions | `tests/Unit/ScoringTest` |
 | `BoardResultsService` | reads finished playings back for results across tables, a set's results (`set()`, `maySeeSet()`) and a player's history | feature tests (`BoardResultsTest`, `BoardSetTest`) |
+| `DoubleDummyService` | double dummy analysis: queues a board's table when it is dealt (`queueTable()`, from `deal()`) and a contract's opening leads when a playing finishes (`queueLeads()`, from `BoardTable::finish()`), solves and stores each once (`solveTable()`, `solveLeads()`, run by `App\Jobs\SolveDoubleDummyTable` / `SolveOpeningLeads`), and reads them back (`forBoard()`, `forPlaying()`: `ready`, `pending` — queueing what is missing — or `unavailable`) | `tests/Feature/Game/DoubleDummyTest` (fake solver), `tests/Unit/DdsSolverTest` (real DDS) |
 | `RobotService` | robot players: the pool they are seated from (`seatRobot()`), and one robot move at a time (`act()`: a call, a card or a claim, a claim answer, ready) through the services above | `tests/Feature/Game/RobotPlayTest`, `tests/Feature/Table/RobotSeatingTest` |
 | `UserBanService` | an admin's bans (`ban()`, `lift()`): a ban frees the user's seat through `TableSeatService::remove()` as a walk-out (mid-set their side forfeits at once), deletes their `sessions` rows, replaces their remember token and sends `UserBanned`; a new ban replaces the one in force | `tests/Feature/User/UserBanTest` |
 
@@ -172,6 +173,18 @@ Things worth knowing before you change them:
   while `ScoringService::score()` returns declarer's side.
 - **Matchpoints are never stored**: every new playing of a board changes
   everyone's, so they are computed on each read.
+- **Double dummy** is the opposite: it depends only on the deal (the table)
+  or on the deal, declarer and strain (the opening leads), so each is solved
+  once and stored (`board_double_dummy`, `board_lead_analyses`). The solver
+  is the `App\Solvers\DoubleDummySolver` interface; `App\Solvers\DdsSolver`
+  calls DDS's C API through FFI (no CLI to build, the library loaded once
+  per worker), and `AppServiceProvider` binds it only when
+  `bridge.dds_library` (`DDS_LIBRARY`) is set — `DoubleDummyService::available()`
+  is whether anything is bound. It runs **only in the queue**, never in a
+  request: a full table is 20 solves. The jobs are `ShouldBeUnique`, so
+  repeated reads while `pending` queue one each. Tests bind
+  `Tests\Support\FakeDoubleDummySolver`; `phpunit.xml` forces `DDS_LIBRARY`
+  empty. Show it only after `BoardPolicy::view`, like the deal.
 
 ## Robots
 
@@ -337,7 +350,10 @@ Three long-running processes sit next to `php artisan serve`:
   since the 10-second schedule tick is as long as the whole deadline) and
   deals a set's next board when its pause is up (`App\Jobs\DealNextBoard`,
   dispatched the same way from `BoardTable::finish()` with a delay up to
-  `next_board_at`).
+  `next_board_at`). It also solves the double dummy analysis
+  (`App\Jobs\SolveDoubleDummyTable` when a board is dealt,
+  `App\Jobs\SolveOpeningLeads` when a playing finishes; see
+  [Game services](#game-services)), the only place DDS ever runs.
 - `php artisan reverb:start` holds the players' websocket connections.
 - `php artisan schedule:work` runs what `routes/console.php` schedules, every
   minute: `tables:release-idle-seats`

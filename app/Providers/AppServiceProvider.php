@@ -2,6 +2,8 @@
 
 namespace App\Providers;
 
+use App\Solvers\DdsSolver;
+use App\Solvers\DoubleDummySolver;
 use Barryvdh\Debugbar\Facades\Debugbar;
 use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Cache\RateLimiting\Limit;
@@ -22,6 +24,12 @@ class AppServiceProvider extends ServiceProvider
     // RUNNING.md) has to be checked here or it does nothing
     if ($this->app->environment('local') && config('debugbar.enabled') !== false) {
       Debugbar::enable();
+    }
+
+    // the double dummy solver only when DDS_LIBRARY names the library: with
+    // none bound, nothing is solved (DoubleDummyService::available())
+    if (filled(config('bridge.dds_library'))) {
+      $this->app->singleton(DoubleDummySolver::class, fn () => new DdsSolver(config('bridge.dds_library')));
     }
   }
 

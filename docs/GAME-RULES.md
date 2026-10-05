@@ -409,6 +409,43 @@ tricks_won, score_ns, made_by, claimed}`). Honours and rubber scoring aren't mod
 matchpoints across tables are computed by `ScoringService::matchpoints()`
 and served by `GET /boards/{board}/results` (§8 step 7); IMPs aren't built.
 
+### Double dummy analysis (after the board)
+
+**Double dummy** means playing with all four hands face up — "dummy" twice
+over — and **both sides playing their best**: declarer finding every
+finesse that works and every squeeze, the defence its best leads, cards and
+ruffs. The number of tricks declarer then takes is fixed by the deal alone,
+so it is the yardstick players compare their result with after a board ("we
+made 9, but 4♠ makes double dummy"). It is not what anyone could have done
+at the table, where three hands are hidden: a double dummy line can rely on
+a finesse nobody could know was right.
+
+Two things are worked out for a board:
+- **The double dummy table**: for each declarer (N, E, S, W) and strain
+  (♣ ♦ ♥ ♠ NT), the tricks declarer makes — 20 numbers, the same at every
+  table. N and S usually match, as do E and W, but not always: the
+  opening lead comes from a different hand.
+- **The opening leads** for a contract: for each card the opening leader
+  (declarer's left) held, the tricks declarer makes after that lead with
+  best play from there on. That shows how good the lead actually made was
+  (♠K: 9 tricks, ♥2: 10 tricks — the ♠K was the better lead). It depends on
+  declarer and strain only: the level and doubling don't change the play.
+
+**Par** (the contract both sides would reach with perfect bidding, given
+the table, dealer and vulnerability) is not worked out.
+
+**In code:** solved by [DDS](https://github.com/dds-bridge/dds), the
+standard double dummy solver, through `App\Solvers\DdsSolver`
+(`DoubleDummySolver` interface), in the queue — the table when a board is
+first dealt, the leads when the first playing with that contract finishes —
+and stored once (`board_double_dummy`, `board_lead_analyses`;
+`App\Services\DoubleDummyService`). Never shown before the viewer has
+finished the board (`BoardPolicy::view`, as for the deal): it would give the
+cards away. Served by `GET /boards/{board}/double-dummy` and the review's
+`double_dummy` (`GET /playings/{playing}`). Not the same thing as the robots'
+`App\Robots\DoubleDummy`, a small exhaustive search they use only on the
+last few tricks ([`ROBOTS.md`](ROBOTS.md)).
+
 ## 7. Glossary
 
 | Term | Meaning |
@@ -421,6 +458,7 @@ and served by `GET /boards/{board}/results` (§8 step 7); IMPs aren't built.
 | Dummy | Declarer's partner; their cards are face up and they take no part in the play |
 | Defenders | The two opponents of declarer |
 | Opening lead | The first card of the play, by the player to declarer's left |
+| Double dummy | Play with all four hands in view and both sides at their best: the tricks a contract makes then depend on the deal alone (section 6) |
 | Trick | 4 cards, one per player; won by the highest trump or highest card of the suit led |
 | Book | The first 6 tricks, which bids don't count |
 | Vulnerable | A status set by the board that raises bonuses and penalties |
@@ -461,7 +499,9 @@ and served by `GET /boards/{board}/results` (§8 step 7); IMPs aren't built.
    `board_table`. Once the players have had a few seconds to see the
    result, pick the table's next board — unless it was the last board of
    the set (below), which waits for everyone's Start.
-7. Compare across tables that played the same board (matchpoints/IMPs).
+7. Compare across tables that played the same board (matchpoints/IMPs),
+   and against what the cards held double dummy (section 6, *Double dummy
+   analysis*: solved in the queue, once per board and per contract).
 
 ### Board-selection rule
 

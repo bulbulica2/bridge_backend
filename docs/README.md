@@ -11,8 +11,8 @@ Files here:
   and scoring, and how they map onto this backend (read this first if you're
   new to bridge)
 - [`RUNNING.md`](RUNNING.md) — how to start the app locally, including the
-  Reverb websocket server, queue worker and scheduler (and why Reverb), and
-  how fast it runs locally: opcache, debugbar, `localhost` and Apache for
+  Reverb websocket server, queue worker and scheduler (and why Reverb),
+  installing the DDS double dummy solver, and how fast it runs locally: opcache, debugbar, `localhost` and Apache for
   parallel requests, with measurements
 - [`AUTH.md`](AUTH.md) — how login/registration/session auth works
 - [`API.md`](API.md) — every route, method, params, response shape, and the

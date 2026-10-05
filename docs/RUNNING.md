@@ -136,7 +136,7 @@ What runs where:
 |---|---|---|
 | API | `php artisan serve --host=localhost` (or Apache, see [Local speed](#local-speed)) | HTTP, including `POST /broadcasting/auth` |
 | Websocket server | `php artisan reverb:start` (add `--debug` to log every frame) | holds the players' connections on port 8080 |
-| Queue worker | `php artisan queue:work --sleep=0.1` | broadcasts are queued jobs; the worker sends them to Reverb. It also runs the robots' moves (`DriveRobots`), expires unanswered claims (`ExpireClaim`) and deals a set's next board when its pause is up (`DealNextBoard`) |
+| Queue worker | `php artisan queue:work --sleep=0.1` | broadcasts are queued jobs; the worker sends them to Reverb. It also runs the robots' moves (`DriveRobots`), expires unanswered claims (`ExpireClaim`), deals a set's next board when its pause is up (`DealNextBoard`) and solves the double dummy analysis (`SolveDoubleDummyTable`, `SolveOpeningLeads`; see [Double dummy](#double-dummy-dds)) |
 
 Broadcast events implement `ShouldBroadcast`, so they go through the queue: a
 Reverb server that is down fails a queued job, not the player's request. The
@@ -267,6 +267,71 @@ Robots are ordinary `users` rows (`is_robot`), made the first time they are
 needed; `migrate:fresh` wipes them with everything else.
 
 Like `queue:work`, restart `schedule:work` after changing PHP code.
+
+## Double dummy (DDS)
+
+After a board, players see what each hand could make double dummy and what
+each opening lead would have given (`GET /boards/{board}/double-dummy`,
+`double_dummy` in `GET /playings/{playing}`; `GAME-RULES.md` §6). The
+solving is done by [DDS](https://github.com/dds-bridge/dds), Bo Haglund &
+Søren Hein's double dummy solver (C++, Apache-2.0), loaded through PHP's
+**FFI** extension, and only ever in the **queue worker**: the
+`SolveDoubleDummyTable` job when a board is first dealt, `SolveOpeningLeads`
+when a playing finishes. So **`queue:work` must be running**, or the
+analysis stays `pending`.
+
+It is optional. With `DDS_LIBRARY` unset (the default) nothing is solved,
+nothing is queued, and the analysis answers `status: "unavailable"`;
+everything else works the same.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `DDS_LIBRARY` | *(empty)* | full path of the DDS shared library (`config/bridge.php`, `bridge.dds_library`); set, `AppServiceProvider` binds `App\Solvers\DdsSolver` as the solver |
+
+FFI is only needed by the CLI that runs `queue:work`, and PHP's default
+`ffi.enable=preload` already allows it there, so the web server needs
+neither FFI nor the library.
+
+**Windows / XAMPP**
+1. In `C:\xampp\php\php.ini`, uncomment `extension=ffi` (XAMPP ships
+   `php_ffi.dll`).
+2. Get a **64-bit** `dds.dll` (XAMPP's PHP is x64). DDS publishes no current
+   Windows binaries, so build it from the sources: v2.9.0 with Visual Studio
+   (`src/Makefiles/Makefile_Visual`, from an *x64 Native Tools* prompt) or
+   v3 with Bazel (`docs/BUILD_SYSTEM.md` in the DDS repo). Both export the
+   legacy C API (`CalcDDtablePBN`, `SolveBoardPBN`) that `DdsSolver` calls.
+   Put it somewhere stable, e.g. `C:\dds\dds.dll`, with any DLL it needs
+   next to it.
+3. In `.env`: `DDS_LIBRARY=C:\dds\dds.dll`.
+4. Run the worker **with Xdebug off**: with XAMPP's `xdebug.mode=debug`,
+   FFI fails to parse its declarations (`FFI\ParserException: unexpected
+   '<EOF>'`), so
+   ```bash
+   php -d xdebug.mode=off artisan queue:work --sleep=0.1
+   ```
+
+**Ubuntu / Debian**
+```bash
+sudo apt install libdds0   # DDS 2.9.0, in universe
+# FFI is part of php8.x-common; check with: php -m | grep FFI
+```
+and in `.env`: `DDS_LIBRARY=/usr/lib/x86_64-linux-gnu/libdds.so.0`.
+
+Then restart `queue:work`. To check the library before relying on it, run
+its test, which solves the deals DDS publishes and compares the results:
+```bash
+DDS_TEST_LIBRARY=/usr/lib/x86_64-linux-gnu/libdds.so.0 vendor/bin/phpunit tests/Unit/DdsSolverTest.php
+# PowerShell, XAMPP:
+#   $env:DDS_TEST_LIBRARY='C:\dds\dds.dll'; php -d xdebug.mode=off vendor/bin/phpunit tests/Unit/DdsSolverTest.php
+```
+(skipped, not failed, without the variable or FFI).
+
+A solve that fails (wrong path, missing FFI, a DDS error code) fails its
+job: `php artisan queue:failed` shows why, `php artisan queue:retry all`
+runs it again. Boards dealt before the library was set up have no table:
+the first read of their analysis queues it. Each job is queued once at a
+time (`ShouldBeUnique`, for up to 10 minutes), and what is stored is never
+solved again.
 
 ## Local speed
 
@@ -411,6 +476,12 @@ If you see that, do what it says. On a checkout with no `.env`,
 test; that is Dotenv probing for the file and is harmless (plain
 `vendor/bin/phpunit` doesn't show it).
 
+`phpunit.xml` also forces `DDS_LIBRARY` empty, so the suite never loads
+DDS even when `.env` sets it: the double dummy tests bind a fake solver
+(`tests/Support/FakeDoubleDummySolver`). Only `tests/Unit/DdsSolverTest`
+runs the real one, when `DDS_TEST_LIBRARY` names it (see
+[Double dummy](#double-dummy-dds)).
+
 ### Coverage
 
 ```bash
@@ -463,6 +534,9 @@ uploads the HTML report as the **`coverage-html`** artifact (download it
 from the run page and open `index.html`); it fails when line coverage of
 `app/` is under 95%. Linux is case-sensitive where Windows isn't, so a class
 or file name whose case doesn't match can pass locally and fail there.
+`tests` and `coverage` also enable FFI and `apt-get install libdds0`, with
+`DDS_TEST_LIBRARY` pointing at it, so `DdsSolverTest` runs the real DDS
+there (and covers `DdsSolver`); nothing else in the suite loads it.
 
 It also sets `QUEUE_CONNECTION=sync`, so the robots' queued moves run inside
 the request that made them due (one after another, not nested) and a test
