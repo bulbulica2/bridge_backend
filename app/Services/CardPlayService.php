@@ -100,6 +100,11 @@ class CardPlayService
         'order' => $count % 4 + 1,
       ]);
 
+      // a card played lifts the lock a refused claim left
+      if ($playing->claim_locked) {
+        $playing->update(['claim_locked' => false]);
+      }
+
       $plays[] = ['seat' => $turn, 'card' => $card];
 
       if (count($plays) % 4 === 0) {

@@ -97,11 +97,11 @@ the same pattern:
 | `AuctionService` | one call (`call()`, with its self-alert), a question about a call (`ask()`) and its bidder's answer (`explain()`), both also written into the chat; `nextToCall`, `illegalReason`, `isOver`, `result` | `tests/Unit/AuctionServiceTest`, `tests/Feature/Game/BidAlertTest` |
 | `BoardChatService` | the board's chat: who may read a message (`messagesFor()`, `BoardMessage::visibleTo()`: never partner's `opponents` message until the board is finished), sending one (`send()`: `table` or `opponents` in every phase, a robot answering a question about its call with `robotReading()` or, as a defender, about its card with `RobotCarding::explain()`), and `post()`, which writes a message and pushes it to its human readers — `AuctionService` writes its questions and answers through it | `tests/Feature/Game/BoardChatTest` |
 | `CardPlayService` | one card (`play()`); `nextToPlay`, `actingSeat`, `illegalReason`, `trickWinner`, `tricks`, `tricksWon` | `tests/Unit/CardPlayServiceTest` |
-| `ClaimService` | claims and concessions (`claim`, `respond`, `withdraw`, and `expire`, which the queued `App\Jobs\ExpireClaim` runs `bridge.claim_seconds` after a claim: silence rejects it) | `tests/Unit/ClaimServiceTest`, `tests/Feature/Game/ClaimTest` |
+| `ClaimService` | claims and concessions (`claim`, `respond`, `withdraw`, and `expire`, which the queued `App\Jobs\ExpireClaim` runs `bridge.claim_seconds` after a claim: silence rejects it); a claim ended without an accept locks claims until the next card (`claim_locked`) | `tests/Unit/ClaimServiceTest`, `tests/Feature/Game/ClaimTest` |
 | `ScoringService` | duplicate scoring (`score()`, from declarer's side) and matchpoints (`matchpoints()`), pure static functions | `tests/Unit/ScoringTest` |
 | `BoardResultsService` | reads finished playings back for results across tables, a set's results (`set()`, `maySeeSet()`) and a player's history | feature tests (`BoardResultsTest`, `BoardSetTest`) |
 | `DoubleDummyService` | double dummy analysis: queues a board's table when it is dealt (`queueTable()`, from `deal()`) and a contract's opening leads when a playing finishes (`queueLeads()`, from `BoardTable::finish()`), solves and stores each once (`solveTable()`, `solveLeads()`, run by `App\Jobs\SolveDoubleDummyTable` / `SolveOpeningLeads`), and reads them back (`forBoard()`, `forPlaying()`: `ready`, `pending` — queueing what is missing — or `unavailable`) | `tests/Feature/Game/DoubleDummyTest` (fake solver), `tests/Unit/DdsSolverTest` (real DDS) |
-| `RobotService` | robot players: the pool they are seated from (`seatRobot()`), and one robot move at a time (`act()`: a call, a card or a claim, a claim answer, ready) through the services above | `tests/Feature/Game/RobotPlayTest`, `tests/Feature/Table/RobotSeatingTest` |
+| `RobotService` | robot players: the pool they are seated from (`seatRobot()`), and one robot move at a time (`act()`: a call, a card or a claim, the robots' claim answers, ready) through the services above | `tests/Feature/Game/RobotPlayTest`, `tests/Feature/Table/RobotSeatingTest` |
 | `UserBanService` | an admin's bans (`ban()`, `lift()`): a ban frees the user's seat through `TableSeatService::remove()` as a walk-out (mid-set their side forfeits at once), deletes their `sessions` rows, replaces their remember token and sends `UserBanned`; a new ban replaces the one in force | `tests/Feature/User/UserBanTest` |
 
 Things worth knowing before you change them:
@@ -221,13 +221,14 @@ Robot players are `users` rows with `is_robot` (see
   the acting user in the auction or play (declarer's robot plays dummy;
   a robot declarer whose dummy is a human never acts in the play, nor
   answers a claim for declarer's seat),
-  the first robot yet to answer a pending claim, or the first robot not yet
+  every robot yet to answer a pending claim (all in one move, stopping
+  once a reject or the finishing accept ends the claim), or the first robot not yet
   ready for the next board — asks the brain, and makes the move through
   `AuctionService`, `CardPlayService`, `ClaimService` or
   `BoardSelectionService::moveOn()`, so it is checked like a human's. In the
   play, a robot on lead with nothing but top winners claims the rest
-  instead of playing a card — once per position: `Cache::add()` on
-  `robot-claim.{playing}.{cards played}` (kept a day) is what stops it
+  instead of playing a card — never while `board_table.claim_locked` (a
+  claim was refused and no card played since), which is what stops it
   claiming again after a rejection, which leaves the position unchanged. A
   choice the rules would refuse falls back to Pass or the first legal card;
   a move refused because the table changed meanwhile is dropped (that change

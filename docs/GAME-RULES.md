@@ -289,7 +289,7 @@ agree, or the director is called.
 (`{tricks}`), `POST /tables/{table}/claim/response` (`{accept}`) and
 `DELETE /tables/{table}/claim` (withdraw). The pending claim lives on
 `board_table` (`claim_seat`, `claim_tricks`, `claim_accepted`,
-`claim_expires_at`). The rules are
+`claim_expires_at`), the lock below as `claim_locked`. The rules are
 static and unit-tested without a database in `tests/Unit/ClaimServiceTest`
 (`illegalPlayerReason`, `responders`, `remaining`, `tricksReason`,
 `declarerTricks`):
@@ -313,7 +313,17 @@ static and unit-tested without a database in `tests/Unit/ClaimServiceTest`
   count. The state shows the deadline as `claim.expires_at`, and from then
   on no answer is taken. The row lock decides a late answer racing the job.
 - **While pending** no card may be played (409) and no other claim made;
-  whose turn it is doesn't change.
+  whose turn it is doesn't change. Nobody waits for a turn to answer: both
+  players who must answer may do so at once, robots included (they answer
+  together, in one robot move).
+- **After a refused claim, play a card first:** once a claim ends without
+  being accepted (rejected, expired or withdrawn), nobody at the table may
+  claim — the old claimer, the opponents, a robot — until the next card is
+  played, whoever plays it (409 `"A claim was just refused: play a card
+  first."`; `BoardTable::clearClaim()` sets `claim_locked`,
+  `CardPlayService::play()` clears it, and the state shows it as
+  `claim_locked`). Play has to go on, which gives the claimer the chance to
+  show they were right, or to see they claimed too many.
 - **Result:** the last accept ends the board through `BoardTable::finish()`,
   scored as usual (§6), with declarer's tricks = tricks won so far + the
   claimed share of the rest (`tricks` if the claimer is on declarer's side,
@@ -684,7 +694,9 @@ Over HTTP:
   (`ClaimService`, `/tables/{table}/claim`): any player but dummy claims,
   the other non-dummy players accept or reject, the claimer may withdraw; no
   card is played while a claim is pending, whose hand is shown as the state's
-  `claim`. An accepted claim finishes the board with `result.claimed: true`.
+  `claim`, and none is made after a refused one until a card is played
+  (`claim_locked`). An accepted claim finishes the board with
+  `result.claimed: true`.
   Undoing a card is not built.
 - **Step 6's scoring is built**: after the 13th trick (or an accepted claim)
   `BoardTable::finish()` saves `tricks_won`, the §6 `score` (N-S's side,
@@ -787,7 +799,8 @@ Rules the robots keep, and that keep them honest:
   takes it unless a manager puts one there.
 - A robot never manages a table and never redoubles. It claims the rest
   only when every trick left is a top winner in the hand on lead (and
-  never twice from the same point of the play), answers claims — double
+  never while a refused claim locks claims), answers claims — together with
+  the other robot that must answer, double
   dummy in endings of six tricks or fewer — and asks for the next board as
   soon as one ends (it never holds it up: robots count as asking).
 - **No trump only with their suits held.** A robot bids a natural no trump

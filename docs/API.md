@@ -719,6 +719,7 @@ page refresh or a reconnect. No body. Built by
     "tricks_won": null,
     "dummy_hand": null,
     "claim": null,
+    "claim_locked": false,
     "result": null,
     "deal": null,
     "ready": null,
@@ -750,6 +751,7 @@ page refresh or a reconnect. No body. Built by
 | `tricks_won` | `{ns, ew}`: complete tricks won by each side so far. `null` whenever `contract` is |
 | `dummy_hand` | dummy's **remaining** cards, face up to all four players (and on the table channel) once the opening lead is made; `null` before it, and whenever `contract` is. Same order and card shape as `hand`. Declarer plays these cards; dummy's own `hand` shows the same cards |
 | `claim` | the **pending** claim (see [Claims](#claims-post-tablestableclaim-post-tablestableclaimresponse-delete-tablestableclaim)), else `null`: `{seat, tricks, hand, accepted, expires_at}` — `seat` the claimer, `tricks` how many of the remaining tricks they claim for their side (`0` is a concession), `hand` the claimer's **remaining cards, face up to everyone** (on the table channel too) while the claim is pending, in `hand`'s order and card shape, `accepted` the seats that have accepted it so far, in N, E, S, W order (`[]` at first), and `expires_at` (ISO 8601, like a seat's `forfeit_at`) when silence rejects it: `BRIDGE_CLAIM_SECONDS` (10) after it was made. Count down from `expires_at`, never from when the claim reached the client. While it is non-null no card may be played; `turn` and `acting_user_id` don't change. Back to `null` once the claim is rejected, withdrawn, expired or accepted (the board is then `finished` and `result.claimed` is `true`) |
+| `claim_locked` | `true` from a claim's ending **without** being accepted (rejected, withdrawn or expired) until the next card is played: nobody may claim meanwhile (409, see [Claims](#claims-post-tablestableclaim-post-tablestableclaimresponse-delete-tablestableclaim)), so hide Claim and Concede. Otherwise `false`, also while `waiting` |
 | `result` | `null` until the phase is `finished`. Then `{contract, doubled, declarer, tricks_won, score_ns, made_by, claimed}`: `contract` is the final bid (shaped as `bid` above), `doubled` 0/1/2, `declarer` its seat, `tricks_won` the tricks declarer's side took, `score_ns` the duplicate score (`GAME-RULES.md` §6) **from N-S's point of view** — positive when N-S scored, negative when E-W did, whichever side declared — `made_by` the overtricks (`+1`), `0` for just made, or undertricks (`-2`), and `claimed` whether the play ended by an accepted claim rather than at trick 13 (`tricks_won` then includes the claimed tricks). A **passed out** board has `score_ns: 0`, `claimed: false` and every other field `null`. Example: `{"contract": {"id": 22, "call": "4S", ...}, "doubled": 0, "declarer": "E", "tricks_won": 11, "score_ns": -650, "made_by": 1, "claimed": false}` — E-W vulnerable, 4♠ by East making 11 |
 | `deal` | `null` until the phase is `finished`. Then all four hands **as dealt** (from `board_card`, not what is left after the play): `{N: [...], E: [...], S: [...], W: [...]}`, each in `hand`'s order and card shape. Public — it is on the table channel too — since the board is over |
 | `ready` | `null` until the phase is `finished`. Then the seats whose players have asked for the next board (`POST /tables/{table}/playing/next`), in N, E, S, W order: `[]` right after the board ends |
@@ -1140,6 +1142,15 @@ robot declarer never claims or answers. While the claim is pending the state's `
 shows the claimer's remaining cards face up to everyone, no card may be
 played and no other claim made; `turn` doesn't move.
 
+**A refused claim locks claims until the next card.** Once a claim ends
+**without being accepted** — rejected, expired or withdrawn — nobody at the
+table may claim (the old claimer, either opponent, a robot: the 409
+`"A claim was just refused: play a card first."`) until the next card of
+the board is played, whoever plays it. Play has to go on: the claimer can
+show the opponents they were wrong, or find they claimed too many. The
+state's `claim_locked` is `true` meanwhile, so a client can hide Claim and
+Concede.
+
 **Silence means no.** A claim not fully accepted within
 `BRIDGE_CLAIM_SECONDS` (default **10**, `config/bridge.php`
 `claim_seconds`) **expires**: it is rejected exactly as a reject would
@@ -1172,6 +1183,9 @@ not seated at this table (checked before validation), **401** for guests,
 - **409**:
   - `"You can claim between 0 and 12 tricks: 12 remain to be played."`;
   - `"A claim is already pending: N claims 10."`;
+  - `"A claim was just refused: play a card first."` — a claim was
+    rejected, expired or withdrawn and no card has been played since
+    (`claim_locked` is `true`);
   - `"Dummy takes no part in a claim: declarer claims for declarer's side."`;
   - `"Your partner, dummy, plays declarer's cards and claims for declarer's
     side."` — a robot declarer whose dummy is a human (on all three claim
@@ -1186,7 +1200,8 @@ not seated at this table (checked before validation), **401** for guests,
 | `accept` | required boolean |
 
 - **200**. A **reject** clears the claim at once (`claim: null`, message
-  `"Claim rejected: play goes on."`) and play resumes where it stopped. An
+  `"Claim rejected: play goes on."`, `claim_locked: true`) and play resumes
+  where it stopped. An
   **accept** adds the caller's seat to `claim.accepted` (`"Claim accepted."`);
   the last one needed finishes the board (`"Claim accepted: the board is
   finished."`): declarer's `tricks_won` = tricks won so far plus the claimed
@@ -1203,7 +1218,8 @@ not seated at this table (checked before validation), **401** for guests,
 **`DELETE /tables/{table}/claim`** — the claimer withdraws their pending
 claim. No body.
 
-- **200**, message `"Claim withdrawn: play goes on."`, `claim: null`.
+- **200**, message `"Claim withdrawn: play goes on."`, `claim: null`,
+  `claim_locked: true`.
 - **409**: `"There is no claim to withdraw."`; `"Only the claimer (N) may
   withdraw the claim."`; dummy's or the phase messages above.
 
@@ -1345,7 +1361,7 @@ better contract. `{playing}` is a `board_table.id`: the `playing_id` on each
 viewer's `my_seat` / `hand`: `playing_id`, `board`, `players` (from the seat
 snapshot), `turn` and `acting_user_id` (both `null`), `auction` (every call
 in order), `contract`, `tricks` (the complete tricks in order),
-`current_trick`, `tricks_won`, `dummy_hand`, `claim` (`null`), `result` and
+`current_trick`, `tricks_won`, `dummy_hand`, `claim` (`null`), `claim_locked` (`false`), `result` and
 `deal` (all four hands as dealt). It works the same once the table has been
 deleted.
 
@@ -1853,7 +1869,7 @@ It is **not** sent when a player leaving abandons the board; that shows up as
 **Payload** — `{playing}`, the **public** part of
 `GET /tables/{table}/playing`: `phase`, `playing_id`, `set`, `board`, `players`,
 `turn`, `acting_user_id`, `auction`, `contract`, `tricks`, `current_trick`,
-`tricks_won`, `dummy_hand`, `claim`, `result`, `deal`, `ready`, `next_board_at`. It never carries `hand`, `declarer_hand` or `my_seat`: the table
+`tricks_won`, `dummy_hand`, `claim`, `claim_locked`, `result`, `deal`, `ready`, `next_board_at`. It never carries `hand`, `declarer_hand` or `my_seat`: the table
 channel is only authorised at subscribe time, so a player who has left may
 still be listening. The only cards in it are face up — the ones played,
 after the opening lead dummy's, the claimer's while a claim is pending, and
@@ -1920,6 +1936,7 @@ rank_name}`, and a `GET /bids` entry exactly its bid.
     "tricks_won": {"ns": 0, "ew": 1},
     "dummy_hand": [52, 50, 49, 40, 31, 30, 18, 17, 14, 5, 3, 2],
     "claim": null,
+    "claim_locked": false,
     "result": null,
     "deal": null,
     "ready": null,

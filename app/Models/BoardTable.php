@@ -38,6 +38,7 @@ class BoardTable extends Model
     'claim_tricks',
     'claim_accepted',
     'claim_expires_at',
+    'claim_locked',
     'started_at',
     'auction_ended_at',
     'finished_at',
@@ -53,6 +54,7 @@ class BoardTable extends Model
       'claim_tricks' => 'integer',
       'claim_accepted' => 'array',
       'claim_expires_at' => 'datetime',
+      'claim_locked' => 'boolean',
       'started_at' => 'datetime',
       'auction_ended_at' => 'datetime',
       'finished_at' => 'datetime',
@@ -130,11 +132,12 @@ class BoardTable extends Model
   }
 
   /**
-   * Forget a claim that was rejected, withdrawn or expired.
+   * Forget a claim that was rejected, withdrawn or expired, and lock claims
+   * until the next card is played (`claim_locked`): play has to go on.
    */
   public function clearClaim(): void
   {
-    $this->update(['claim_seat' => null, 'claim_tricks' => null, 'claim_accepted' => null, 'claim_expires_at' => null]);
+    $this->update(['claim_seat' => null, 'claim_tricks' => null, 'claim_accepted' => null, 'claim_expires_at' => null, 'claim_locked' => true]);
   }
 
   /**

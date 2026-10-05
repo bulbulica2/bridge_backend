@@ -158,6 +158,44 @@ class RobotPlayTest extends TestCase
       ->assertJsonPath('data.result.claimed', true);
   }
 
+  public function test_two_robot_defenders_answer_a_claim_in_one_move(): void
+  {
+    $table = $this->claimTable(['N' => 'S', 'E' => 'H', 'S' => 'D', 'W' => 'C']);
+
+    Event::fake([PlayingUpdated::class]);
+
+    $this->actingAs($this->human)->postJson("/tables/$table->id/claim", ['tricks' => 13])->assertCreated();
+
+    // one move, both answers: the board is finished
+    $this->assertTrue(app(RobotService::class)->act($table));
+
+    $playing = $this->state->currentPlaying($table);
+    $this->assertSame(['E', 'W'], $playing->claim_accepted);
+    $this->assertNotNull($playing->finished_at);
+
+    // the claim, then each robot's accept
+    Event::assertDispatchedTimes(PlayingUpdated::class, 3);
+  }
+
+  public function test_one_robots_reject_leaves_the_other_robot_nothing_to_answer(): void
+  {
+    // E holds the ace of trumps
+    $table = $this->claimTable(['N' => 'S', 'E' => 'H', 'S' => 'D', 'W' => 'C'], swap: [['S', 15], ['H', 2]]);
+
+    Event::fake([PlayingUpdated::class]);
+
+    $this->actingAs($this->human)->postJson("/tables/$table->id/claim", ['tricks' => 13])->assertCreated();
+
+    $this->assertTrue(app(RobotService::class)->act($table));
+
+    $playing = $this->state->currentPlaying($table);
+    $this->assertNull($playing->claim_seat);
+    $this->assertTrue($playing->claim_locked);
+
+    // the claim, then E's reject
+    Event::assertDispatchedTimes(PlayingUpdated::class, 2);
+  }
+
   public function test_robots_reject_a_claim_that_takes_their_sure_winner(): void
   {
     // E holds the ace of trumps
@@ -229,6 +267,34 @@ class RobotPlayTest extends TestCase
     $this->assertNull($playing->claim_seat);
     $this->assertCount(7, $playing->cardPlays);
     $this->assertSame($this->human->id, $this->state->actingUserId($playing));
+  }
+
+  public function test_a_robot_never_claims_while_claims_are_locked(): void
+  {
+    // the robot declarer S holds all the diamonds; the human defends as E
+    $table = $this->claimTable(['N' => 'S', 'E' => 'H', 'S' => 'D', 'W' => 'C'], human: 'E', declarer: 'S');
+
+    Event::fake([PlayingUpdated::class]);
+
+    // W leads a club and dummy follows: it is the human's turn
+    $robots = app(RobotService::class);
+    $robots->act($table);
+    $robots->act($table);
+
+    $heart = $this->actingAs($this->human)->getJson("/tables/$table->id/playing")->json('data.hand.0.id');
+    $this->actingAs($this->human)->postJson("/tables/$table->id/cards", ['card_id' => $heart])->assertCreated();
+
+    // S would claim the rest here, but a refused claim has locked claims
+    $playing = $this->state->currentPlaying($table);
+    $playing->update(['claim_locked' => true]);
+
+    $this->assertTrue($robots->act($table));
+
+    $playing->refresh();
+    $this->assertNull($playing->claim_seat);
+    $this->assertCount(4, $playing->cardPlays);
+    $this->assertSame('S', $playing->cardPlays->last()->seat);
+    $this->assertFalse($playing->claim_locked);
   }
 
   public function test_a_robot_plays_on_after_its_claim_expires(): void

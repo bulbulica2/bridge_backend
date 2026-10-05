@@ -19,7 +19,6 @@ use App\Robots\RobotCardPlayer;
 use App\Robots\RobotClaims;
 use App\Robots\RobotHand;
 use Illuminate\Database\QueryException;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
@@ -145,8 +144,9 @@ class RobotService
   /**
    * Make the one robot move the table is waiting for, if a robot is the
    * one to move: its call, its card (declarer's robot plays dummy's too) or
-   * a claim of the rest when every trick left is a top winner, its answer
-   * to a pending claim, or its ready for the next board. Returns whether a
+   * a claim of the rest when every trick left is a top winner (never while
+   * a refused claim locks claims), every robot's answer to a pending claim
+   * at once, or its ready for the next board. Returns whether a
    * robot moved. A robot declarer whose dummy is a human never moves in the
    * play: that human plays both hands (`actingUserId()`).
    *
@@ -214,11 +214,10 @@ class RobotService
     $state = $this->state->stateFor($table, $robot);
     $plays = $this->state->plays($playing);
 
-    // a claim only once at any point of the play: if it was rejected, the
-    // same position comes back and the robot plays on instead
-    $tricks = RobotClaims::claim($state);
+    // never while a refused claim locks claims: the robot plays on instead
+    $tricks = $playing->claim_locked ? null : RobotClaims::claim($state);
 
-    if ($tricks !== null && Cache::add("robot-claim.{$playing->id}.".count($plays), true, now()->addDay())) {
+    if ($tricks !== null) {
       $this->claims->claim($table, $robot, $tricks);
 
       return true;
@@ -272,10 +271,13 @@ class RobotService
   }
 
   /**
-   * The first robot that still has to answer the pending claim answers it.
-   * A robot declarer whose human dummy plays for it leaves declarer's
-   * answer to that human. Nobody answers a claim whose time is up: it is
-   * rejected already.
+   * Every robot that still has to answer the pending claim answers it, all
+   * in this one move rather than one per `PlayingUpdated`, so two robot
+   * defenders answer together. A reject clears the claim, and an accept
+   * that finishes the board ends it: either leaves the other robot nothing
+   * to answer. A robot declarer whose human dummy plays for it leaves
+   * declarer's answer to that human. Nobody answers a claim whose time is
+   * up: it is rejected already.
    */
   private function answerClaim(Table $table, BoardTable $playing): bool
   {
@@ -288,19 +290,26 @@ class RobotService
       $playing->claim_accepted ?? [],
     );
     $dummyPlays = $this->state->dummyPlaysForDeclarer($playing);
+    $answered = false;
 
     foreach ($waiting as $seat) {
       $acting = CardPlayService::actingSeat($seat, $playing->declarer_seat, $dummyPlays);
       $robot = $playing->seats->firstWhere('seat', $acting)?->user;
 
-      if ($robot?->is_robot) {
-        $this->claims->respond($table, $robot, RobotClaims::accepts($this->state->stateFor($table, $robot)));
+      if (! $robot?->is_robot) {
+        continue;
+      }
 
-        return true;
+      $accept = RobotClaims::accepts($this->state->stateFor($table, $robot));
+      $finished = $this->claims->respond($table, $robot, $accept);
+      $answered = true;
+
+      if (! $accept || $finished) {
+        break;
       }
     }
 
-    return false;
+    return $answered;
   }
 
   /**
