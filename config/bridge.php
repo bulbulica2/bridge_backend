@@ -89,4 +89,18 @@ return [
 
   'robot_delay_seconds' => (int) env('BRIDGE_ROBOT_DELAY_SECONDS', 1),
 
+  /*
+  |--------------------------------------------------------------------------
+  | Double dummy
+  |--------------------------------------------------------------------------
+  |
+  | The DDS library (`libdds.so.0`, `dds.dll`) the double dummy analysis
+  | runs on, through PHP's FFI extension (see RUNNING.md). Unset, nothing is
+  | solved and the double dummy endpoints answer `status: unavailable`.
+  | Solving happens only in `queue:work`, never in a request.
+  |
+  */
+
+  'dds_library' => env('DDS_LIBRARY'),
+
 ];

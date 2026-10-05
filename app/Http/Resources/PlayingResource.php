@@ -8,6 +8,7 @@ use App\Models\BoardTable;
 use App\Models\Card;
 use App\Models\TableSet;
 use App\Services\CardPlayService;
+use App\Services\DoubleDummyService;
 use App\Services\PlayingStateService;
 use App\Services\ScoringService;
 use Illuminate\Http\Request;
@@ -30,7 +31,8 @@ use Illuminate\Http\Resources\Json\JsonResource;
  *
  * `forReview()` serves a finished playing after the fact
  * (`GET /playings/{playing}`), away from any live table, with every call's
- * alert and the board's whole chat (`messages`).
+ * alert, the board's whole chat (`messages`) and its double dummy analysis
+ * (`double_dummy`, `DoubleDummyService::forPlaying()`).
  */
 class PlayingResource extends JsonResource
 {
@@ -40,7 +42,7 @@ class PlayingResource extends JsonResource
    * Leave out what only means something at a live table: `ready`, who has
    * asked for the next board, and `next_board_at`, when it is dealt. Add
    * each call's `alert` and the board's chat, `messages`, all public once
-   * the board is over.
+   * the board is over, and the double dummy analysis, `double_dummy`.
    */
   public function forReview(): static
   {
@@ -117,6 +119,7 @@ class PlayingResource extends JsonResource
       'ready' => $this->when($this->live, fn () => $finished ? $state->ready($playing) : null),
       'next_board_at' => $this->when($this->live, fn () => $state->nextBoardAt($playing)),
       'messages' => $this->when(! $this->live, fn () => BoardMessageResource::collection($playing->messages()->orderBy('id')->get())),
+      'double_dummy' => $this->when(! $this->live, fn () => app(DoubleDummyService::class)->forPlaying($playing)),
     ];
   }
 

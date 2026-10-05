@@ -110,10 +110,11 @@ Route::middleware('auth')->group(function () {
   Route::get('users/{user}/playings', [UserController::class, 'playings'])->name('users.playings');
 
   // a board after the fact, only for players who have finished it: its deal,
-  // its results at every table with matchpoints, and each finished playing's
-  // auction and tricks (the results' playing_id)
+  // its results at every table with matchpoints, its double dummy table, and
+  // each finished playing's auction and tricks (the results' playing_id)
   Route::get('boards/{board}', [BoardController::class, 'show'])->name('boards.show');
   Route::get('boards/{board}/results', [BoardController::class, 'results'])->name('boards.results');
+  Route::get('boards/{board}/double-dummy', [BoardController::class, 'doubleDummy'])->name('boards.double-dummy');
   Route::get('playings/{playing}', [PlayingController::class, 'review'])->name('playings.show');
 
   // a set of boards' results, for its players and anyone who has finished its boards

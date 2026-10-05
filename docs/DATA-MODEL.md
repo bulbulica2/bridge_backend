@@ -96,7 +96,9 @@ Relations: `cards` (belongsToMany Card via `board_card`
 pivot, pivot has `seat` — this is how a board's 52-card deal is assigned to
 N/E/S/W), `auctions` (hasManyThrough BoardTable — every table's calls on
 this board), `plays` (hasMany BoardTable — every table that played this
-board).
+board), `doubleDummy` (hasOne BoardDoubleDummy — its double dummy table,
+once solved), `leadAnalyses` (hasMany BoardLeadAnalysis — its opening lead
+analyses).
 `BoardFactory` numbers each new board one past the highest `number` stored and
 derives `dealer` and `vulnerable` from it with the helpers above. Overriding
 `number` in a factory state keeps them consistent. The DB doesn't check that
@@ -122,6 +124,29 @@ DB holds only dealt boards.
 Fields: `board_id` (FK boards), `card_id` (FK cards), `seat` (enum
 `Seats::SEATS`). Primary key `(board_id, card_id)`, so a card appears only
 once per deal. Nothing checks that each seat gets exactly 13 cards.
+
+### BoardDoubleDummy (`board_double_dummy`, model class `BoardDoubleDummy`)
+A board's double dummy table (`GAME-RULES.md` §6, *Double dummy*), written
+once by the queued `SolveDoubleDummyTable` job
+(`DoubleDummyService::solveTable()`), when the board is first dealt.
+Fields (all fillable): `board_id` (FK boards, **unique**: one per board,
+`cascadeOnDelete`), `tricks` (JSON, cast `array`: declarer's seat →
+strain `C`/`D`/`H`/`S`/`NT` → declarer's tricks, 0–13), timestamps. No
+relations of its own.
+
+### BoardLeadAnalysis (`board_lead_analyses`, model class `BoardLeadAnalysis`)
+Declarer's double dummy tricks after each card the opening leader could
+lead, for one declarer and strain on a board — what every playing that
+reached that contract shares, since neither the level nor doubling changes
+the play. Written once by the queued `SolveOpeningLeads` job
+(`DoubleDummyService::solveLeads()`), when the first such playing finishes;
+a passed out board has none.
+Fields (all fillable): `board_id` (FK boards, `cascadeOnDelete`),
+`declarer_seat` (enum `Seats::SEATS`), `strain` (enum
+`C`/`D`/`H`/`S`/`NT`, the keys of `Suits::ALL_SUIT_NAMES`), `leads` (JSON,
+cast `array`: `[{card_id, tricks}, …]`, the leader's 13 cards in hand
+order — spades, hearts, diamonds, clubs, high to low), timestamps.
+Unique `(board_id, declarer_seat, strain)`. No relations of its own.
 
 ### Card (`cards`)
 Fields: `suit` (enum `Suits::SUIT_NAME` keys), `rank` (integer), `rank_name`
@@ -562,6 +587,8 @@ User ──< TableSeat >── Table           (a User may be a robot: is_robot)
   └──< UserBan                           (+banned_by, lifted_by ──> User)
 
 Board ──< board_card (pivot, +seat) >── Card
+Board ──  BoardDoubleDummy             (one per board, once solved)
+Board ──< BoardLeadAnalysis            (one per declarer + strain played)
 
 Board ──< BoardTable >── Table        (history: one row per playing,
              │   │                     unique board+table; contract, result)

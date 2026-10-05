@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Jobs\DealNextBoard;
 use App\Services\CardPlayService;
+use App\Services\DoubleDummyService;
 use App\Services\PlayingStateService;
 use App\Services\ScoringService;
 use Database\Factories\BoardTableFactory;
@@ -153,6 +154,9 @@ class BoardTable extends Model
   public function finish(?int $tricksWon): void
   {
     $this->writeResult($tricksWon);
+
+    // what the opening lead could have done, for the review
+    app(DoubleDummyService::class)->queueLeads($this);
 
     if ($this->tableSet !== null && $this->set_position >= $this->tableSet->size) {
       $this->tableSet->end(TableSet::ENDED_COMPLETED);

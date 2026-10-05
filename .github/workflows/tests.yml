@@ -48,6 +48,8 @@ jobs:
 
   tests:
     runs-on: ubuntu-latest
+    env:
+      DDS_TEST_LIBRARY: /usr/lib/x86_64-linux-gnu/libdds.so.0
     steps:
       - uses: actions/checkout@v7
 
@@ -55,9 +57,14 @@ jobs:
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.2'
-          extensions: pdo_sqlite, sqlite3, mbstring, dom, xml, xmlwriter, curl, fileinfo, openssl, tokenizer, ctype
+          extensions: pdo_sqlite, sqlite3, mbstring, dom, xml, xmlwriter, curl, fileinfo, openssl, tokenizer, ctype, ffi
           coverage: none
           tools: composer:v2
+
+      # the DDS library, so tests/Unit/DdsSolverTest runs the real double
+      # dummy solver through FFI (DDS_TEST_LIBRARY); the rest of the suite
+      # uses a fake and never loads it
+      - run: sudo apt-get update && sudo apt-get install -y libdds0
 
       - name: Get Composer cache directory
         id: composer-cache
@@ -81,16 +88,20 @@ jobs:
   # HTML report is uploaded as the `coverage-html` artifact, per file.
   coverage:
     runs-on: ubuntu-latest
+    env:
+      DDS_TEST_LIBRARY: /usr/lib/x86_64-linux-gnu/libdds.so.0
     steps:
       - uses: actions/checkout@v7
 
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.2'
-          extensions: pdo_sqlite, sqlite3, mbstring, dom, xml, xmlwriter, curl, fileinfo, openssl, tokenizer, ctype
+          extensions: pdo_sqlite, sqlite3, mbstring, dom, xml, xmlwriter, curl, fileinfo, openssl, tokenizer, ctype, ffi
           coverage: pcov
           ini-values: pcov.directory=app
           tools: composer:v2
+
+      - run: sudo apt-get update && sudo apt-get install -y libdds0
 
       - name: Get Composer cache directory
         id: composer-cache

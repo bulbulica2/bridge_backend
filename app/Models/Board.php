@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasManyThrough;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Board extends Model
 {
@@ -33,5 +34,17 @@ class Board extends Model
   public function plays(): HasMany
   {
     return $this->hasMany(BoardTable::class);
+  }
+
+  // its double dummy table, once solved (DoubleDummyService)
+  public function doubleDummy(): HasOne
+  {
+    return $this->hasOne(BoardDoubleDummy::class);
+  }
+
+  // its opening lead analyses, one per declarer and strain played
+  public function leadAnalyses(): HasMany
+  {
+    return $this->hasMany(BoardLeadAnalysis::class);
   }
 }

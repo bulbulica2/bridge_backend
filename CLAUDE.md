@@ -41,7 +41,7 @@ Local stack is XAMPP (MySQL on 3306, DB `bridge`, user `root`, no password).
 ```bash
 php artisan serve --host=localhost  # API on http://localhost:8000 (see RUNNING.md "Local speed")
 php artisan reverb:start          # websocket server on :8080 (live table updates)
-php artisan queue:work --sleep=0.1  # sends queued broadcasts to Reverb, moves the robots, expires unanswered claims, deals a set's next board
+php artisan queue:work --sleep=0.1  # sends queued broadcasts to Reverb, moves the robots, expires unanswered claims, deals a set's next board, solves double dummy
 php artisan schedule:work         # runs tables:release-idle-seats and tables:delete-unattended every minute, tables:check-away every 10 s
 php artisan tables:release-idle-seats  # free idle players' seats once, by hand
 php artisan tables:check-away     # mark quiet players away mid-set and forfeit overdue sets, once, by hand
@@ -568,6 +568,18 @@ vendor/bin/pint --test            # check formatting without changing files
   `BoardPolicy::view` (auto-discovered; for a playing, on its board): only
   a player who has **finished** that board (`hasFinished()`) — no admin
   override, since anyone else may still be dealt it.
+- **Double dummy**: `App\Services\DoubleDummyService` solves a board's
+  double dummy table (queued on the deal, `SolveDoubleDummyTable`) and a
+  contract's opening leads (queued by `BoardTable::finish()`,
+  `SolveOpeningLeads`) once each, **only in the queue**, and stores them
+  (`board_double_dummy`, `board_lead_analyses`). The solver is the
+  `App\Solvers\DoubleDummySolver` interface: `DdsSolver` (DDS through FFI)
+  is bound only when `DDS_LIBRARY` is set, else the analysis is
+  `unavailable`. Served by `GET /boards/{board}/double-dummy` and the
+  review's `double_dummy`, behind `BoardPolicy::view`. Tests bind
+  `Tests\Support\FakeDoubleDummySolver` (`phpunit.xml` forces
+  `DDS_LIBRARY` empty); `tests/Unit/DdsSolverTest` runs the real library
+  when `DDS_TEST_LIBRARY` names it, as CI does (`libdds0`).
 - Board selection (`GAME-RULES.md` §8), the auction (§4: turn order, bid
   legality, X/XX, end of auction, contract and declarer), the play (§5:
   opening lead, declarer playing dummy, follow suit, trick winner, dummy
