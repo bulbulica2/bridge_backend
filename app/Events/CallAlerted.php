@@ -14,7 +14,8 @@ use Illuminate\Foundation\Events\Dispatchable;
  * what it means, null for an alert with no description. Sent to one
  * opponent of the bidder on their own `private-App.Models.User.{id}`
  * channel — never the table channel, since the bidder's partner mustn't
- * see it (`AuctionService::alertTo()` picks the two).
+ * see it during the auction. Once the auction is over it goes to each of
+ * the four players (`AuctionService::alertTo()` picks them).
  *
  * Same delivery as `HandDealt`: queued, sent only once the transaction
  * commits.

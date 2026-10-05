@@ -3,6 +3,7 @@
 namespace Tests\Feature\Game;
 
 use App\auxiliary\Seats;
+use App\Events\AuctionAlertsShown;
 use App\Events\CallAlerted;
 use App\Events\CallQuestioned;
 use App\Events\PlayingUpdated;
@@ -51,7 +52,7 @@ class BidAlertTest extends TestCase
 
     $this->seed([CardSeeder::class, BidSeeder::class]);
 
-    Event::fake([PlayingUpdated::class, CallAlerted::class, CallQuestioned::class]);
+    Event::fake([PlayingUpdated::class, CallAlerted::class, CallQuestioned::class, AuctionAlertsShown::class]);
   }
 
   public function test_an_alert_goes_to_the_opponents_and_not_to_partner(): void
@@ -141,6 +142,10 @@ class BidAlertTest extends TestCase
     $playing = app(PlayingStateService::class)->currentPlaying($this->table);
     $this->assertNotNull($playing->finished_at);
 
+    // passed out, the auction is over all the same: partner is told
+    Event::assertDispatched(AuctionAlertsShown::class, fn (AuctionAlertsShown $event) => $event->userId === $this->players['S']->id
+      && $event->alerts === [['index' => 0, 'explanation' => 'Weak with clubs']]);
+
     // partner sees it now, at the table and in the review
     $this->state('S')
       ->assertJsonPath('data.phase', 'finished')
@@ -156,6 +161,90 @@ class BidAlertTest extends TestCase
     $this->ask('E', 0)
       ->assertStatus(409)
       ->assertJsonPath('message', 'The board is over: every alert is public now.');
+  }
+
+  public function test_partners_alerts_are_open_to_all_four_once_the_auction_ends(): void
+  {
+    $this->humanTable();
+
+    $this->makeCall('N', '1C', ['explanation' => self::PRECISION])->assertCreated();
+    $this->makeCall('E', 'P')->assertCreated();
+    $this->makeCall('S', '1D', ['explanation' => 'Negative: 0–7 HCP'])->assertCreated();
+    $this->makeCalls('W P, N P');
+
+    // the auction isn't over yet: partner's alerts are still hidden
+    $this->state('S')->assertJsonPath('data.auction.0.alert', null)->assertDontSee('Precision');
+    $this->state('N')->assertJsonPath('data.auction.2.alert', null);
+    Event::assertNotDispatched(AuctionAlertsShown::class);
+
+    // the last pass: declarer and dummy see each other's alerts
+    $this->makeCall('E', 'P')
+      ->assertCreated()
+      ->assertJsonPath('data.phase', 'play')
+      ->assertJsonPath('data.auction.0.alert', ['explanation' => self::PRECISION])
+      ->assertJsonPath('data.auction.2.alert', ['explanation' => 'Negative: 0–7 HCP']);
+
+    $this->state('S')
+      ->assertJsonPath('data.auction.0.alert', ['explanation' => self::PRECISION])
+      ->assertJsonPath('data.auction.2.alert', ['explanation' => 'Negative: 0–7 HCP']);
+    $this->state('N')->assertJsonPath('data.auction.2.alert', ['explanation' => 'Negative: 0–7 HCP']);
+
+    // each partner learns the other's, once; the opponents had them already
+    $playing = app(PlayingStateService::class)->currentPlaying($this->table);
+    $shown = Event::dispatched(AuctionAlertsShown::class)
+      ->mapWithKeys(fn ($event) => [$event[0]->broadcastOn()[0]->name => $event[0]->broadcastWith()])
+      ->all();
+
+    $this->assertEqualsCanonicalizing([
+      'private-App.Models.User.'.$this->players['S']->id => [
+        'table_id' => $this->table->id,
+        'playing_id' => $playing->id,
+        'alerts' => [['index' => 0, 'explanation' => self::PRECISION]],
+      ],
+      'private-App.Models.User.'.$this->players['N']->id => [
+        'table_id' => $this->table->id,
+        'playing_id' => $playing->id,
+        'alerts' => [['index' => 2, 'explanation' => 'Negative: 0–7 HCP']],
+      ],
+    ], $shown);
+    Event::assertDispatchedTimes(AuctionAlertsShown::class, 2);
+  }
+
+  public function test_nothing_is_shown_when_partner_alerted_nothing(): void
+  {
+    $this->humanTable();
+
+    $this->makeCall('N', '1C')->assertCreated();
+    $this->makeCall('E', '1H', ['explanation' => 'Natural, 5+ hearts'])->assertCreated();
+    $this->makeCalls('S P, W P, N P');
+
+    $this->assertSame('play', $this->state('N')->json('data.phase'));
+
+    // only W, whose partner E alerted, is told
+    Event::assertDispatchedTimes(AuctionAlertsShown::class, 1);
+    Event::assertDispatched(AuctionAlertsShown::class, fn (AuctionAlertsShown $event) => $event->userId === $this->players['W']->id
+      && $event->alerts === [['index' => 1, 'explanation' => 'Natural, 5+ hearts']]);
+  }
+
+  public function test_in_the_play_an_opponent_still_asks_and_the_answer_reaches_all_four(): void
+  {
+    $this->humanTable();
+    $this->makeCalls('N 1C, E P, S 1NT, W P, N P, E P');
+
+    // E asks; partner's question stays theirs, as during the auction
+    $this->ask('E', 0)->assertOk()->assertJsonPath('data.auction.0.question', ['asked_by' => 'E']);
+    $this->state('W')->assertJsonPath('data.auction.0.question', ['asked_by' => 'E']);
+    $this->state('S')->assertJsonPath('data.auction.0.question', null);
+
+    // partner may not ask about their own side's call, in the play either
+    $this->ask('S', 0)
+      ->assertStatus(409)
+      ->assertJsonPath('message', "Ask the opponents about their own calls: that call is your side's.");
+
+    $this->explain('N', 0, self::PRECISION)->assertOk();
+
+    $this->assertAlertedTo(['N', 'E', 'S', 'W'], 0, self::PRECISION);
+    $this->state('S')->assertJsonPath('data.auction.0.alert', ['explanation' => self::PRECISION]);
   }
 
   public function test_an_opponent_asks_and_the_bidder_answers(): void

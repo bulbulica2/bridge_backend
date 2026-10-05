@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\auxiliary\Seats;
+use App\Events\AuctionAlertsShown;
 use App\Events\CallAlerted;
 use App\Events\CallQuestioned;
 use App\Events\DeclarerHandShown;
@@ -27,11 +28,14 @@ use Illuminate\Support\Facades\DB;
  * unit tests with no database.
  *
  * Alerts (`GAME-RULES.md` §4) are self-alerts: the bidder marks their own
- * call and may say what it means. The two opponents learn it on their own
- * channels (`CallAlerted`), never partner, and may ask about any call of
- * the other side (`ask()`), which its bidder answers (`explain()`). The
- * question and the answer go into the board's chat as well
- * (`BoardChatService`), to the bidder's opponents.
+ * call and may say what it means. During the auction the two opponents
+ * learn it on their own channels (`CallAlerted`), never partner, and may
+ * ask about any call of the other side (`ask()`), which its bidder answers
+ * (`explain()`). The question and the answer go into the board's chat as
+ * well (`BoardChatService`), to the bidder's opponents. Once the auction is
+ * over its meaning is no longer unauthorised information: each player gets
+ * partner's alerts (`AuctionAlertsShown`), and an explanation given during
+ * the play goes to all four.
  */
 class AuctionService
 {
@@ -98,6 +102,7 @@ class AuctionService
 
       if (self::isOver($calls)) {
         $this->saveResult($playing, $calls);
+        $this->showPartnersAlerts($playing);
       }
 
       // the next caller's turn clock (or the opening leader's)
@@ -151,7 +156,8 @@ class AuctionService
   /**
    * `$user` explains their own call at `$index`: the answer to an open
    * question, a fix to their alert's explanation, or a late alert. It
-   * alerts the call and closes its question, and both opponents get it.
+   * alerts the call and closes its question, and both opponents get it
+   * (all four, once the auction is over).
    *
    * @throws IllegalCallException
    */
@@ -208,7 +214,8 @@ class AuctionService
 
   /**
    * Alert `$call` with `$explanation`, close its question and tell both
-   * opponents, on their channels and in the board's chat.
+   * opponents (everyone, after the auction) on their channels, and the
+   * opponents in the board's chat.
    */
   private function answer(BoardTable $playing, Auction $call, int $index, string $explanation): void
   {
@@ -237,15 +244,47 @@ class AuctionService
 
   /**
    * Send the call at `$index`, made from `$seat`, to the humans among that
-   * seat's two opponents (`CallAlerted`): never to partner.
+   * seat's two opponents (`CallAlerted`): never to partner during the
+   * auction. Once it is over every alert is open to all four, so an
+   * explanation given during the play goes to every human.
    */
   private function alertTo(BoardTable $playing, string $seat, int $index, ?string $explanation): void
   {
-    foreach ([Seats::next($seat), Seats::partner(Seats::next($seat))] as $opponent) {
-      $user = $playing->seats->firstWhere('seat', $opponent)->user;
+    $readers = $playing->auction_ended_at === null
+      ? [Seats::next($seat), Seats::partner(Seats::next($seat))]
+      : Seats::SEATS;
+
+    foreach ($readers as $reader) {
+      $user = $playing->seats->firstWhere('seat', $reader)->user;
 
       if (! $user->is_robot) {
         CallAlerted::dispatch((int) $user->id, (int) $playing->table_id, (int) $playing->id, $index, $explanation);
+      }
+    }
+  }
+
+  /**
+   * The auction has just ended: send each human the alerts of partner's
+   * they couldn't see during it (`AuctionAlertsShown`), if there are any.
+   * The opponents had each of them as it was made.
+   */
+  private function showPartnersAlerts(BoardTable $playing): void
+  {
+    $calls = $playing->auctions()->orderBy('id')->get()->values();
+
+    foreach ($playing->seats as $seat) {
+      if ($seat->user->is_robot) {
+        continue;
+      }
+
+      $alerts = $calls
+        ->filter(fn (Auction $call) => $call->alerted && $call->seat === Seats::partner($seat->seat))
+        ->map(fn (Auction $call, int $index) => ['index' => $index, 'explanation' => $call->explanation])
+        ->values()
+        ->all();
+
+      foreach (AuctionAlertsShown::split((int) $seat->user_id, (int) $playing->table_id, (int) $playing->id, $alerts) as $event) {
+        event($event);
       }
     }
   }

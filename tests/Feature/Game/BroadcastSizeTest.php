@@ -4,6 +4,7 @@ namespace Tests\Feature\Game;
 
 use App\auxiliary\Seats;
 use App\Broadcasting\PusherBody;
+use App\Events\AuctionAlertsShown;
 use App\Events\BoardMessageSent;
 use App\Events\CallAlerted;
 use App\Events\CallQuestioned;
@@ -194,6 +195,30 @@ class BroadcastSizeTest extends TestCase
 
     $this->assertFits(new CallAlerted($this->players['E']->id, $this->table->id, $this->playing->id, 318, $explanation));
     $this->assertFits(new CallQuestioned($this->players['N']->id, $this->table->id, $this->playing->id, 318, 'E'));
+  }
+
+  public function test_partners_alerts_fit_however_many_parts_they_take(): void
+  {
+    $this->longestAuction();
+
+    // every one of partner's 159 calls, alerted at the longest explanation
+    $alerts = [];
+
+    foreach (range(1, 317, 2) as $index) {
+      $alerts[] = ['index' => $index, 'explanation' => str_repeat(self::EMOJI['E'], Auction::EXPLANATION_MAX)];
+    }
+
+    $events = AuctionAlertsShown::split($this->players['W']->id, $this->table->id, $this->playing->id, $alerts);
+
+    $this->assertGreaterThan(1, count($events));
+
+    foreach ($events as $event) {
+      $this->assertFits($event);
+    }
+
+    // in order, every alert once
+    $this->assertSame($alerts, array_merge(...array_map(fn ($event) => $event->broadcastWith()['alerts'], $events)));
+    $this->assertSame([], AuctionAlertsShown::split($this->players['W']->id, $this->table->id, $this->playing->id, []));
   }
 
   public function test_a_chat_message_fits(): void
