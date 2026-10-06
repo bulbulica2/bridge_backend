@@ -247,10 +247,12 @@ seconds:
   admin.
 - `tables:check-away` (every **ten seconds**) handles the middle of a set
   (see [`API.md`](API.md#away-mid-set-and-the-turn-clock)): it marks a human
-  with no sign of life for `BRIDGE_AWAY_SECONDS` as away, and once the
-  board has waited `BRIDGE_TURN_SECONDS` for the player on turn (away or
-  not), or they have used up their time for the set
-  (`BRIDGE_SET_MINUTES`), a robot takes their seat for the rest of the set. It also frees
+  with no sign of life for `BRIDGE_AWAY_SECONDS` as away, keeping their
+  seat `BRIDGE_AWAY_REPLACE_SECONDS` from then whoever's turn it is, and
+  once that has passed, or the board has waited `BRIDGE_TURN_SECONDS` for
+  the player on turn (when present), or they have used up their time for
+  the set (`BRIDGE_SET_MINUTES`), a robot takes their seat for the rest of
+  the set — every such seat in the same check. It also frees
   the seats of players still away when a set ends, and first expires
   every claim past its `expires_at` (see [Claims](#claims)). An admin is shown away
   but never has a turn clock, and is never replaced nor loses the seat.
@@ -268,14 +270,16 @@ once by hand with `php artisan tables:release-idle-seats`,
 Without the scheduler nothing is freed: a player who vanished keeps their
 seat until somebody kicks them, nobody is ever marked away or runs out of
 time (the game state still shows `turn_deadline`, but nothing acts on it;
-a Leave mid-set holds the seat for good), and an unattended table
+a Leave mid-set holds the seat for good, whatever its `replace_at`
+says), and an unattended table
 stays until somebody kicks its robots.
 
 | Key | Default | Meaning |
 |---|---|---|
 | `BRIDGE_IDLE_SEAT_MINUTES` | `5` | minutes without a sign of life before a seat is freed, at a table not in the middle of a set (`config/bridge.php`) |
 | `BRIDGE_AWAY_SECONDS` | `60` | mid-set, seconds without a sign of life before a player is marked away and their seat held |
-| `BRIDGE_TURN_SECONDS` | `60` | mid-set, seconds the player on turn (a human, not an admin) has to call, play or act on a claim, from when the board began waiting for them, before a robot takes their seat for the rest of the set (the game state's `turn_deadline`) |
+| `BRIDGE_AWAY_REPLACE_SECONDS` | `120` | mid-set, seconds an away player's seat is kept, from their last sign of life or their Leave (`table_seats.replace_at`), whoever's turn it is, before a robot takes it for the rest of the set; also how long the board waits for an away player on turn, instead of `BRIDGE_TURN_SECONDS`. Never for an admin |
+| `BRIDGE_TURN_SECONDS` | `60` | mid-set, seconds the player on turn (a human, not an admin, not away) has to call, play or act on a claim, from when the board began waiting for them, before a robot takes their seat for the rest of the set (the game state's `turn_deadline`) |
 | `BRIDGE_UNATTENDED_TABLE_MINUTES` | `10` | minutes a table with only robots left is kept before it is deleted |
 
 ### Sets

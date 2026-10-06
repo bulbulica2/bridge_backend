@@ -161,7 +161,7 @@ Every table payload — from index, store, show or leave — is built by
 (`id`, `name`, `created_by`, `moderated_by`, `board_id`, `unattended_since`,
 `set_minutes`, timestamps), plus
 `seats` (`TableSeat` rows — `id`, `table_id`, `user_id`, `seat`,
-`last_seen_at`, `ready_at`, `away_since`, timestamps — each
+`last_seen_at`, `ready_at`, `away_since`, `replace_at`, timestamps — each
 with its `user` and `ready`),
 `free_seats` (the unoccupied seats in `N, E, S, W` order), `set` and
 `can_manage`.
@@ -172,12 +172,16 @@ how many of its boards have been dealt — and `null` before the table's
 first Start. `set_minutes` (8, 12, 16 or 20) is each player's time for a
 set at this table, the next set's once one is going on (that set keeps its
 own, `set.minutes`): see [the set clock](#the-set-clock).
-A seat's `away_since` is null unless its player is
-[away mid-set](#away-mid-set-and-the-turn-clock): it is since when (their
-last sign of life, or their Leave). A seat has **no clock of its own** any
-more (the old `forfeit_at` is gone): how long the board still waits for the
-player on turn, away or not, is the game state's
-[`turn_deadline`](#get-tablestableplaying).
+A seat's `away_since` and `replace_at` are null unless its player is
+[away mid-set](#away-mid-set-and-the-turn-clock): `away_since` is since
+when (their last sign of life, or their Leave), `replace_at` (ISO 8601)
+when a robot takes the seat for the rest of the set unless they come back
+first — `away_since` + `BRIDGE_AWAY_REPLACE_SECONDS` (2 minutes), whoever's
+turn it is, so every client counts down from the same instant. An admin
+away has no `replace_at`: the table waits for them. How long the board
+still waits for the player on turn is the game state's
+[`turn_deadline`](#get-tablestableplaying) (for one away, the earlier of
+their `replace_at` and the end of their time for the set).
 A seat's `ready` (boolean, from `ready_at`) is whether its player has pressed
 **Start** (see [`POST /tables/{table}/start`](#post-tablestablestart)); a
 robot's is always true. It is public: everyone at the table sees who is
@@ -312,7 +316,7 @@ Rules:
     "board_id": null, "created_at": "...", "updated_at": "...",
     "unattended_since": null, "set_minutes": 16,
     "seats": [{"id": 12, "table_id": 7, "user_id": 3, "seat": "E", "last_seen_at": "...", "ready_at": null,
-               "away_since": null, "created_at": "...", "updated_at": "...", "ready": false,
+               "away_since": null, "replace_at": null, "created_at": "...", "updated_at": "...", "ready": false,
                "user": {"id": 3, "name": "Ann", "username": "ann", "is_robot": false, "is_admin": false}}],
     "free_seats": ["N", "S", "W"],
     "can_manage": true,
@@ -407,15 +411,20 @@ Give up the seat you hold at this table. No body.
 - **202** in the **middle of a set** (a board of it in progress, or between
   its boards): leaving is going away, and your seat is **held** rather than
   freed — see [Away mid-set](#away-mid-set-and-the-turn-clock). You stay
-  seated with `away_since` set to now. Once the board waits for you (at
-  once if it is your turn) your **turn clock** runs as anyone's does
-  (`turn_deadline`, `BRIDGE_TURN_SECONDS`, 60): come back (any request at
-  the table: heartbeat, `GET .../playing`, …) and play before it runs out,
-  or a robot takes your seat for the rest of the set (`replaced` reason
-  `"away"`). The body is the table (same shape as `GET /tables/{table}`),
-  message `"You left in the middle of a set: your seat is held. Once the
-  table is waiting for you, you have 60 seconds to play, or a robot takes
-  your seat for the rest of the set."`. Leaving again changes nothing. The SPA should confirm before a
+  seated with `away_since` set to now and your seat **kept for 2 minutes**
+  (`replace_at` = now + `BRIDGE_AWAY_REPLACE_SECONDS`, 120), whoever's turn
+  it is: come back before then (any request at the table: heartbeat,
+  `GET .../playing`, re-opening the table) and the seat is yours again,
+  or a robot takes it for the rest of the set (`replaced` reason
+  `"away"`). Meanwhile your **time for the set** keeps running whenever
+  the board waits for you (`turn_deadline_by` `"set"` if it runs out
+  before `replace_at`: reason `"set_time"`). The body is the table (same
+  shape as `GET /tables/{table}`, your seat's `replace_at` in it), message
+  `"You left in the middle of a set: your seat is kept for 2 minutes. Come
+  back before then, or a robot takes it for the rest of the set. Your time
+  for the set keeps running when it's your turn."` (the minutes, or
+  seconds, are `BRIDGE_AWAY_REPLACE_SECONDS`'). Leaving again changes
+  nothing: the seat keeps its first `replace_at`. The SPA should confirm before a
   Leave mid-set, and stop its heartbeat afterwards (a heartbeat brings you
   back). Not for an admin, nor while an admin at the table is away: then
   the seat is freed at once (below) and the set ends `abandoned`.
@@ -588,8 +597,9 @@ switching to another tab while partner thinks is not leaving. (Browsers may
 throttle a hidden tab's timers to about once a minute after a few minutes;
 that can show a player away briefly.) A heartbeat is not playing, though:
 it never holds off the [turn clock](#away-mid-set-and-the-turn-clock),
-only a call, a card or a claim action does. Stop it after a Leave, or it
-brings you back.
+only a call, a card or a claim action does (except that a player coming
+back from being away on their turn gets a fresh turn clock). Stop it
+after a Leave, or it brings you back.
 
 **Idle seats are freed — outside a set.** The scheduled command
 `tables:release-idle-seats` (every minute; see
@@ -609,25 +619,33 @@ of a set the away rule below decides instead.
 #### Away mid-set, and the turn clock
 
 During a set — a board of it in progress, or between its boards — the
-player the board waits for has **one minute** to act. Letting it run out
-takes them out of the set: a **robot takes their seat** and plays on with
-their partner, so nobody else loses anything for it (`GAME-RULES.md` §8,
-"Sets of boards"), whether they are away or sitting there with the tab
-open.
+player the board waits for has **one minute** to act, and a player who has
+gone has their seat **kept for two minutes**. Letting either run out takes
+them out of the set: a **robot takes their seat** and plays on with their
+partner, so nobody else loses anything for it (`GAME-RULES.md` §8, "Sets
+of boards").
 `tables:check-away`, scheduled **every ten seconds** (one check every few
 seconds rather than a delayed job per turn, so a player gets their minute
 and at most ten seconds more), does it:
 
 1. **Away.** A human with no sign of life for `BRIDGE_AWAY_SECONDS`
    (default 60, two missed heartbeats) is marked away: their seat's
-   `away_since` is set to their `last_seen_at`. A `TableUpdated` tells
-   the table. Their seat is **held** — nobody else can take it. Pressing
-   **Leave** (`DELETE /tables/{table}/seats`) mid-set marks them away at
-   once (`away_since` now). Any sign of life — a heartbeat or a playing
-   request — clears `away_since`, with a `TableUpdated`.
+   `away_since` is set to their `last_seen_at`, and its `replace_at` to
+   `away_since` + `BRIDGE_AWAY_REPLACE_SECONDS` (default 120: the seat is
+   kept for 2 minutes from their last sign of life). A `TableUpdated`
+   tells the table. Their seat is **held** — nobody else can take it.
+   Pressing **Leave** (`DELETE /tables/{table}/seats`) mid-set marks them
+   away at once (`away_since` now, `replace_at` 2 minutes on). Every away
+   seat's `replace_at` runs **whoever's turn it is, all at once**: players
+   who went together are replaced together, not one turn after another.
+   Any sign of life — a heartbeat, a playing request, re-opening the
+   table — before then clears `away_since` and `replace_at`, with a
+   `TableUpdated`: the seat is theirs again, with what is left of their
+   [time for the set](#the-set-clock). An admin away gets no `replace_at`.
 2. **The turn clock.** The board waits on one player at a time: the game
    state's `acting_user_id` (declarer on dummy's turn, a robot declarer's
-   human dummy on declarer's). That human has `BRIDGE_TURN_SECONDS`
+   human dummy on declarer's). That human, when present, has
+   `BRIDGE_TURN_SECONDS`
    (default 60) from when the board began waiting for them — the deal
    (the dealer's first call), the previous call or card (the opening
    lead's turn too), or a claim cleared (rejected, withdrawn or expired) —
@@ -644,28 +662,38 @@ and at most ten seconds more), does it:
    `next_board_at`), while a claim is pending (it expires by itself), with
    no board, or when the board waits for a robot or an admin:
    `turn_deadline` is `null` then.
-3. **Time is up.** Once `turn_deadline` has passed — the turn clock's, or
-   the end of the player's [time for the set](#the-set-clock) when that
-   comes first (`turn_deadline_by`) — the next check takes
-   that player out and **a robot sits in their seat** for the rest of the
-   set, ready. The set goes on and so does the board in progress: the
+   **Away on turn**, the turn clock doesn't apply: the table waits for
+   them up to their seat's `replace_at`, but their time for the set is
+   charged for the wait as for anyone on turn (leave with 8:00 left, miss
+   a minute of your turn, come back to 7:00). `turn_deadline` is then the
+   earlier of `replace_at` (`turn_deadline_by` `"away"`) and the end of
+   their time for the set (`"set"`). Coming back on their turn charges the
+   time so far and starts a fresh turn clock from then
+   (`turn_started_at`, with a `PlayingUpdated`).
+3. **Time is up.** Once a seat's `replace_at` has passed, or the
+   `turn_deadline` of the player on turn — the turn clock's, `replace_at`,
+   or the end of the player's [time for the set](#the-set-clock), as
+   `turn_deadline_by` says — the next check takes out **every** such
+   player and **a robot sits in each seat** for the rest of the
+   set, ready: one transaction, one `TableUpdated`, one `PlayingUpdated`,
+   and the robots play on at once. The set goes on and so does the board in progress: the
    robot takes the hand over where it is (the game state's `players` show
    it, and it makes the move that was waited for), and the board waits
    afresh (a new `turn_deadline` if a human is on turn). The set's
    `replaced` lists them, with reason `set_time` if it was their time for
-   the set that ran out, else `turn_timeout` (or `away` if they were away
-   then, a Leave included). They may not sit down at that table
+   the set that ran out, `away` if their seat was no longer kept (a Leave
+   included), else `turn_timeout`. They may not sit down at that table
    again until the set is over (a 409 on `POST .../seats`). Moderation is
    handed on as on any leave, never to the robot. `TableUpdated` carries
    the robot's seat and the new `set.replaced`, `PlayingUpdated` the new
    `players`. If they declared and their partner, dummy, is a human, dummy
    plays both hands from then on and gets declarer's cards
-   ([`DeclarerHandShown`](#event-declarerhandshown)). Only the player on
-   turn can time out: another player away costs nothing however long they
-   stay away (once the set is over their seat is freed, below). If no other
-   human is left at the table, a robot would have nobody to play with: the
-   set ends `abandoned` instead, the board in progress is abandoned
-   unscored, and the table is left to its robots (unattended).
+   ([`DeclarerHandShown`](#event-declarerhandshown)). If no other
+   human would be left at the table, a robot would have nobody to play
+   with: the set ends `abandoned` instead (`ended_by` whoever's time ran
+   out first), the board in progress is abandoned unscored, they are all
+   freed as by a leave, and the table is left to its robots (unattended),
+   or deleted if none sit there.
 4. **After the set.** Once a set is over, however it ended, nobody is held
    for it: the next check frees the seat of anyone still away (a Leave
    that was never taken back, say).
@@ -686,7 +714,7 @@ still there. That a player walked out isn't counted anywhere else yet
 
 **Admins** are never replaced: an admin has no turn clock (the table just
 waits for them), an admin who goes quiet is shown away but their seat is
-never freed for it. While an admin at the table is away, a Leave or a move
+never freed for it (no `replace_at`). While an admin at the table is away, a Leave or a move
 by anyone else is immediate and ends the set `abandoned`; but the player on
 turn still has their clock, and running out of time on their own turn
 still hands their seat to a robot. An admin's own Leave or move is
@@ -705,8 +733,8 @@ set**, like a chess clock: the table's `set_minutes` (8, 12, 16 or 20; 16
 unless `POST /tables` or a manager's `PATCH /tables/{table}` chose
 otherwise), copied into the set as `set.minutes` when it opens.
 
-- **Whose bank runs**: the same player whose turn clock runs, the game
-  state's `acting_user_id` — in the auction and the play, declarer on
+- **Whose bank runs**: the player the board waits for, away or not, the
+  game state's `acting_user_id` — in the auction and the play, declarer on
   dummy's turn, a robot declarer's human dummy on declarer's. Nobody's runs
   between boards, while a claim is pending, or with no board. **Robots and
   admins have none** (`null`); nor does a robot that takes a seat over.
@@ -719,11 +747,11 @@ otherwise), copied into the set as `set.minutes` when it opens.
   chat line, or an alert question or explanation charges nothing, as for
   the turn clock.
 - **Deadline**: `turn_deadline` is the **earlier** of the turn clock
-  (`turn_started_at` + `BRIDGE_TURN_SECONDS`) and the bank's end
-  (`turn_started_at` + what is left), and `turn_deadline_by` says which:
-  `"move"` or `"set"` (the bank, when it ends with the turn clock or
-  first), so a client can say "time for the set is up" rather than "time
-  for this move".
+  (`turn_started_at` + `BRIDGE_TURN_SECONDS`) — or, for a player away, their
+  seat's `replace_at` — and the bank's end (`turn_started_at` + what is
+  left), and `turn_deadline_by` says which: `"move"`, `"away"` or `"set"`
+  (the bank, when it ends with the other or first), so a client can say
+  "time for the set is up" rather than "time for this move".
 - **Running out** is a turn timeout: the next check puts a robot in the
   seat for the rest of the set, with reason `set_time`. The set isn't
   forfeited.
@@ -872,8 +900,8 @@ page refresh or a reconnect. No body. Built by
 | `turn` | the seat expected to act. During the `auction`: the dealer first, then clockwise after the last call. During the `play`: the **hand** the next card comes from — declarer's left-hand opponent leads the first trick, then clockwise, and each trick's winner leads the next. When it is dummy's seat, declarer plays it (see `acting_user_id`). `null` while `waiting` and once `finished` |
 | `acting_user_id` | the id of the user who must act for `turn`: that seat's player, except that on dummy's turn it is **declarer**. One exception to that: when a **robot declares and dummy is a human**, the human plays both hands, so on declarer's turn **and** on dummy's turn it is the **human dummy's** id, and the robot declarer never acts in the play (see [`declarer_hand`](#get-tablestableplaying) and [`POST /tables/{table}/cards`](#post-tablestablecards)). Declarer and dummy themselves don't change (`contract`). A client compares it with its own user id to know it is its move (and, when `turn` isn't its own seat, that it is playing its partner's cards). `null` whenever `turn` is |
 | `turn_started_at` | when the board began waiting for `acting_user_id` (ISO 8601): the deal, the previous call or card, a claim made or cleared, or a robot taking a seat over. `set.time_left` is as of then: count the acting seat's bank down from it. `null` while `waiting`. Not in `GET /playings/{playing}` |
-| `turn_deadline` | when the turn of `acting_user_id` runs out (ISO 8601, like `claim.expires_at`): the earlier of their [turn clock](#away-mid-set-and-the-turn-clock), `BRIDGE_TURN_SECONDS` (60) after `turn_started_at`, and the end of their [time for the set](#the-set-clock). Past it, `tables:check-away` takes them out and a robot plays their seat for the rest of the set (`set.replaced` reason `"set_time"`, `"turn_timeout"` or `"away"`). Only a call, card or claim action moves it; a heartbeat or a chat line doesn't. `null` whenever nobody's clock runs: `waiting`, `finished` (between boards), a claim pending, or `acting_user_id` a robot or an admin. Count down from it, never from when the state arrived. In `PlayingUpdated` too; not in `GET /playings/{playing}` |
-| `turn_deadline_by` | which clock `turn_deadline` is: `"move"` (the turn clock) or `"set"` (the time for the set ends first, or with it); `null` whenever `turn_deadline` is. Not in `GET /playings/{playing}` |
+| `turn_deadline` | when the turn of `acting_user_id` runs out (ISO 8601, like `claim.expires_at`): the earlier of their [turn clock](#away-mid-set-and-the-turn-clock), `BRIDGE_TURN_SECONDS` (60) after `turn_started_at` — for a player away, their seat's `replace_at` instead — and the end of their [time for the set](#the-set-clock). Past it, `tables:check-away` takes them out and a robot plays their seat for the rest of the set (`set.replaced` reason `"set_time"`, `"turn_timeout"` or `"away"`). Only a call, card or claim action moves it (and an away player coming back on their turn); a heartbeat or a chat line doesn't. `null` whenever nobody's clock runs: `waiting`, `finished` (between boards), a claim pending, or `acting_user_id` a robot or an admin. Count down from it, never from when the state arrived. In `PlayingUpdated` too; not in `GET /playings/{playing}` |
+| `turn_deadline_by` | which clock `turn_deadline` is: `"move"` (the turn clock), `"away"` (the player is away: their seat's `replace_at`) or `"set"` (the time for the set ends first, or with it); `null` whenever `turn_deadline` is. Not in `GET /playings/{playing}` |
 | `auction` | the calls made so far, in order: `{seat, bid, alert, question}`, where `bid` is `{id, call, level, strain, special}` — `call` is the short name (`P`, `X`, `XX`, `1C`…`7NT`) and the only field telling pass, double and redouble apart; `level`/`strain` are null for those three. `[]` before the first call. A call's place in this list (from 0) is its `index` in the [alert](#alerts) endpoints and events. `alert` and `question` are **per viewer** ([Alerts](#alerts)): for the caller's own calls and the opponents', `alert` is `{explanation}` (`explanation` a string, or null for "alerted, no description") once the call is alerted, else null, and `question` is `{asked_by}` (the asking opponent's seat) while a question about it is open, else null; for **partner's** calls both are null during the auction — partner seeing them would be unauthorised information. Once the auction is over (phase `play`) every call's `alert` shows to all four players, partner's included, while partner's `question` stays null. Once the board is `finished`, every call's `alert` shows, to everyone, and `question` is null. Neither field is ever on the table channel (`PlayingUpdated`) |
 | `contract` | `null` during the auction and on a passed out board; once the auction ends with a bid, `{bid, doubled, declarer, dummy}` — `bid` shaped as above, `doubled` 0 (none), 1 (X) or 2 (XX), `declarer` the seat of the first player on the winning side to name the strain, `dummy` declarer's partner |
 | `tricks` | the **complete** tricks, in order: `{round, leader, cards, winner}` — `round` 1–13, `leader` the seat that led, `cards` the four `{seat, card}` in the order played (`seat` is the hand the card came from, so dummy's seat for dummy's cards), `winner` the seat whose card won. `[]` until the first trick is complete. `null` whenever `contract` is |
@@ -1585,12 +1613,12 @@ Each player has a time bank for the whole set (`minutes`, from the table's
 `set_minutes`): see [the set clock](#the-set-clock).
 
 A player who **walks out** on a set — lets their turn clock run out
-(`turn_timeout`, or `away` if they were away) or their time for the set
-(`set_time`), moves to another table
+(`turn_timeout`) or their time for the set (`set_time`), stays away past
+their seat's `replace_at` (`away`), moves to another table
 (`moved`), or is kicked while away or banned (`kicked`) — doesn't end it: a
 robot takes their seat and plays on, and the set's `replaced` lists them
 (see [Away mid-set](#away-mid-set-and-the-turn-clock)). A Leave mid-set only
-holds the seat until the board has waited a turn for them.
+holds the seat for 2 minutes (`replace_at`).
 
 A set ends early, even between boards, as `abandoned`, with no winner, when
 one of its four is taken out of the table otherwise (kicked while there,
@@ -1994,9 +2022,11 @@ Event name on the wire: `App\Events\TableUpdated` (Echo:
   /tables/{table}/start`), changing their seat's `ready`;
 - mid-set, a player is marked **away** (`tables:check-away`, or their
   Leave) or comes **back** (a heartbeat or playing request), changing their
-  seat's `away_since`; and a **robot takes the seat** of a player who
-  walked out on the set (their turn clock or their time for the set ran out, a move, a kick while
-  away, a ban: the seat's new `user`, `set.replaced`) — see
+  seat's `away_since` and `replace_at`; and a **robot takes the seat** of a
+  player who walked out on the set (their turn clock, their seat's
+  `replace_at` or their time for the set ran out, a move, a kick while
+  away, a ban: the seat's new `user`, `set.replaced`; every seat whose time
+  is up in one check comes in one `TableUpdated`) — see
   [Away mid-set](#away-mid-set-and-the-turn-clock). The turn clock moving
   from player to player is in `PlayingUpdated` (`turn_deadline`), not
   here;
@@ -2037,13 +2067,13 @@ the request (the one who did gets it in their HTTP response).
     "seats": [
       {
         "id": 21, "table_id": 7, "user_id": 12, "seat": "N",
-        "last_seen_at": "...", "ready_at": "2026-09-22T10:16:40.000000Z", "away_since": null,
+        "last_seen_at": "...", "ready_at": "2026-09-22T10:16:40.000000Z", "away_since": null, "replace_at": null,
         "created_at": "...", "updated_at": "...", "ready": true,
         "user": {"id": 12, "name": "Alice", "username": "alice", "is_robot": false, "is_admin": false}
       },
       {
         "id": 22, "table_id": 7, "user_id": 13, "seat": "E",
-        "last_seen_at": "...", "ready_at": null, "away_since": null,
+        "last_seen_at": "...", "ready_at": null, "away_since": null, "replace_at": null,
         "created_at": "...", "updated_at": "...", "ready": false,
         "user": {"id": 13, "name": "Bob", "username": "bob", "is_robot": false, "is_admin": false}
       }

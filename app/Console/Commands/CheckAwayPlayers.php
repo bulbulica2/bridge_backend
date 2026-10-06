@@ -10,7 +10,7 @@ class CheckAwayPlayers extends Command
 {
   protected $signature = 'tables:check-away';
 
-  protected $description = 'Mark players who went quiet mid-set as away, hand the seat of the player on turn to a robot once their turn clock runs out, and expire claims nobody answered in time';
+  protected $description = 'Mark players who went quiet mid-set as away, hand to robots the seats of the players away past their reservation and of the player on turn once their turn runs out, and expire claims nobody answered in time';
 
   public function handle(TableSeatService $seats, ClaimService $claims): int
   {

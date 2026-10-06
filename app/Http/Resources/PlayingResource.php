@@ -114,8 +114,8 @@ class PlayingResource extends JsonResource
       // the set (`set.time_left`) is as of then
       'turn_started_at' => $this->when($this->live, fn () => $playing->turn_started_at),
       // when the acting user's turn runs out, if they have a clock, and
-      // whether it is their turn clock (`move`) or their time for the set
-      // (`set`) that ends it
+      // whether it is their turn clock (`move`), their time for the set
+      // (`set`) or, away, their seat's `replace_at` (`away`) that ends it
       'turn_deadline' => $this->when($this->live, fn () => $clock['deadline'] ?? null),
       'turn_deadline_by' => $this->when($this->live, fn () => $clock['by'] ?? null),
       'auction' => $this->auction($playing),

@@ -582,12 +582,13 @@ its matchpoints against every other table that has played it, and the set
 totals them, but matchpoints don't decide the set: a board only this table
 has played has nothing to be compared with.
 
-**Not playing costs your seat: the turn clock.** During a set (a board in
-progress, or between boards of an unfinished set), the player the board
-waits for has **1 minute** to act (`BRIDGE_TURN_SECONDS`, 60). If they
-don't, they are **taken out of the set and a robot plays their seat** for
-the rest of it, so their partner doesn't lose for it — whether they walked
-away or sit there with the tab open:
+**Not playing costs your seat: the turn clock and the away clock.** During
+a set (a board in progress, or between boards of an unfinished set), the
+player the board waits for has **1 minute** to act (`BRIDGE_TURN_SECONDS`,
+60), and a player who has gone has their seat **kept for 2 minutes**
+(`BRIDGE_AWAY_REPLACE_SECONDS`, 120). Past either, they are **taken out of
+the set and a robot plays their seat** for the rest of it, so their
+partner doesn't lose for it:
 
 - The board waits on one player at a time, the one on turn (declarer on
   dummy's turn, a robot declarer's human dummy on declarer's), in the
@@ -601,33 +602,41 @@ away or sit there with the tab open:
   it. Between boards (the next board comes by itself) and while a claim is
   pending (it expires by itself) nobody is on turn, so no clock runs.
 - When the clock runs out, their seat is freed through the normal leave
-  path and a **robot sits in it** at once, ready. The set goes on, and so
+  path and a **robot sits in it** at once, ready (every seat whose time is
+  up in the same check together). The set goes on, and so
   does the board in progress: the robot takes the hand over where it is
   (the auction so far, the cards left) and makes the move that was waited
   for; the board waits afresh. If they declared and their partner, dummy,
   is a human, dummy plays both hands from then on (as with any robot
   declarer). The set records whom the robot replaced and why (`replaced`:
-  `turn_timeout`). They may not sit down at that table again until the set
+  `turn_timeout`, `away`, `set_time`). They may not sit down at that table again until the set
   is over. The set's result counts for the seats as they finish it.
-- If no other human is left at the table, a robot would have nobody to
-  play with: the set is **abandoned** instead, the board in progress
-  abandoned unscored, and the table left to its robots.
+- If no other human would be left at the table, a robot would have nobody
+  to play with: the set is **abandoned** instead (ended by whoever's time
+  ran out first), the board in progress abandoned unscored, and the table
+  left to its robots.
 - A human with no sign of life (heartbeat or playing request) for a minute
   (`BRIDGE_AWAY_SECONDS`, 60) is **away** (`away_since`): their seat is
-  held — nobody else can take it — and the others see it. Any sign of life
-  brings them back. Away changes nothing about the clock: an away player
-  costs nothing until the turn reaches them, and then has their minute like
-  anyone; one who runs out of time while away is replaced the same way
-  (`replaced`: `away`).
-- Pressing **Leave** mid-set counts as going away (held; they may come back
-  and play before their clock runs out). **Moving** to another table
+  held — nobody else can take it — and the others see it, with when it
+  stops being held (`replace_at`: 2 minutes from their last sign of life).
+  That clock runs **whoever's turn it is**, and every away seat's at once:
+  three players who left together are replaced together, not a minute
+  after one another as the turn reaches each. Any sign of life before then
+  brings them back, seat and what is left of their set's time with it.
+  Away on their turn, the 1-minute turn clock doesn't take them out: the
+  table waits up to their `replace_at`, but their **time for the set**
+  (below) runs meanwhile; they are replaced at whichever comes first
+  (`replaced`: `away` or `set_time`). Back on their turn, they get a fresh
+  minute.
+- Pressing **Leave** mid-set counts as going away (held for 2 minutes; they
+  may come back before then). **Moving** to another table
   mid-set is walking out too: a robot takes the seat at once (`moved`), and
   so it does when a manager **kicks** a player who is away, or an admin
   bans a player (`kicked`).
 - Robots are never away and have no clock.
 - **Admins** are never replaced: an admin has no clock (the table just
   waits for them), an absent admin is shown away but their seat is never
-  freed for it. While an admin is away the others may Leave (or move) at
+  freed for it (no `replace_at`). While an admin is away the others may Leave (or move) at
   once — the set ends `abandoned`, no robot steps in — but the player on
   turn still has their minute: running out of time on one's own turn is
   one's own doing. An admin's own Leave is immediate too.
@@ -650,8 +659,9 @@ only) and copied into the set when it opens (`table_sets.minutes`).
   off the acting player's bank (never below 0). A claim pauses it: the
   acting player is charged up to the claim, nobody while it is pending.
   Nothing else charges it.
-- The turn ends at whichever runs out first, the 1-minute turn clock or the
-  bank (`turn_deadline`, `turn_deadline_by`: `move` or `set`). Running out
+- The turn ends at whichever runs out first, the 1-minute turn clock (for
+  a player away: their seat's `replace_at`) or the bank (`turn_deadline`,
+  `turn_deadline_by`: `move`, `away` or `set`). Running out
   of the bank is handled as a turn timeout: a robot takes the seat for the
   rest of the set (`replaced`: `set_time`), and the set isn't forfeited.
 - The bank is **per player**, not per side or per table. Robots and admins
@@ -690,10 +700,12 @@ until the set is over. `PlayingStateService::seatedAsIn()` compares the
 table with the set's seats, so the robot is one of the four for Next and
 the next board.
 `TableSeatService::leave()` holds the seat on a mid-set Leave
-(`table_seats.away_since`), `touch()` clears it on any sign of life, and
-`checkAway()` (`tables:check-away`, scheduled every ten seconds) marks
-quiet players away, takes out the player whose turn clock ran out and frees
-those still away once the set is over. The clock starts at
+(`table_seats.away_since`, `replace_at`), `touch()` clears both on any sign
+of life (and gives a player back on their turn a fresh turn clock,
+`restartTurn()`), and `checkAway()` (`tables:check-away`, scheduled every
+ten seconds) marks quiet players away, takes out together every player
+whose time is up (`timeUp()`: past `replace_at`, or the player on turn
+past `turn_deadline`) and frees those still away once the set is over. The clock starts at
 `board_table.turn_started_at`, set by the deal
 (`BoardSelectionService::deal()`), every call (`AuctionService::call()`)
 and card (`CardPlayService::play()`) and a cleared claim
@@ -704,7 +716,8 @@ is `table_sets.minutes` and `table_set_seats.time_left_ms`, filled by
 takes the time since `turn_started_at` off the bank of
 `PlayingStateService::clockedUser()` on every call, card, claim and robot
 takeover, and `PlayingStateService::turnClock()` makes `turn_deadline` the
-earlier of the two clocks (`by`: `move` or `set`); `checkAway()` replaces
+earlier of the two clocks (`by`: `move`, or `away` when the seat's
+`replace_at` stands in for the turn clock, or `set`); `checkAway()` replaces
 the player with `set_time` when it was the bank.
 `moveOn()` refuses after the last board, and `start()` accepts a Start once
 the set is over even with the same four seated. A set outlives its table,

@@ -36,6 +36,9 @@ class PlayingStateService
   /** `turn_deadline_by`: the player's time bank for the set ends it first. */
   public const DEADLINE_BY_SET = 'set';
 
+  /** `turn_deadline_by`: the player is away, and their seat's `replace_at` ends it. */
+  public const DEADLINE_BY_AWAY = 'away';
+
   /**
    * Suits in the order a hand is shown: spades first, alternating colours.
    */
@@ -124,6 +127,10 @@ class PlayingStateService
    * (`TableSetSeat::time_left_ms`, as of `turn_started_at`). Being there
    * isn't playing: only a move resets it, never a heartbeat or a chat line.
    *
+   * A player away (`table_seats.away_since`) has no turn clock: the board
+   * waits for them until their seat's `replace_at`, or the end of their
+   * time bank if that comes first.
+   *
    * Only a human who is not an admin has a clock (`clockedUser()`), only in
    * the auction and the play of a set's board, and not while a claim is
    * pending (it expires by itself). Null whenever nobody's clock runs. Once
@@ -137,8 +144,10 @@ class PlayingStateService
 
   /**
    * `turnDeadline()` and what sets it: `by` is DEADLINE_BY_SET when the
-   * player's time bank for the set runs out first (or with the turn clock),
-   * DEADLINE_BY_MOVE otherwise. Null whenever nobody's clock runs.
+   * player's time bank for the set runs out first (or with the other
+   * clock), DEADLINE_BY_AWAY when they are away and their seat's
+   * `replace_at` comes first, DEADLINE_BY_MOVE otherwise. Null whenever
+   * nobody's clock runs.
    *
    * @return array{deadline: Carbon, by: string}|null
    */
@@ -150,14 +159,25 @@ class PlayingStateService
       return null;
     }
 
-    $move = (int) config('bridge.turn_seconds');
     $bank = $playing->tableSet->seats->firstWhere('user_id', $user->id)?->time_left_ms;
+    $bankEnd = $bank === null ? null : $playing->turn_started_at->copy()->addSeconds(intdiv($bank, 1000));
 
-    if ($bank !== null && intdiv($bank, 1000) <= $move) {
-      return ['deadline' => $playing->turn_started_at->copy()->addSeconds(intdiv($bank, 1000)), 'by' => self::DEADLINE_BY_SET];
+    $replaceAt = TableSeat::query()
+      ->where('table_id', $playing->table_id)
+      ->where('user_id', $user->id)
+      ->first(['replace_at'])
+      ?->replace_at;
+
+    // away: the table waits for them as long as their seat is kept
+    $other = $replaceAt !== null
+      ? ['deadline' => $replaceAt, 'by' => self::DEADLINE_BY_AWAY]
+      : ['deadline' => $playing->turn_started_at->copy()->addSeconds((int) config('bridge.turn_seconds')), 'by' => self::DEADLINE_BY_MOVE];
+
+    if ($bankEnd !== null && $bankEnd->lte($other['deadline'])) {
+      return ['deadline' => $bankEnd, 'by' => self::DEADLINE_BY_SET];
     }
 
-    return ['deadline' => $playing->turn_started_at->copy()->addSeconds($move), 'by' => self::DEADLINE_BY_MOVE];
+    return $other;
   }
 
   /**

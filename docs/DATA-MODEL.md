@@ -240,13 +240,17 @@ change at the same table and by every deal; `TableSeatResource` shows it as
 `ready`), `away_since` (nullable timestamp, cast to datetime: set only in
 the middle of a set, while the player is **away** — to their `last_seen_at`
 once `tables:check-away` notices a minute without a sign of life, or to now
-when they press Leave; cleared by any sign of life (`touch()`)). There is
-no per-seat clock any more (`forfeit_at` was dropped): how long the board
-waits for the player on turn is the playing's turn clock
-(`board_table.turn_started_at`). This is the "who is
-sitting where at this table" join table. All six are fillable. Leaving
+when they press Leave; cleared by any sign of life (`touch()`)) and
+`replace_at` (nullable timestamp, cast to datetime: set with `away_since`
+to `away_since` + `bridge.away_replace_seconds` (120), null for an admin;
+when `tables:check-away` hands the seat to a robot, whoever's turn it is,
+unless the player is back first; cleared with `away_since`). How long the
+board waits for the player on turn is the playing's turn clock
+(`board_table.turn_started_at`), or for one away their seat's
+`replace_at`. This is the "who is
+sitting where at this table" join table. All seven are fillable. Leaving
 deletes the row, Start with it — except a Leave mid-set, which keeps the row
-(the seat is held) and sets `away_since`.
+(the seat is held) and sets `away_since` and `replace_at`.
 Unique indexes:
 - `(table_id, seat)`: one user per seat at a table (so at most 4 rows per
   table).
@@ -300,8 +304,11 @@ Seats are managed through `App\Services\TableSeatService`:
   rejoin that table or any other.
 - `touch(Table, User)` sets the user's `last_seen_at` at that table to now
   (a no-op if they don't sit there; `updated_at` is left alone), and clears
-  `away_since` if it was set, broadcasting `TableUpdated`. It never touches
-  the turn clock: being there isn't playing. Called by
+  `away_since` and `replace_at` if they were set, broadcasting
+  `TableUpdated`. It never touches the turn clock — being there isn't
+  playing — except for a player back on their own turn, whose time for the
+  set is charged up to now and whose turn clock starts afresh
+  (`restartTurn()`, `PlayingUpdated`). Called by
   `POST /tables/{table}/heartbeat` and by the `seen` middleware on the
   playing endpoints. `seat()` also refreshes it when a player changes seat.
 - `releaseIdleSeats()` frees, through `remove()`, every human non-admin
@@ -313,16 +320,22 @@ Seats are managed through `App\Services\TableSeatService`:
   in between wins. Returns how many seats it freed. Run every minute by the
   scheduled `tables:release-idle-seats` command.
 - `leave(Table, User)` is a player's own Leave: mid-set it holds the seat
-  (`away_since` now, returns `HELD`) when that would be walking out on the
+  (`away_since` now, `replace_at` `bridge.away_replace_seconds` on, returns
+  `HELD`) when that would be walking out on the
   set; otherwise it is `remove()` (`LEFT`, or `DELETED` with the table).
 - `checkAway()` is the away rule and the turn clock (`bridge.away_seconds`,
-  60, and `bridge.turn_seconds`, 60), run every ten seconds by the
-  scheduled `tables:check-away` command: mid-set it marks quiet humans
-  away, and takes out, through `remove()`, the player on turn whose
-  `turn_deadline` (`PlayingStateService::turnDeadline()`: the turn clock,
-  or their time for the set when that ends first) has passed, and a robot
-  takes their seat (`set_time` when it was the set's time, else
-  `turn_timeout`, or `away` if they were away);
+  60, `bridge.away_replace_seconds`, 120, and `bridge.turn_seconds`, 60),
+  run every ten seconds by the scheduled `tables:check-away` command:
+  mid-set it marks quiet humans away (`replace_at` with it), and takes out
+  together, through `remove(..., quietly: true)`, every player whose time
+  is up (`timeUp()`): anyone away past `replace_at` (`away`) and the
+  player on turn whose `turn_deadline` (`PlayingStateService::turnClock()`:
+  the turn clock, or `replace_at` when away, or their time for the set
+  when that ends first) has passed (`turn_timeout`, `away` or
+  `set_time`); a robot takes each seat, and the table gets one
+  `TableUpdated` and one `PlayingUpdated`. Should no other human be left,
+  it ends the set `abandoned` instead (`ended_by` whoever ran out first)
+  and frees them all;
   once a set is over it frees anyone still away (an admin is only
   un-marked). It looks at tables with a seat away or quiet mid-set and at
   those whose unfinished playing has had no move for `bridge.turn_seconds`
@@ -497,7 +510,8 @@ Fields:
   are a human and not an admin, in the auction and the play of a set's
   board, with no claim pending (`PlayingStateService::turnDeadline()`,
   shown as `turn_deadline`, which is the end of their time for the set
-  instead when that comes first); `tables:check-away` takes them out once
+  instead when that comes first, and their seat's `replace_at` instead of
+  the turn clock while they are away); `tables:check-away` takes them out once
   it has run out. Null on rows made outside the services (factories).
 - `table_set_id` (FK table_sets, nullable) and `set_position` (tinyint,
   nullable): the [set](#tableset-table_sets) the board was dealt in and its
