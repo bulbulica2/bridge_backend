@@ -25,15 +25,23 @@ return [
   | seconds is marked away (`table_seats.away_since`), and their seat is
   | held. Pressing Leave mid-set marks them away at once.
   |
-  | The human the board waits for (in the auction or the play, away or
-  | not; never a robot or an admin) has this many seconds to call, play or
-  | act on a claim, from when the board began waiting for them. Past that,
-  | a robot takes their seat for the rest of the set. Both are checked
-  | by `tables:check-away`, scheduled every ten seconds.
+  | An away seat is kept this many seconds from `away_since`
+  | (`table_seats.replace_at`), whoever's turn it is: then a robot takes it
+  | for the rest of the set, unless they came back first. Every away
+  | seat's runs at once. Never an admin's: the table waits for them.
+  |
+  | The human the board waits for (in the auction or the play; never a
+  | robot or an admin) has this many seconds to call, play or act on a
+  | claim, from when the board began waiting for them. Past that, a robot
+  | takes their seat for the rest of the set. An away player's turn lasts
+  | until their seat's `replace_at` instead. All of it is checked by
+  | `tables:check-away`, scheduled every ten seconds.
   |
   */
 
   'away_seconds' => (int) env('BRIDGE_AWAY_SECONDS', 60),
+
+  'away_replace_seconds' => (int) env('BRIDGE_AWAY_REPLACE_SECONDS', 120),
 
   'turn_seconds' => (int) env('BRIDGE_TURN_SECONDS', 60),
 

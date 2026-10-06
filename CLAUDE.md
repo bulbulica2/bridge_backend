@@ -45,7 +45,7 @@ php artisan queue:work --sleep=0.1  # sends queued broadcasts to Reverb, moves t
                                   # (RUNNING.md "Keeping the worker running": a restart loop, its stop log, GET /api/health)
 php artisan schedule:work         # runs tables:release-idle-seats and tables:delete-unattended every minute, tables:check-away every 10 s
 php artisan tables:release-idle-seats  # free idle players' seats once, by hand
-php artisan tables:check-away     # mark quiet players away mid-set and hand overdue turns' seats to robots, once, by hand
+php artisan tables:check-away     # mark quiet players away mid-set and hand overdue seats (replace_at, turns) to robots, once, by hand
 php artisan tables:delete-unattended   # delete tables only robots have kept, once, by hand
 php -d extension=ffi -d xdebug.mode=off artisan dds:check  # does the double dummy solver work here? names what's missing (XAMPP flags; plain `php artisan` on Linux)
 php artisan dds:solve-missing     # queue the double dummy analysis of boards/contracts played without it
@@ -233,13 +233,22 @@ vendor/bin/pint --test            # check formatting without changing files
   in a set's auction or play with no claim pending. `table_seats.away_since` marks
   a held seat: `TableSeatService::leave()` (every player's own Leave, both
   `DELETE` seat routes, answering 202) sets it to now mid-set instead of
-  freeing the seat, `touch()` clears it (with a `TableUpdated`), and
+  freeing the seat, and
   `checkAway()` (`tables:check-away`, `CheckAwayPlayers`, scheduled
   `everyTenSeconds()`) sets it to `last_seen_at` after
-  `bridge.away_seconds` (60) of silence; away changes nothing about the
-  turn clock. `checkAway()` also finds playings with no move for
-  `turn_seconds` and takes the player whose clock ran out through
-  `remove(..., walkOut: turn_timeout|set_time|away)`; once a set is over it frees
+  `bridge.away_seconds` (60) of silence; both set `table_seats.replace_at`
+  = `away_since` + `bridge.away_replace_seconds` (120; null for an
+  admin), when a robot takes the seat **whoever's turn it is**, all away
+  seats' at once. `touch()` clears both (with a `TableUpdated`; one back
+  on their turn is charged so far and gets a fresh `turn_started_at`,
+  `restartTurn()`). Away on turn, `replace_at` stands in for the turn
+  clock (`turn_deadline_by` `away`) while the bank still runs.
+  `checkAway()` also finds playings with no move for `turn_seconds` and
+  takes every player whose time is up (`timeUp()`) through
+  `remove(..., walkOut: turn_timeout|set_time|away, quietly: true)`, then
+  sends one `TableUpdated` and one `PlayingUpdated`; with no other human
+  left it ends the set `abandoned` (`ended_by` the first out) and frees
+  them all; once a set is over it frees
   anyone still away. **Set clock**: each human non-admin also has a time
   bank for the whole set (`tables.set_minutes`, one of `Table::SET_MINUTES`
   8/12/16/20, default `bridge.set_minutes` 16, changed by a manager with
@@ -250,7 +259,7 @@ vendor/bin/pint --test            # check formatting without changing files
   every call, card, claim and robot takeover, before `turn_started_at` is
   reset — so the bank is always as of `turn_started_at` — and
   `turnClock()` makes `turn_deadline` the earlier of the two clocks
-  (`turn_deadline_by`: `move`/`set`); `checkAway()` replaces a player
+  (`turn_deadline_by`: `move`/`away`/`set`); `checkAway()` replaces a player
   whose bank ran out with `set_time`. `set` shows `minutes` and
   `time_left` (seconds per seat), the state `turn_started_at`, and
   `GET /sets/{set}` `time_used`. Sets are never forfeited: `remove()` calls

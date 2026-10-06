@@ -29,7 +29,8 @@ version of this page).
 each of the three seats the creator didn't take. A table manager can also
 fill any free seat: `POST /tables/{table}/seats/robots {"seat": "E"}`.
 And a robot **steps in by itself** for a human who walks out on a set (their
-turn clock or their time for the set runs out, they move tables, are
+turn clock or their time for the set runs out, they stay away past the two
+minutes their seat is kept, they move tables, are
 kicked while away or banned:
 `TableSeatService::remove()`, see `API.md` "Away mid-set, and the turn
 clock"): it sits in their seat, ready, and takes their hand over where the

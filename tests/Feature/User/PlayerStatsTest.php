@@ -191,12 +191,13 @@ class PlayerStatsTest extends TestCase
 
   public function test_leaving_a_set_that_then_ends_abandoned_counts_against_whoever_left(): void
   {
-    // nobody to play on with: the human out of time abandons the set
+    // nobody to play on with: the human away past their reservation
+    // abandons the set
     $this->seed([CardSeeder::class, BidSeeder::class]);
     $id = $this->actingAs($this->me)->postJson('/tables', ['robots' => true])->assertCreated()->json('data.id');
     $table = Table::findOrFail($id);
     $this->startBoard($table);
-    $this->travel(60)->seconds();
+    $this->travel(config('bridge.away_replace_seconds'))->seconds();
     app(TableSeatService::class)->checkAway();
 
     $this->assertSame(['ended' => TableSet::ENDED_ABANDONED, 'ended_by' => $this->me->id], $table->sets()->sole()->only('ended', 'ended_by'));

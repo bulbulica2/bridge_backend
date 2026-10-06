@@ -231,13 +231,13 @@ class RobotSeatingTest extends TestCase
   {
     $table = $this->robotTable();
 
-    // mid-set, Leave holds the seat until their turn clock runs out; with
-    // no other human for a robot to play with, the set is then abandoned
+    // mid-set, Leave holds the seat for two minutes; with no other human
+    // for a robot to play with, the set is then abandoned
     $this->actingAs($this->owner)->deleteJson("/tables/$table->id/seats")
       ->assertStatus(202)
       ->assertJsonPath('data.moderated_by', $this->owner->id);
 
-    $this->travel(config('bridge.turn_seconds'))->seconds();
+    $this->travel(config('bridge.away_replace_seconds'))->seconds();
     $this->artisan('tables:check-away')->assertSuccessful();
 
     $table->refresh();

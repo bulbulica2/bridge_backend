@@ -26,9 +26,12 @@ return new class extends Migration
       $table->timestamp('ready_at')->nullable();
       // mid-set only: since when the player has been away, i.e. their last
       // sign of life once tables:check-away noticed a minute without one, or
-      // when they pressed Leave. Their seat is held; the turn clock
-      // (board_table.turn_started_at) decides when the board stops waiting
+      // when they pressed Leave. Their seat is held until replace_at
       $table->timestamp('away_since')->nullable();
+      // mid-set, while away (never an admin): when a robot takes the seat
+      // for the rest of the set, away_since + bridge.away_replace_seconds,
+      // whoever's turn it is (tables:check-away)
+      $table->timestamp('replace_at')->nullable();
       $table->timestamps();
 
       // one user per seat at a table

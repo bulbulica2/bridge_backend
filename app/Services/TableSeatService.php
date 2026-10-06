@@ -14,6 +14,7 @@ use App\Models\TableSet;
 use App\Models\TableSetSeat;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -188,12 +189,12 @@ class TableSeatService
    *
    * In the middle of a set, when leaving would be walking out on it
    * (walksOut()), that is going away: the seat is **held** — they stay
-   * seated, `away_since` set to now — and once the board waits for them
-   * their turn clock runs as anyone's does
-   * (`PlayingStateService::turnDeadline()`): when it runs out (checkAway())
-   * a robot takes their seat for the rest of the set, unless they come back
-   * (touch()) and play first. Leaving again changes nothing. Otherwise the
-   * seat is freed at once through remove().
+   * seated, `away_since` set to now — until `replace_at`
+   * (`bridge.away_replace_seconds` on), whoever's turn it is: then
+   * (checkAway()) a robot takes their seat for the rest of the set, unless
+   * they come back (touch()) first. Meanwhile their time for the set runs
+   * whenever the board waits for them. Leaving again changes nothing.
+   * Otherwise the seat is freed at once through remove().
    *
    * Returns LEFT, DELETED (the table went with the seat) or HELD.
    * Broadcasts `TableUpdated` when the seat is newly held, besides what
@@ -213,7 +214,7 @@ class TableSeatService
         // somebody already away keeps their earlier start: they have been
         // gone that long
         if ($seat->away_since === null) {
-          $seat->update(['away_since' => now()]);
+          $seat->update(['away_since' => now(), 'replace_at' => $this->replaceAt($seat, now())]);
 
           TableUpdated::dispatch($table);
         }
@@ -223,6 +224,15 @@ class TableSeatService
 
       return $this->remove($table, $user) ? self::DELETED : self::LEFT;
     });
+  }
+
+  /**
+   * When a robot takes the seat of a player away since `$since`: never for
+   * an admin, whom the table waits for.
+   */
+  private function replaceAt(TableSeat $seat, Carbon $since): ?Carbon
+  {
+    return $seat->user->is_admin ? null : $since->copy()->addSeconds((int) config('bridge.away_replace_seconds'));
   }
 
   /**
@@ -338,13 +348,16 @@ class TableSeatService
    * has to press it.
    *
    * Mutates `$table` (moderator handover, `board_id`) and returns true if the
-   * table was deleted. Broadcasts `TableUpdated` unless it was.
+   * table was deleted. Broadcasts `TableUpdated` unless it was, and
+   * `PlayingUpdated` when a robot took over a board: `$quietly` leaves both
+   * to the caller, which removes several players at once and tells the
+   * table once (checkAway()).
    *
    * @throws SeatUnavailableException
    */
-  public function remove(Table $table, User $user, ?User $by = null, ?string $walkOut = null): bool
+  public function remove(Table $table, User $user, ?User $by = null, ?string $walkOut = null, bool $quietly = false): bool
   {
-    return DB::transaction(function () use ($table, $user, $by, $walkOut) {
+    return DB::transaction(function () use ($table, $user, $by, $walkOut, $quietly) {
       // serialize seat changes on this table, then reread it: who runs it
       // may have changed since it was loaded
       Table::whereKey($table->getKey())->lockForUpdate()->firstOrFail();
@@ -369,7 +382,7 @@ class TableSeatService
       $seat->delete();
 
       if ($reason !== null) {
-        $this->replaceWithRobot($table, $seat, $reason);
+        $this->replaceWithRobot($table, $seat, $reason, $quietly);
       } else {
         // whoever is left is not the four who started the board, nor the set
         $this->boardSelection->abandonPlaying($table);
@@ -393,18 +406,14 @@ class TableSeatService
         // only robots are left: they keep the table, idle, until a human
         // sits down or tables:delete-unattended deletes it
         $table->update(['moderated_by' => null, 'unattended_since' => $table->unattended_since ?? now()]);
-
-        TableUpdated::dispatch($table);
-
-        return false;
-      }
-
-      if ((int) $table->moderated_by === $user->id) {
+      } elseif ((int) $table->moderated_by === $user->id) {
         $table->update(['moderated_by' => $next->user_id]);
       }
 
       // a deleted table has nobody left to tell
-      TableUpdated::dispatch($table);
+      if (! $quietly) {
+        TableUpdated::dispatch($table);
+      }
 
       return false;
     });
@@ -425,11 +434,11 @@ class TableSeatService
    * finished board keeps its four: it is theirs, and the robot plays from
    * the next one. A human dummy whose declarer the robot now is plays both
    * hands from here (`DeclarerHandShown`). `PlayingUpdated` tells the table
-   * and gets the robots moving.
+   * and gets the robots moving, unless `$quietly` leaves it to the caller.
    *
    * Run by remove(), under the table lock.
    */
-  private function replaceWithRobot(Table $table, TableSeat $gone, string $reason): void
+  private function replaceWithRobot(Table $table, TableSeat $gone, string $reason, bool $quietly): void
   {
     // whoever's time for the set was running, up to now: the board waits
     // afresh below
@@ -458,7 +467,9 @@ class TableSeatService
       DeclarerHandShown::dispatch($playing, (int) $playing->seats->firstWhere('seat', Seats::partner($gone->seat))->user_id, Seats::partner($gone->seat));
     }
 
-    PlayingUpdated::dispatch($table);
+    if (! $quietly) {
+      PlayingUpdated::dispatch($table);
+    }
   }
 
   /**
@@ -490,11 +501,12 @@ class TableSeatService
   /**
    * Record a sign of life from a player at a table (`last_seen_at`), so the
    * idle-seat sweeper leaves them alone. A player marked away (checkAway(),
-   * or a Leave mid-set) is back: `away_since` is cleared, and the table told
-   * (`TableUpdated`). Being there isn't playing: it never touches the turn
-   * clock (`PlayingStateService::turnDeadline()`). A no-op for somebody who
-   * doesn't sit there. Leaves `updated_at` alone: nothing about the seat
-   * changed.
+   * or a Leave mid-set) is back: `away_since` and `replace_at` are cleared,
+   * and the table told (`TableUpdated`). Being there isn't playing: it
+   * never touches the turn clock (`PlayingStateService::turnDeadline()`),
+   * except that one coming back on their turn gets the turn clock back,
+   * from now (restartTurn()). A no-op for somebody who doesn't sit there.
+   * Leaves `updated_at` alone: nothing about the seat changed.
    */
   public function touch(Table $table, User $user): void
   {
@@ -505,9 +517,35 @@ class TableSeatService
 
     $seat()->update(['last_seen_at' => now()]);
 
-    if ($seat()->whereNotNull('away_since')->update(['away_since' => null]) > 0) {
+    if ($seat()->whereNotNull('away_since')->update(['away_since' => null, 'replace_at' => null]) > 0) {
+      $this->restartTurn($table, $user);
+
       TableUpdated::dispatch($table);
     }
+  }
+
+  /**
+   * `$user`, back from being away, is the one the board waits for: while
+   * away only their seat's `replace_at` and their time for the set could
+   * end their turn, so their time is charged up to now
+   * (`BoardTable::chargeTurn()`) and the turn clock starts afresh
+   * (`turn_started_at`). `PlayingUpdated` tells the table the new
+   * `turn_deadline`.
+   */
+  private function restartTurn(Table $table, User $user): void
+  {
+    DB::transaction(function () use ($table, $user) {
+      $playing = $this->playingState->currentPlaying($table, lock: true);
+
+      if ($this->playingState->clockedUser($playing)?->id !== $user->id) {
+        return;
+      }
+
+      $playing->chargeTurn();
+      $playing->update(['turn_started_at' => now()]);
+
+      PlayingUpdated::dispatch($table);
+    });
   }
 
   /**
@@ -548,21 +586,27 @@ class TableSeatService
    * The away rule and the turn clock, run every ten seconds by
    * `tables:check-away`. At a table in the middle of a set:
    * - a human with no sign of life for `bridge.away_seconds` is marked away,
-   *   `away_since` being that last sign of life; their seat stays theirs;
-   * - the player the board waits for, once their turn clock or their time
-   *   for the set has run out (`PlayingStateService::turnDeadline()`), is
-   *   taken out through remove(), where a robot takes their seat for the
-   *   rest of the set (`set_time` if it was their time for the set,
-   *   otherwise `turn_timeout`, or `away` if they were away). Nobody else is: the
-   *   board isn't waiting for them. No clock runs for a robot or an admin:
-   *   the table just waits for an admin.
+   *   `away_since` being that last sign of life; their seat stays theirs
+   *   until `replace_at` (`bridge.away_replace_seconds` after `away_since`;
+   *   none for an admin);
+   * - every player whose time is up is taken out through remove(), where a
+   *   robot takes their seat for the rest of the set: anyone away whose
+   *   `replace_at` has come, whoever's turn it is (`away`), and the player
+   *   the board waits for once their turn has run out
+   *   (`PlayingStateService::turnClock()`: `set_time` if it was their time
+   *   for the set, `away` if they were away, otherwise `turn_timeout`). All
+   *   of them at once, and the table told once (`TableUpdated`, and
+   *   `PlayingUpdated` to get the robots moving). No clock runs for a robot
+   *   or an admin: the table just waits for an admin. Should nobody but
+   *   them be left to play with, the set ends `abandoned` instead, ended by
+   *   whoever's time ran out first, and they are freed as by a leave.
    * At a table whose set is over (completed or abandoned),
    * nobody is held for it any more: the seats of players still away are
    * freed, as a leave (an admin's is kept, and only stops being away).
    *
    * Each table is checked under its lock. Returns how many players were
-   * marked away, how many players ran out of time and how many seats were
-   * freed.
+   * marked away, how many players ran out of time (replaced, or freed as
+   * the set ended) and how many seats were freed.
    *
    * @return array{away: int, timed_out: int, freed: int}
    */
@@ -627,30 +671,40 @@ class TableSeatService
       if ($this->boardSelection->currentSet($table) !== null) {
         foreach ($humans() as $seat) {
           if ($seat->away_since === null && $seat->last_seen_at->lt($awayCutoff)) {
-            $seat->update(['away_since' => $seat->last_seen_at]);
+            $seat->update(['away_since' => $seat->last_seen_at, 'replace_at' => $this->replaceAt($seat, $seat->last_seen_at)]);
             $counts['away']++;
           }
         }
 
-        // the one the board waits for, if their time is up
-        $playing = $this->playingState->currentPlaying($table);
-        $clock = $this->playingState->turnClock($playing);
-        $late = $clock !== null && $clock['deadline']->lte(now())
-          ? $humans()->firstWhere('user_id', $this->playingState->actingUserId($playing))
-          : null;
+        $due = $this->timeUp($table, $humans());
 
-        if ($late !== null) {
-          $reason = match (true) {
-            $clock['by'] === PlayingStateService::DEADLINE_BY_SET => TableSetSeat::REASON_SET_TIME,
-            $late->away_since === null => TableSetSeat::REASON_TURN_TIMEOUT,
-            default => TableSetSeat::REASON_AWAY,
-          };
+        if ($due === []) {
+          if ($counts['away'] > 0) {
+            TableUpdated::dispatch($table);
+          }
 
-          // remove() tells the table
-          $this->remove($table, $late->user, walkOut: $reason);
-          $counts['timed_out']++;
-        } elseif ($counts['away'] > 0) {
-          TableUpdated::dispatch($table);
+          return $counts;
+        }
+
+        $counts['timed_out'] = count($due);
+
+        if ($humans()->whereNotIn('user_id', array_keys($due))->isEmpty()) {
+          // a robot would have nobody to play with: the set ends, as if the
+          // first to run out had left, and they all go
+          $this->boardSelection->abandonPlaying($table);
+          $this->boardSelection->abandonSet($table, reset($due)['seat']->user);
+        }
+
+        foreach ($due as ['seat' => $seat, 'reason' => $reason]) {
+          if ($this->remove($table, $seat->user, walkOut: $reason, quietly: true)) {
+            return $counts;
+          }
+        }
+
+        TableUpdated::dispatch($table);
+
+        if ($this->playingState->currentPlaying($table) !== null) {
+          PlayingUpdated::dispatch($table);
         }
 
         if ($this->boardSelection->currentSet($table) !== null) {
@@ -682,6 +736,44 @@ class TableSeatService
 
       return $counts;
     });
+  }
+
+  /**
+   * The players at a table in the middle of a set whose time is up, by
+   * user id, with why (`TableSetSeat::REASONS`) and when it ran out,
+   * earliest first: anyone away past their seat's `replace_at`, and the
+   * player the board waits for past `PlayingStateService::turnClock()`.
+   *
+   * @param  Collection<int, TableSeat>  $humans
+   * @return array<int, array{seat: TableSeat, reason: string, at: Carbon}>
+   */
+  private function timeUp(Table $table, Collection $humans): array
+  {
+    $due = [];
+
+    foreach ($humans as $seat) {
+      if ($seat->replace_at?->lte(now()) && ! $seat->user->is_admin) {
+        $due[$seat->user_id] = ['seat' => $seat, 'reason' => TableSetSeat::REASON_AWAY, 'at' => $seat->replace_at];
+      }
+    }
+
+    $playing = $this->playingState->currentPlaying($table);
+    $clock = $this->playingState->turnClock($playing);
+    $late = $clock !== null && $clock['deadline']->lte(now())
+      ? $humans->firstWhere('user_id', $this->playingState->actingUserId($playing))
+      : null;
+
+    if ($late !== null) {
+      $due[$late->user_id] = ['seat' => $late, 'reason' => match ($clock['by']) {
+        PlayingStateService::DEADLINE_BY_SET => TableSetSeat::REASON_SET_TIME,
+        PlayingStateService::DEADLINE_BY_AWAY => TableSetSeat::REASON_AWAY,
+        default => TableSetSeat::REASON_TURN_TIMEOUT,
+      }, 'at' => $clock['deadline']];
+    }
+
+    uasort($due, fn ($a, $b) => [$a['at']->getTimestamp(), $a['seat']->id] <=> [$b['at']->getTimestamp(), $b['seat']->id]);
+
+    return $due;
   }
 
   /**

@@ -159,8 +159,12 @@ Things worth knowing before you change them:
 - **Away mid-set.** In the middle of a set a seat is never just freed by
   its player going: `TableSeatService::leave()` holds it on a Leave
   (`table_seats.away_since`), `checkAway()` marks quiet players away after
-  `bridge.away_seconds` (60); `touch()` (any sign of life) brings them
-  back. Away or not, the player on turn has a **turn clock**:
+  `bridge.away_seconds` (60); either sets `replace_at`, `away_since` +
+  `bridge.away_replace_seconds` (120, none for an admin), when a robot
+  takes the seat whoever's turn it is; `touch()` (any sign of life) brings
+  them back, clearing both (`restartTurn()` gives one back on their turn
+  a fresh turn clock, their time charged so far). A present player on
+  turn has a **turn clock**:
   `board_table.turn_started_at`, set by the deal, every call and card and a
   cleared claim (never by a heartbeat), plus `bridge.turn_seconds` (60) —
   `PlayingStateService::turnDeadline()`, the state's `turn_deadline`, null
@@ -175,13 +179,18 @@ Things worth knowing before you change them:
   runs for) on every call, card, claim and robot takeover, before
   `turn_started_at` is reset in the same transaction, so the stored bank
   is always as of `turn_started_at`. `turnClock()` makes the deadline the
-  earlier of the two (`turn_deadline_by`: `move` or `set`). `checkAway()` takes the player
-  whose clock ran out through `remove(..., walkOut: turn_timeout|set_time|away)`,
-  which hands their seat to a robot. `replacementReason()` and
+  earlier of the two (`turn_deadline_by`: `move` or `set`); for a player
+  away, `replace_at` stands in for the turn clock (`away`). `checkAway()`
+  takes every player whose time is up (`timeUp()`: past `replace_at`, or
+  on turn past the deadline) through
+  `remove(..., walkOut: turn_timeout|set_time|away, quietly: true)`,
+  which hands each seat to a robot, then tells the table once
+  (`TableUpdated`, `PlayingUpdated`). `replacementReason()` and
   `walksOut()` hold the exceptions: robots are never away, an admin is
   never replaced, while an admin is away a Leave or move is immediate and
   abandons (running out of time still hands the seat over), and with no
-  other human left the set is abandoned.
+  other human left the set is abandoned (`ended_by` whoever ran out
+  first, all of them freed).
   Sets outlive their table like playings do; `TableResource` and
   `PlayingResource` show where the table is as `set`.
   Start, like Next, takes the table row lock that seat changes take. A playing abandoned mid-board is
@@ -433,7 +442,8 @@ add it to any new route that reads or acts on the playing. `tables:release-idle-
 `config('bridge.idle_seat_minutes')` (5) at a table that isn't mid-set,
 through the normal `remove()`, so it behaves exactly like the player
 leaving; mid-set `tables:check-away` marks them away instead, and hands
-the seat of whoever lets their turn clock run out to a robot. Robots send
+to robots the seats of those away past `replace_at` and of whoever lets
+their turn run out. Robots send
 no heartbeat, so both skip them; an admin's seat is never freed by either
 (`tables:check-away` may show an admin away, but never replaces or frees
 them for it).

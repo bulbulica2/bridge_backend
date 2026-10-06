@@ -165,7 +165,7 @@ class BroadcastSizeTest extends TestCase
     $this->longestAuction();
     $this->play(52);
     $this->finish();
-    $this->table->seats()->update(['ready_at' => now(), 'away_since' => now(), 'last_seen_at' => now()]);
+    $this->table->seats()->update(['ready_at' => now(), 'away_since' => now(), 'replace_at' => now(), 'last_seen_at' => now()]);
     // robots took three seats over: the longest `replaced` a set can have
     // while a human is left to play with them
     TableSetSeat::query()->where('seat', '!=', 'N')->each(fn (TableSetSeat $seat) => $seat->update([
@@ -176,6 +176,7 @@ class BroadcastSizeTest extends TestCase
     $table = (new TableUpdated($this->table))->table;
     $this->assertCount(3, $table['set']['replaced']);
     $this->assertNotNull($table['seats'][0]['away_since']);
+    $this->assertNotNull($table['seats'][0]['replace_at']);
 
     $this->assertFits(new TableUpdated($this->table));
   }

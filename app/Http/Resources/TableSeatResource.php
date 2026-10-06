@@ -9,9 +9,10 @@ use Illuminate\Http\Resources\Json\JsonResource;
  * A seat row, with whoever sits in it reduced to their public profile, and
  * `ready`: whether they have pressed Start (`ready_at`; a robot always has).
  *
- * `away_since` (a column) is set while its player is away mid-set. When
- * the board stops waiting for whoever is on turn is the playing's
- * `turn_deadline`, not a seat's.
+ * `away_since` and `replace_at` (columns) are set while its player is away
+ * mid-set: `replace_at` is when a robot takes the seat, whoever's turn it
+ * is (null for an admin, whom the table waits for). When the board stops
+ * waiting for whoever is on turn is the playing's `turn_deadline`.
  */
 class TableSeatResource extends JsonResource
 {

@@ -173,12 +173,15 @@ class TableSeatController extends BaseController
 
     $table->load('seats.user');
 
-    $seconds = config('bridge.turn_seconds');
+    $seconds = (int) config('bridge.away_replace_seconds');
+    $kept = $seconds % 60 === 0
+      ? ($seconds / 60).' '.($seconds === 60 ? 'minute' : 'minutes')
+      : $seconds.' '.($seconds === 1 ? 'second' : 'seconds');
 
     return $this->sendResponse(
       new TableResource($table),
-      'You left in the middle of a set: your seat is held. Once the table is waiting for you, you have '
-        .$seconds.' '.($seconds === 1 ? 'second' : 'seconds').' to play, or a robot takes your seat for the rest of the set.',
+      "You left in the middle of a set: your seat is kept for $kept. Come back before then, or a robot takes it for the rest of the set."
+        ." Your time for the set keeps running when it's your turn.",
       202
     );
   }
