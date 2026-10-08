@@ -17,13 +17,19 @@ class PlayingController extends BaseController
 {
   /**
    * The whole game state as the caller may see it: enough to render the
-   * table from scratch after a refresh or a reconnect.
+   * table from scratch after a refresh or a reconnect. A kibitzer gets the
+   * public state, with no hand (`watcherStateFor()`).
    */
   public function show(Request $request, Table $table, PlayingStateService $state): JsonResponse
   {
-    $this->authorize('play', $table);
+    $this->authorize('watch', $table);
 
-    return $this->sendResponse($state->stateFor($table, $request->user()), 'Playing retrieved successfully.');
+    $user = $request->user();
+
+    return $this->sendResponse(
+      $user->can('play', $table) ? $state->stateFor($table, $user) : $state->watcherStateFor($table),
+      'Playing retrieved successfully.'
+    );
   }
 
   /**

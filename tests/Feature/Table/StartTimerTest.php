@@ -108,20 +108,44 @@ class StartTimerTest extends TestCase
     $this->assertFalse($table->seats()->where('seat', 'S')->exists());
     $this->assertNull($table->fresh()->board_id);
 
+    // the table allows kibitzers (by default): S stays as one
     Event::assertDispatched(UnseatedFromTable::class, function (UnseatedFromTable $event) use ($players, $table) {
       return $event->broadcastOn()[0]->name === 'private-App.Models.User.'.$players['S']->id
-        && $event->broadcastWith() === ['table_id' => $table->id, 'reason' => 'start_timeout', 'kibitzing' => false];
+        && $event->broadcastWith() === ['table_id' => $table->id, 'reason' => 'start_timeout', 'kibitzing' => true];
     });
-    Event::assertDispatched(TableUpdated::class, fn ($event) => $event->table['free_seats'] === ['S']);
+    Event::assertDispatchedTimes(TableUpdated::class, 1);
+    Event::assertDispatched(TableUpdated::class, fn ($event) => $event->table['free_seats'] === ['S'] && $event->table['kibitzers'] === 1);
+    $this->assertSame($table->id, $players['S']->kibitzing()->value('table_id'));
+    $this->actingAs($players['S'])->getJson("/tables/$table->id/playing")->assertOk()->assertJsonPath('data.my_seat', null);
 
-    // N's Start stands, and nothing is held against S: they may sit again,
-    // and the timer runs afresh for them
+    // N's Start stands, and nothing is held against S: they may sit again
+    // (no longer watching), and the timer runs afresh for them
     $this->assertNotNull($this->seatOf($table, 'N')->ready_at);
     $this->seats->seat($table, $players['S'], 'S');
     $this->assertEquals(now()->addSeconds(15), $this->deadline($table, 'S'));
+    $this->assertNull($players['S']->kibitzing()->first());
 
     // a seat that is gone frees nothing
     $this->assertFalse($this->seats->expireStart($seat->id));
+  }
+
+  public function test_at_a_table_without_kibitzers_the_late_player_is_just_unseated(): void
+  {
+    [$table, $players] = $this->tableWith(['N' => 'human', 'E' => 'robot', 'S' => 'human', 'W' => 'robot']);
+    $table->update(['allow_kibitzers' => false]);
+
+    $this->boards->start($table, $players['N']);
+    $seat = $this->seatOf($table, 'S');
+
+    Event::fake([UnseatedFromTable::class]);
+
+    $this->travel(15)->seconds();
+    (new ExpireStart($seat->id))->handle($this->seats);
+
+    $this->assertFalse($table->seats()->where('seat', 'S')->exists());
+    $this->assertSame(0, $table->kibitzers()->count());
+    Event::assertDispatched(UnseatedFromTable::class, fn (UnseatedFromTable $event) => $event->userId === $players['S']->id
+      && $event->broadcastWith() === ['table_id' => $table->id, 'reason' => 'start_timeout', 'kibitzing' => false]);
   }
 
   public function test_four_humans_the_fourth_is_timed_once_three_are_ready(): void

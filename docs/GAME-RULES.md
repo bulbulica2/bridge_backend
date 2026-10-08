@@ -560,6 +560,11 @@ calls and cards even after its table is deleted, so any player who has
 finished the board can replay it call by call and trick by trick
 (`GET /playings/{playing}`); playings finished before that change lost them.
 
+**Not enforced:** a **kibitzer** (somebody watching a table without a seat,
+`table_kibitzers`) sees every card of the boards they watch, but watching
+leaves no `board_table_seats` row, so rule 1 doesn't know about it: a
+kibitzer who sits down later may be dealt a board they watched.
+
 ### Sets of boards
 
 Play at a table goes in **sets** of `bridge.set_size` boards (4, env

@@ -35,6 +35,7 @@ class TableSeatService
     private BoardSelectionService $boardSelection,
     private PlayingStateService $playingState,
     private RobotPool $robots,
+    private KibitzerService $kibitzers,
   ) {}
 
   /**
@@ -63,7 +64,8 @@ class TableSeatService
    * seat there to a robot at once (see remove(), `$walkOut`). A player a
    * robot took over from in the set going on here
    * (`table_set_seats.replaced_user_id`) may not sit down here again until
-   * it is over.
+   * it is over. Sitting down ends any watching (`KibitzerService`): a
+   * kibitzer has no seat anywhere.
    *
    * Broadcasts `TableUpdated` for the table sat at (and, through remove(), for
    * the table a move left), once the transaction commits.
@@ -146,6 +148,9 @@ class TableSeatService
           'seat' => $seat,
           'ready_at' => $user->is_robot ? now() : null,
         ]);
+
+        // a player is no kibitzer, here or anywhere else
+        $this->kibitzers->stopWatching($user, $table);
 
         // the first human back at a table only robots were keeping runs it
         if ($table->unattended_since !== null && ! $user->is_robot) {
@@ -841,8 +846,10 @@ class TableSeatService
    * seat may be gone. The seat goes through remove(), exactly like a
    * leave: moderation is handed on (a moderator or an admin is no
    * exception), and the others are told. Nothing is held against the
-   * player, who may sit down again at once; they are told on their own
-   * channel (`UnseatedFromTable`, `start_timeout`).
+   * player, who may sit down again at once. At a table that allows
+   * kibitzers they stay as one (`KibitzerService::admit()`), so they can
+   * still watch it; they are told on their own channel
+   * (`UnseatedFromTable`, `start_timeout`, `kibitzing`).
    *
    * Returns whether the seat was freed.
    */
@@ -862,9 +869,20 @@ class TableSeatService
         return false;
       }
 
-      $this->remove($table, $seat->user);
+      // at a table that allows it they stay, as a kibitzer: in before the
+      // seat goes, so the TableUpdated remove() sends counts them
+      if ($table->allow_kibitzers) {
+        $this->kibitzers->admit($table, $seat->user);
+      }
 
-      UnseatedFromTable::dispatch($seat->user_id, $table->id, UnseatedFromTable::REASON_START_TIMEOUT);
+      $deleted = $this->remove($table, $seat->user);
+
+      UnseatedFromTable::dispatch(
+        $seat->user_id,
+        $table->id,
+        UnseatedFromTable::REASON_START_TIMEOUT,
+        $table->allow_kibitzers && ! $deleted
+      );
 
       return true;
     });

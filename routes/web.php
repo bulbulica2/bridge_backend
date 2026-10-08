@@ -9,6 +9,7 @@ use App\Http\Controllers\Game\CardPlayController;
 use App\Http\Controllers\Game\ClaimController;
 use App\Http\Controllers\Game\PlayingController;
 use App\Http\Controllers\Game\TableController;
+use App\Http\Controllers\Game\TableKibitzerController;
 use App\Http\Controllers\Game\TableSeatController;
 use App\Http\Controllers\Game\TableSetController;
 use App\Http\Controllers\Game\TableStartController;
@@ -56,7 +57,11 @@ Route::middleware('auth')->group(function () {
     // (or anyone kicking a robot from an unattended table)
     Route::delete('tables/{table}/seats/{user}', [TableSeatController::class, 'destroyUser'])->name('tables.seats.users.destroy');
 
-    // a seated player is still there; the client sends it every ~30 s while the table is open
+    // watch a table without a seat (a kibitzer), or stop watching
+    Route::post('tables/{table}/kibitzers', [TableKibitzerController::class, 'store'])->name('tables.kibitzers.store');
+    Route::delete('tables/{table}/kibitzers', [TableKibitzerController::class, 'destroy'])->name('tables.kibitzers.destroy');
+
+    // a seated player (or a kibitzer) is still there; the client sends it every ~30 s while the table is open
     // (both this and the playing requests below first expire a claim whose
     // time is up, in case no queue worker ran ExpireClaim)
     Route::post('tables/{table}/heartbeat', [TableSeatController::class, 'heartbeat'])
@@ -70,7 +75,8 @@ Route::middleware('auth')->group(function () {
       Route::post('tables/{table}/start', [TableStartController::class, 'store'])->name('tables.start.store');
       Route::delete('tables/{table}/start', [TableStartController::class, 'destroy'])->name('tables.start.destroy');
 
-      // the game state of the board the table is on, for its seated players
+      // the game state of the board the table is on, for its seated players;
+      // its kibitzers get the public part
       Route::get('tables/{table}/playing', [PlayingController::class, 'show'])->name('tables.playing.show');
 
       // once the board is finished: ready for the next one (each player for themselves)

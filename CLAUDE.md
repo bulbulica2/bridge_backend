@@ -223,6 +223,21 @@ vendor/bin/pint --test            # check formatting without changing files
   mid-set (`BoardSelectionService::currentSet()` null), re-checking each
   seat under its table lock. Reverb can't report disconnects back to
   Laravel, which is why this is a heartbeat and not a presence channel.
+- **Kibitzers**: `App\Services\KibitzerService` keeps people watching a
+  table without a seat (`table_kibitzers`, unique `user_id`: one table at a
+  time, never while seated — `TableSeatService::seat()` and a ban end it),
+  where the table's `allow_kibitzers` (default true; `POST /tables`,
+  `PATCH /tables/{table}` by a manager between sets, off sends them away
+  with `UnseatedFromTable` `kibitzers_off`) lets them
+  (`POST`/`DELETE /tables/{table}/kibitzers`). `TablePolicy::watch`
+  (`play` or a kibitzer) gates the `table.{id}` channel,
+  `GET /tables/{table}/playing` (a kibitzer gets
+  `PlayingStateService::watcherStateFor()`: no hand, alerted calls without
+  their explanation until the board is finished) and the heartbeat; every
+  action, the chat included, stays `TablePolicy::play`, so never use
+  `watch` for one. `tables:release-idle-seats` drops silent kibitzers
+  (`releaseIdle()`). Every table payload has `allow_kibitzers` and the
+  count `kibitzers`.
 - **Turn clock / away mid-set / walking out**: in the middle of a set the
   player the board waits for has `bridge.turn_seconds` (60) to act, or a
   robot takes their seat for the rest of the set. The clock starts at
@@ -295,7 +310,9 @@ vendor/bin/pint --test            # check formatting without changing files
   sets that seat's `table_seats.start_deadline` (`bridge.start_seconds`,
   15) and queues `ExpireStart`, whose `TableSeatService::expireStart()`
   frees it through `remove()` (admins and moderators too) and sends
-  `UnseatedFromTable` on the player's own channel. `PATCH /tables/{table}`
+  `UnseatedFromTable` on the player's own channel (`kibitzing` true when
+  the table allows kibitzers: the player then stays as one,
+  `KibitzerService::admit()`). `PATCH /tables/{table}`
   with a changed `set_minutes` revokes every human's Start
   (`revokeStarts()`).
   Start 409s (`StartBoardException`) while a board is in its auction or play,
@@ -349,7 +366,7 @@ vendor/bin/pint --test            # check formatting without changing files
   resources as objects). `TableSeatService` dispatches it on every seat
   change except one that deleted the table, and `BoardSelectionService` on
   every Start pressed or taken back and every deal. Channels are in
-  `routes/channels.php`: `table.{id}` admits players seated there. Channel
+  `routes/channels.php`: `table.{id}` admits players seated there and its kibitzers. Channel
   auth is checked only at subscribe time, so a player who leaves stays
   subscribed — anything private to one player (their hand) must go on
   `App.Models.User.{id}`, never on the table channel.

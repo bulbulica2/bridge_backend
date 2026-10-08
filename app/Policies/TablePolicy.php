@@ -46,11 +46,22 @@ class TablePolicy
   }
 
   /**
-   * Whether the user may read the table's game state: only the players
-   * seated there, the same audience as the `table.{id}` channel.
+   * Whether the user plays at the table: only the players seated there may
+   * act (call, play, claim, Start, chat) and read their own game state.
    */
   public function play(User $user, Table $table): bool
   {
     return $table->seats()->where('user_id', $user->id)->exists();
+  }
+
+  /**
+   * Whether the user may follow the table: its players and its kibitzers
+   * (`KibitzerService`), the audience of the `table.{id}` channel. A
+   * kibitzer gets the public game state only
+   * (`PlayingStateService::watcherStateFor()`).
+   */
+  public function watch(User $user, Table $table): bool
+  {
+    return $this->play($user, $table) || $table->kibitzers()->where('user_id', $user->id)->exists();
   }
 }

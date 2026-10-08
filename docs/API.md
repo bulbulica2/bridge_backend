@@ -49,10 +49,12 @@ lobby, profiles, histories, results — stays open.
 | GET | `/cards` | `Game\CardController@index` | none | all `Card` rows |
 | GET | `/cards/{card}` | `Game\CardController@show` | none | one `Card` by id |
 | GET | `/bids` | `Game\BidController@index` | none | the 38 calls with their ids (`bid_id` for `POST /tables/{table}/calls`), P, X, XX, then by rank |
-| GET | `/tables` | `Game\TableController@index` | `auth` | all tables, newest first, with `seats.user`, `free_seats`, `set` and `can_manage` |
+| GET | `/tables` | `Game\TableController@index` | `auth` | all tables, newest first, with `seats.user`, `free_seats`, `kibitzers`, `set` and `can_manage` |
 | POST | `/tables` | `Game\TableController@store` | `auth` | creates a table and seats the creator, with `robots` in the other three seats if asked (201) |
-| GET | `/tables/{table}` | `Game\TableController@show` | `auth` | one table with `seats.user`, `free_seats`, `set` and `can_manage` |
-| PATCH | `/tables/{table}` | `Game\TableController@update` | `auth` + `TablePolicy::manage` | change the table's `set_minutes` between sets (200, the table; 409 mid-set) |
+| GET | `/tables/{table}` | `Game\TableController@show` | `auth` | one table with `seats.user`, `free_seats`, `kibitzers`, `set` and `can_manage` |
+| PATCH | `/tables/{table}` | `Game\TableController@update` | `auth` + `TablePolicy::manage` | change the table's `set_minutes` and/or `allow_kibitzers` between sets (200, the table; 409 mid-set) |
+| POST | `/tables/{table}/kibitzers` | `Game\TableKibitzerController@store` | `auth` | [watch](#kibitzers) the table without a seat (201, the table; 403 if it doesn't allow kibitzers, 409 while seated) |
+| DELETE | `/tables/{table}/kibitzers` | `Game\TableKibitzerController@destroy` | `auth` | stop watching it (200, the table; 409 if you weren't) |
 | POST | `/tables/{table}/seats` | `Game\TableSeatController@store` | `auth` | take a free seat at an existing table, moving off your old one if you had one (201) |
 | DELETE | `/tables/{table}/seats` | `Game\TableSeatController@destroy` | `auth` | give up your seat; deletes the table if you were the last player |
 | POST | `/tables/{table}/seats/users` | `Game\TableSeatController@storeUser` | `auth` + `TablePolicy::manage` | a table manager seats another user (201) |
@@ -60,8 +62,8 @@ lobby, profiles, histories, results — stays open.
 | DELETE | `/tables/{table}/seats/{user}` | `Game\TableSeatController@destroyUser` | `auth` (+ `TablePolicy::kick`: a manager, to remove anyone but yourself or an admin; another admin, to remove an admin; anyone, to remove a robot from an unattended table) | quit your seat, or kick that player out |
 | POST | `/tables/{table}/start` | `Game\TableStartController@store` | `auth` + seated at the table (`TablePolicy::play`) | press Start; the first board of a new set is dealt once the table is full and every human there has pressed it (200, the table plus `playing`) |
 | DELETE | `/tables/{table}/start` | `Game\TableStartController@destroy` | `auth` + seated at the table (`TablePolicy::play`) | take your Start back while no board is dealt (200, the table) |
-| POST | `/tables/{table}/heartbeat` | `Game\TableSeatController@heartbeat` | `auth` + seated at the table (`TablePolicy::play`) | "still here": keeps the caller's seat from being freed as idle (200, `{last_seen_at}`) |
-| GET | `/tables/{table}/playing` | `Game\PlayingController@show` | `auth` + seated at the table (`TablePolicy::play`) | the game state of the table's current board, with the caller's own hand |
+| POST | `/tables/{table}/heartbeat` | `Game\TableSeatController@heartbeat` | `auth` + seated at or watching the table (`TablePolicy::watch`) | "still here": keeps the caller's seat (or kibitzer's place) from being freed as idle (200, `{last_seen_at}`) |
+| GET | `/tables/{table}/playing` | `Game\PlayingController@show` | `auth` + seated at or watching the table (`TablePolicy::watch`) | the game state of the table's current board, with the caller's own hand; a kibitzer's has none |
 | POST | `/tables/{table}/calls` | `Game\CallController@store` | `auth` + seated at the table (`TablePolicy::play`) | make your call in the auction, optionally alerted to the opponents (201, the updated game state) |
 | POST | `/tables/{table}/calls/{index}/question` | `Game\CallController@question` | `auth` + seated at the table (`TablePolicy::play`) | ask the opponents what one of their calls means; a robot answers at once (200, the updated game state) |
 | PUT | `/tables/{table}/calls/{index}/explanation` | `Game\CallController@explain` | `auth` + seated at the table (`TablePolicy::play`) | explain your own call: answer a question, fix your alert, or alert late (200, the updated game state) |
@@ -159,13 +161,15 @@ See [`DATA-MODEL.md`](DATA-MODEL.md#table-tables) for the lifecycle.
 Every table payload — from index, store, show or leave — is built by
 `App\Http\Resources\TableResource` and has the same shape: the `Table` fields
 (`id`, `name`, `created_by`, `moderated_by`, `board_id`, `unattended_since`,
-`set_minutes`, timestamps), plus
+`set_minutes`, `allow_kibitzers`, timestamps), plus
 `seats` (`TableSeat` rows — `id`, `table_id`, `user_id`, `seat`,
 `last_seen_at`, `ready_at`, `start_deadline`, `away_since`, `replace_at`,
 timestamps — each
 with its `user` and `ready`),
-`free_seats` (the unoccupied seats in `N, E, S, W` order), `set` and
-`can_manage`.
+`free_seats` (the unoccupied seats in `N, E, S, W` order), `kibitzers`
+(how many people [watch](#kibitzers) the table without a seat), `set` and
+`can_manage`. `allow_kibitzers` (boolean) says whether anyone may watch, so
+the lobby can offer Watch where it is true.
 `set` is where the table is in its [set of boards](#sets): the set it is on
 now, or the one it finished last — `{id, number, board, of, finished,
 ended, replaced, minutes, time_left}` as in the game state, `board` being
@@ -279,9 +283,11 @@ once three have pressed (two pressed: no timer yet).
   nothing is held against the player (they may sit down again at once),
   `moderated_by` is handed on to the human seated longest if they were the
   moderator, and an **admin** is no exception (they stay an admin; only the
-  seat goes). The table gets a `TableUpdated` with the seat free, and the
-  player an [`UnseatedFromTable`](#event-unseatedfromtable) on their own
-  channel.
+  seat goes). At a table that allows kibitzers (`allow_kibitzers`) the
+  player stays as a [kibitzer](#kibitzers). The table gets one
+  `TableUpdated` with the seat free (and `kibitzers` counting them), and
+  the player an [`UnseatedFromTable`](#event-unseatedfromtable) on their own
+  channel, `kibitzing` saying whether they now watch.
 - Count down from `start_deadline`, never from when the payload arrived. It
   is in every table payload and in `TableUpdated`.
 
@@ -301,6 +307,7 @@ Body (JSON, both optional):
 | `seat` | one of `N`, `E`, `S`, `W` | `N` |
 | `robots` | boolean | `false` |
 | `set_minutes` | one of `8`, `12`, `16`, `20` (`Table::SET_MINUTES`): each player's time for a whole [set](#the-set-clock) | `BRIDGE_SET_MINUTES` (16) |
+| `allow_kibitzers` | boolean: whether people without a seat may [watch](#kibitzers) | `true` |
 
 Rules:
 - **409** if the user already holds a seat at any table (`table_seats.user_id`
@@ -334,7 +341,7 @@ Rules:
   when the table has a playing after the request. `GET /tables`,
   `GET /tables/{table}`, the other seat endpoints and `TableUpdated` don't
   have the key at all, since it holds a hand.
-- **422** (default Laravel shape) for an invalid `name`/`seat`/`robots`/`set_minutes`.
+- **422** (default Laravel shape) for an invalid `name`/`seat`/`robots`/`set_minutes`/`allow_kibitzers`.
 
 201 response (`data` has the same shape as `GET /tables/{table}`):
 ```json
@@ -344,11 +351,12 @@ Rules:
   "data": {
     "id": 7, "name": "Friday club", "created_by": 3, "moderated_by": 3,
     "board_id": null, "created_at": "...", "updated_at": "...",
-    "unattended_since": null, "set_minutes": 16,
+    "unattended_since": null, "set_minutes": 16, "allow_kibitzers": true,
     "seats": [{"id": 12, "table_id": 7, "user_id": 3, "seat": "E", "last_seen_at": "...", "ready_at": null,
                "away_since": null, "replace_at": null, "created_at": "...", "updated_at": "...", "ready": false,
                "user": {"id": 3, "name": "Ann", "username": "ann", "is_robot": false, "is_admin": false}}],
     "free_seats": ["N", "S", "W"],
+    "kibitzers": 0,
     "can_manage": true,
     "playing": null
   }
@@ -373,7 +381,10 @@ table's settings. Body (JSON):
 
 | Field | Rules |
 |---|---|
-| `set_minutes` | required, one of `8`, `12`, `16`, `20`: each player's time for a [set](#the-set-clock) |
+| `set_minutes` | one of `8`, `12`, `16`, `20`: each player's time for a [set](#the-set-clock) |
+| `allow_kibitzers` | boolean: whether people without a seat may [watch](#kibitzers) |
+
+At least one of the two is required; a field left out keeps its value.
 
 - **200**, message `"Table updated successfully."`, `data` the table as in
   `GET /tables/{table}`; a `TableUpdated` tells the table.
@@ -382,6 +393,11 @@ table's settings. Body (JSON):
   (`start_deadline`) is cleared, in the same one `TableUpdated` — a Start
   pressed for the old set time isn't one for the new. Robots stay ready.
   The same value as now changes nothing (200, no event).
+- `allow_kibitzers: false` sends away everyone watching: their rows are
+  deleted and each gets [`UnseatedFromTable`](#event-unseatedfromtable)
+  `{table_id, reason: "kibitzers_off", kibitzing: false}` on their own
+  channel; the `TableUpdated` shows `kibitzers: 0`. Changing only
+  `allow_kibitzers` revokes nobody's Start.
 - **409** while a set is going on (a board of it in progress, or between
   its boards): `"A set is going on at this table: change its settings once
   it is over."` After a set's last board, or once it ended `abandoned`, it
@@ -389,7 +405,50 @@ table's settings. Body (JSON):
   only ever affects the next set.
 - **403** (Laravel's `{message}` shape) for anyone else:
   `"Only the table moderator or an admin can change the table's settings."`;
-  **422** for an invalid `set_minutes`; **404** for an unknown table.
+  **422** for an invalid `set_minutes` or `allow_kibitzers`, or neither
+  given; **404** for an unknown table.
+
+### Kibitzers
+A **kibitzer** watches a table without a seat (`table_kibitzers`,
+`App\Services\KibitzerService`). They see what any player sees in public —
+the auction as it goes, dummy once the opening lead is made, every card
+played — and never a hidden hand. A kibitzer:
+
+- subscribes to `private-table.{id}` (`TableUpdated`, `PlayingUpdated`), and
+  reads [`GET /tables/{table}/playing`](#get-tablestableplaying), which
+  answers them the public state;
+- sends [`POST /tables/{table}/heartbeat`](#post-tablestableheartbeat) every
+  ~30 s like a player: one silent for `BRIDGE_IDLE_SEAT_MINUTES` (5) is
+  dropped by `tables:release-idle-seats` (the table gets a `TableUpdated`);
+- may do nothing else at the table: calls, cards, claims and their
+  answers, Start, Next, questions, explanations and the chat (read or send)
+  are all **403** for them, as for anyone not seated there. `HandDealt`,
+  `DeclarerHandShown`, `CallAlerted`, `AuctionAlertsShown`, `CallQuestioned`
+  and `BoardMessageSent` never go to a kibitzer.
+
+One table at a time, and never while seated anywhere: taking a seat
+(`POST /tables/{table}/seats`, at this table between sets or any other, or
+being seated by a manager) ends watching, and a ban ends it too. A player
+whose seat [the Start timer](#the-start-timer) frees becomes a kibitzer of
+that table when it allows them. Every
+change sends `TableUpdated`, whose `kibitzers` is the count. When the table
+is deleted (its last player left) its kibitzers go with it, without an
+event: their next heartbeat or `GET .../playing` is a **404**.
+
+#### `POST /tables/{table}/kibitzers`
+Watch the table, and stop watching any other. No body.
+
+- **201**, message `"Watching the table."`, `data` the table as in
+  `GET /tables/{table}`. Watching the table already watched counts as a
+  heartbeat and changes nothing else.
+- **403** `"This table doesn't allow kibitzers."` when `allow_kibitzers` is
+  false; **403** for a banned user (`not-banned`).
+- **409** `"You are seated at a table: leave your seat before watching one."`
+  while the caller holds a seat anywhere, this table included.
+
+#### `DELETE /tables/{table}/kibitzers`
+Stop watching. **200**, message `"Stopped watching the table."`, `data` the
+table; **409** `"You are not watching this table."`.
 
 ### `POST /tables/{table}/seats`
 Take a free seat at an existing table.
@@ -601,15 +660,18 @@ their own table rather than kicking themselves out of it. Being kicked is
 other straight away.
 
 ### `POST /tables/{table}/heartbeat`
-A sign of life from a seated player. No body. The client sends it every
-~30 s while the table is open (page visible or not), so the server can tell a
-player who is still there from one who closed the tab.
+A sign of life from a seated player or a [kibitzer](#kibitzers). No body.
+The client sends it every ~30 s while the table is open (page visible or
+not), so the server can tell a player who is still there from one who
+closed the tab.
 
 - **200** `{"status": 200, "message": "Heartbeat received.", "data":
   {"last_seen_at": "2026-09-28T12:00:30.000000Z"}}` — the caller's
-  `table_seats.last_seen_at`, just set to now.
-- **403** for a caller who doesn't sit at this table (`TablePolicy::play`,
-  Laravel's default `{message}` shape); nothing is recorded.
+  `table_seats.last_seen_at` (a kibitzer's `table_kibitzers.last_seen_at`),
+  just set to now.
+- **403** for a caller who neither sits at nor watches this table
+  (`TablePolicy::watch`, Laravel's default `{message}` shape); nothing is
+  recorded.
 - **404** if the table doesn't exist.
 
 The playing endpoints — `POST`/`DELETE /tables/{table}/start`,
@@ -878,11 +940,20 @@ page refresh or a reconnect. No body. Built by
 `App\Services\PlayingStateService::stateFor()`; the public part is
 `App\Http\Resources\PlayingResource`.
 
-- **200** for a player **seated at this table** (the same audience as the
-  `private-table.{id}` channel), message `"Playing retrieved successfully."`
+- **200** for a player **seated at this table** or one of its
+  [kibitzers](#kibitzers) (the same audience as the `private-table.{id}`
+  channel), message `"Playing retrieved successfully."`
 - **403** (Laravel's default `{message}` shape) for anyone else, including a
-  player seated at another table — `TablePolicy::play`.
+  player seated at another table — `TablePolicy::watch`.
 - **401** for guests, **404** for an unknown table id.
+
+A **kibitzer** gets the public state
+(`PlayingStateService::watcherStateFor()`): the shape below with `my_seat`,
+`hand` and `declarer_hand` all `null` — even on a board they held a seat
+on before — and `dummy_hand` only after the opening lead, as for everyone.
+In `auction`, an alerted call has `alert: {"explanation": null}` (alerted,
+but not what it means) until the board is `finished`, when the
+explanation shows as it does to the players; `question` is always `null`.
 
 ```json
 {
@@ -2005,12 +2076,12 @@ protocol, so any Pusher client (`pusher-js`, Laravel Echo) works.
 
 | Channel (as the client names it) | Echo | Who may subscribe | Carries |
 |---|---|---|---|
-| `private-table.{id}` | `echo.private('table.' + id)` | players seated at table `{id}` (`routes/channels.php`) | `TableUpdated`, `PlayingUpdated` |
-| `private-App.Models.User.{id}` | `echo.private('App.Models.User.' + id)` | user `{id}` only | `HandDealt` — one player's own cards; `DeclarerHandShown` — a robot declarer's cards, for its human dummy; `CallAlerted` — an opponent's alert or answer (anyone's, in the play); `AuctionAlertsShown` — partner's alerts, when the auction ends; `CallQuestioned` — a question about your call; `BoardMessageSent` — a chat message you may read; `UserBanned`; `UnseatedFromTable` — your seat was freed without you asking |
+| `private-table.{id}` | `echo.private('table.' + id)` | players seated at table `{id}` and its [kibitzers](#kibitzers) (`routes/channels.php`) | `TableUpdated`, `PlayingUpdated` |
+| `private-App.Models.User.{id}` | `echo.private('App.Models.User.' + id)` | user `{id}` only | `HandDealt` — one player's own cards; `DeclarerHandShown` — a robot declarer's cards, for its human dummy; `CallAlerted` — an opponent's alert or answer (anyone's, in the play); `AuctionAlertsShown` — partner's alerts, when the auction ends; `CallQuestioned` — a question about your call; `BoardMessageSent` — a chat message you may read; `UserBanned`; `UnseatedFromTable` — your seat (or kibitzer's place) was taken away without you asking |
 
-A client should subscribe to its table's channel **after** it has a seat
-(the subscription is refused otherwise), and re-subscribe after moving to
-another table. Leaving doesn't end the subscription server-side; the client
+A client should subscribe to its table's channel **after** it has a seat or
+is watching (`POST /tables/{table}/kibitzers`; the subscription is refused
+otherwise), and re-subscribe after moving to another table. Leaving doesn't end the subscription server-side; the client
 should unsubscribe (`echo.leave('table.' + id)`).
 
 ### Message size
@@ -2076,7 +2147,13 @@ Event name on the wire: `App\Events\TableUpdated` (Echo:
   event is the first with a non-null `board_id` (and the humans' `ready`
   cleared); a player leaving mid-board sends it back to null. Its `set`
   moves with it: a new set on a Start, the next `board` on a Next, and
-  `finished` when a player leaving abandons the set.
+  `finished` when a player leaving abandons the set;
+- a manager changes the table's settings (`PATCH /tables/{table}`:
+  `set_minutes`, `allow_kibitzers`);
+- somebody starts or stops [watching](#kibitzers) (`POST`/`DELETE
+  /tables/{table}/kibitzers`, a kibitzer sitting down anywhere or being
+  banned, an idle one dropped, all of them sent away by
+  `allow_kibitzers: false`), changing `kibitzers`.
 
 **Not sent** when the change deleted the table (the last player left, or
 `tables:delete-unattended` removed an unattended one) — nobody is left to
@@ -2103,6 +2180,7 @@ the request (the one who did gets it in their HTTP response).
     "board_id": null,
     "unattended_since": null,
     "set_minutes": 16,
+    "allow_kibitzers": true,
     "created_at": "2026-09-22T10:15:02.000000Z",
     "updated_at": "2026-09-22T10:15:02.000000Z",
     "seats": [
@@ -2120,6 +2198,7 @@ the request (the one who did gets it in their HTTP response).
       }
     ],
     "free_seats": ["S", "W"],
+    "kibitzers": 2,
     "set": null
   }
 }
@@ -2435,23 +2514,21 @@ Class `App\Events\UnseatedFromTable`, on `private-App.Models.User.{id}`
 (Echo: `echo.private('App.Models.User.' + myId).listen('UnseatedFromTable', ...)`).
 Same delivery as `TableUpdated`.
 
-**Sent when** the user's seat was freed without them asking for it. The
-one reason so far is `"start_timeout"`: the table waited for their Start
-until the seat's `start_deadline` ([the Start timer](#the-start-timer)).
-The table gets a `TableUpdated` showing the seat free; this tells the
-player, who may no longer be listening on the table channel. Nothing is
-held against them: they may sit down again at once.
+**Sent when** the user is sent away from a table without asking, so the
+client can leave the table view at once (or switch it to watching):
+
+| `reason` | When | `kibitzing` |
+|---|---|---|
+| `start_timeout` | the table waited for their Start until the seat's `start_deadline` ([the Start timer](#the-start-timer)) and freed the seat. The table gets a `TableUpdated` showing the seat free; nothing is held against them, they may sit down again at once | `true` when the table allows kibitzers: they now [watch](#kibitzers) it (a `table_kibitzers` row was created, and they stay on the table channel); else `false` |
+| `kibitzers_off` | they were watching and a manager turned `allow_kibitzers` off ([`PATCH /tables/{table}`](#patch-tablestable)) | `false` |
+
+`kibitzing` says whether they are still at the table as a
+[kibitzer](#kibitzers): when `true` the client keeps the table open in
+watching mode instead of going back to the lobby (and `echo.leave('table.' + id)`).
 
 ```json
-{
-  "table_id": 7,
-  "reason": "start_timeout",
-  "kibitzing": false
-}
+{"table_id": 7, "reason": "start_timeout", "kibitzing": true}
 ```
-
-`kibitzing` is whether they stay at the table as a watcher; always `false`
-for now (there are no kibitzers yet).
 
 ## Stubs and not built
 

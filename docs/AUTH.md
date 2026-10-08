@@ -186,13 +186,14 @@ Channel rules (`routes/channels.php`):
 
 | Channel | Who may subscribe |
 |---|---|
-| `private-table.{id}` | users **seated at that table** right now and not [banned](#bans). Seated elsewhere, seated nowhere, banned, or a guest → 403 |
-| `private-App.Models.User.{id}` | only user `{id}` themselves (the Laravel default). Carries `HandDealt` and `UserBanned` |
+| `private-table.{id}` | users **seated at that table** right now, or **watching** it as a kibitzer (`table_kibitzers`, [`POST /tables/{table}/kibitzers`](API.md#kibitzers)), and not [banned](#bans). Seated or watching elsewhere, neither, banned, or a guest → 403 |
+| `private-App.Models.User.{id}` | only user `{id}` themselves (the Laravel default). Carries `HandDealt`, `UserBanned`, `UnseatedFromTable` and the other per-player events |
 
 **Authorization is checked once, at subscribe time.** A player who leaves or
 is kicked stays subscribed until their socket closes — Reverb has no way to
 revoke it. So the table channel may only carry what anybody may see (the
-table itself is visible to every logged-in user through `GET /tables`).
+table itself is visible to every logged-in user through `GET /tables`) —
+and its kibitzers are subscribed to it anyway.
 Anything private to one player — their hand (`HandDealt`) — goes on that
 player's own `App.Models.User.{id}` channel, never on the table channel;
 `PlayingUpdated` on the table channel carries only the public part of the
@@ -252,9 +253,14 @@ Policies live in `app/Policies/` and are auto-discovered by name
   a `Response`, which the form request passes on through `Gate::inspect()`,
   so each 403 names its reason.
 - **`TablePolicy::play(User, Table)`** is true for players seated at the
-  table right now — the same audience as the `private-table.{id}` channel. It
-  gates `GET /tables/{table}/playing` (checked in `PlayingController`); anyone
-  else gets a **403** in Laravel's default `{message}` shape. See
+  table right now. It gates every action at the table — Start, Next, calls,
+  questions and explanations, cards, claims, the chat (read and send) —
+  checked in the controllers or form requests; anyone else, a kibitzer
+  included, gets a **403** in Laravel's default `{message}` shape.
+- **`TablePolicy::watch(User, Table)`** is `play` or a kibitzer of the table
+  (a `table_kibitzers` row) — the audience of the `private-table.{id}`
+  channel. It gates `GET /tables/{table}/playing` (a kibitzer gets the public
+  state, no hand) and the heartbeat. See
   [`API.md`](API.md#get-tablestableplaying).
 - Taking your own seat, or giving it up, is self-service and has no policy
   check — including through `DELETE /tables/{table}/seats/{user}` when

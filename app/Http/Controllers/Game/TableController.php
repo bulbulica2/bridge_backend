@@ -10,6 +10,7 @@ use App\Http\Requests\Table\UpdateTableRequest;
 use App\Http\Resources\TableResource;
 use App\Models\Table;
 use App\Services\BoardSelectionService;
+use App\Services\KibitzerService;
 use App\Services\PlayingStateService;
 use App\Services\RobotService;
 use App\Services\TableSeatService;
@@ -21,6 +22,7 @@ class TableController extends BaseController
   public function index(): JsonResponse
   {
     $tables = Table::with(['seats.user', ...Table::latestSetWithBoards()])
+      ->withCount('kibitzers')
       ->orderByDesc('created_at')
       ->orderByDesc('id')
       ->get();
@@ -62,6 +64,7 @@ class TableController extends BaseController
           'board_id' => null,
           // null: Table's creating hook puts bridge.set_minutes in
           'set_minutes' => $request->validated('set_minutes'),
+          'allow_kibitzers' => $request->boolean('allow_kibitzers', true),
         ]);
 
         $seatService->seat($table, $user, $request->validated('seat', 'N'));
@@ -91,13 +94,21 @@ class TableController extends BaseController
 
   /**
    * A manager changes the table's settings: `set_minutes`, each player's
-   * time for a set. Only between sets: a set going on keeps the time it
-   * opened with anyway (`table_sets.minutes`), and changing it under the
-   * players' feet would only mislead them, so that is a 409.
+   * time for a set, and `allow_kibitzers`, whether people without a seat
+   * may watch, either or both. Only between sets: a set going on keeps the
+   * time it opened with anyway (`table_sets.minutes`), and changing it under
+   * the players' feet would only mislead them, so that is a 409. A changed
+   * `set_minutes` revokes every Start (`revokeStarts()`); turning
+   * `allow_kibitzers` off sends the ones watching away
+   * (`KibitzerService::removeAll()`). The same values change nothing.
    */
-  public function update(UpdateTableRequest $request, Table $table, BoardSelectionService $boards): JsonResponse
-  {
-    $updated = DB::transaction(function () use ($request, $table, $boards) {
+  public function update(
+    UpdateTableRequest $request,
+    Table $table,
+    BoardSelectionService $boards,
+    KibitzerService $kibitzers
+  ): JsonResponse {
+    $updated = DB::transaction(function () use ($request, $table, $boards, $kibitzers) {
       // the lock Start takes, so a set can't open between the check and the
       // change
       Table::whereKey($table->getKey())->lockForUpdate()->firstOrFail();
@@ -107,16 +118,32 @@ class TableController extends BaseController
         return false;
       }
 
-      $minutes = (int) $request->validated('set_minutes');
+      $changes = [];
 
-      // the same value changes nothing, nobody's Start included
-      if ($minutes === $table->set_minutes) {
+      if ($request->has('set_minutes') && (int) $request->validated('set_minutes') !== $table->set_minutes) {
+        $changes['set_minutes'] = (int) $request->validated('set_minutes');
+      }
+
+      if ($request->has('allow_kibitzers') && $request->boolean('allow_kibitzers') !== $table->allow_kibitzers) {
+        $changes['allow_kibitzers'] = $request->boolean('allow_kibitzers');
+      }
+
+      // the same values change nothing, nobody's Start included
+      if ($changes === []) {
         return true;
       }
 
-      $table->update(['set_minutes' => $minutes]);
+      $table->update($changes);
+
       // a Start pressed for the old set time isn't one for the new
-      $boards->revokeStarts($table);
+      if (array_key_exists('set_minutes', $changes)) {
+        $boards->revokeStarts($table);
+      }
+
+      // nobody may watch any more: send the ones watching away
+      if (! $table->allow_kibitzers) {
+        $kibitzers->removeAll($table);
+      }
 
       TableUpdated::dispatch($table);
 

@@ -21,6 +21,9 @@ return new class extends Migration
       // Table::SET_MINUTES; bridge.set_minutes when the request names none):
       // a set copies it when it opens (table_sets.minutes)
       $table->unsignedTinyInteger('set_minutes')->default(16);
+      // whether people without a seat may watch the table (table_kibitzers);
+      // turning it off sends the ones watching away
+      $table->boolean('allow_kibitzers')->default(true);
       // set when the last human left and only robots remain: nobody runs the
       // table, and tables:delete-unattended deletes it after
       // bridge.unattended_table_minutes unless a human sits down first
