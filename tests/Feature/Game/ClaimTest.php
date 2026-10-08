@@ -546,6 +546,7 @@ class ClaimTest extends TestCase
 
   public function test_reading_the_playing_expires_an_overdue_claim_without_the_job(): void
   {
+    $this->freezeSecond();
     $this->claim('N', 13)->assertCreated();
     $job = $this->expiryJob();
 
@@ -590,6 +591,9 @@ class ClaimTest extends TestCase
 
   public function test_check_away_expires_overdue_claims_without_the_job(): void
   {
+    // claim_expires_at is stored to the second: on a clock that runs on,
+    // 9 s later can already be past it
+    $this->freezeSecond();
     $this->claim('N', 13)->assertCreated();
     $job = $this->expiryJob();
 
