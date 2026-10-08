@@ -16,9 +16,12 @@ use Closure;
  * position (`RobotBidder::read()`), so what a robot means and what its
  * partner understands can't drift apart.
  *
- * A conventional rule says so on its meaning (`alert: true`): a robot
- * alerts that call to the opponents with its explanation. Natural calls
- * aren't alerted.
+ * A rule whose call means something the call alone doesn't say says so
+ * on its meaning (`alert: true`): artificial, conventional, asking, or a
+ * range a natural reading wouldn't give (weak twos, limit raises, jump
+ * shifts, reverses …). A robot alerts that call with its explanation, to
+ * the opponents and to a human partner. Plainly natural calls aren't
+ * alerted.
  *
  * Points are high-card points; only whether a 10–11 HCP hand opens also
  * weighs its suits, losers and quick tricks (`opens()`).
@@ -149,18 +152,18 @@ class BiddingSystem
     // nobody preempts in fourth seat: they would rather pass the board out
     if (! $fourthSeat) {
       foreach (['S', 'H', 'D'] as $suit) {
-        $this->add("2$suit", new BidMeaning('Weak two', 5, 11, [$suit => 6], suit: $suit, tag: 'weak'),
+        $this->add("2$suit", new BidMeaning('Weak two', 5, 11, [$suit => 6], suit: $suit, tag: 'weak', alert: true),
           fn (RobotHand $h) => $this->between($h, 5, 11) && $h->length($suit) === 6 && $h->isGoodSuit($suit)
             && array_filter(RobotHand::MAJORS, fn ($major) => $major !== $suit && $h->length($major) >= 4) === []);
       }
 
       foreach (RobotHand::MAJORS as $major) {
-        $this->add("4$major", new BidMeaning('Preempt', 5, 10, [$major => 8], suit: $major, tag: 'preempt'),
+        $this->add("4$major", new BidMeaning('Preempt', 5, 10, [$major => 8], suit: $major, tag: 'preempt', alert: true),
           fn (RobotHand $h) => $this->between($h, 5, 10) && $h->length($major) >= 8 && $h->isGoodSuit($major));
       }
 
       foreach (RobotHand::SUITS as $suit) {
-        $this->add("3$suit", new BidMeaning('Preempt', 5, 10, [$suit => 7], suit: $suit, tag: 'preempt'),
+        $this->add("3$suit", new BidMeaning('Preempt', 5, 10, [$suit => 7], suit: $suit, tag: 'preempt', alert: true),
           fn (RobotHand $h) => $this->between($h, 5, 10) && $h->length($suit) >= 7 && $h->isGoodSuit($suit));
       }
     }
@@ -261,7 +264,7 @@ class BiddingSystem
         fn (RobotHand $h) => $h->hcp() < $z['slam'] && $h->longest(RobotHand::MAJORS, 5) === $major);
     }
 
-    $this->add('4NT', new BidMeaning('Quantitative', $z['quantitative'], $z['slam'] - 1, note: 'invites 6NT', asks: 'quantitative', suit: 'NT'),
+    $this->add('4NT', new BidMeaning('Quantitative', $z['quantitative'], $z['slam'] - 1, note: 'invites 6NT', asks: 'quantitative', suit: 'NT', alert: true),
       fn (RobotHand $h) => $h->hcp() >= $z['quantitative']);
     $this->add('3NT', new BidMeaning('Game', $z['game'], $z['quantitative'] - 1, suit: 'NT', signoff: true),
       fn (RobotHand $h) => $h->hcp() >= $z['game']);
@@ -293,7 +296,7 @@ class BiddingSystem
       fn (RobotHand $h) => $h->length('H') >= 4);
     $this->add($v->cheapest('S'), new BidMeaning('Stayman answer', lengths: ['S' => 4], note: 'four spades, not four hearts', asks: 'after-stayman', suit: 'S'),
       fn (RobotHand $h) => $h->length('S') >= 4);
-    $this->add($v->cheapest('D'), new BidMeaning('Stayman answer', note: 'no four-card major', asks: 'after-stayman'),
+    $this->add($v->cheapest('D'), new BidMeaning('Stayman answer', note: 'no four-card major', asks: 'after-stayman', alert: true),
       fn () => true);
   }
 
@@ -327,9 +330,9 @@ class BiddingSystem
     // over 2♥ we have four spades, or we wouldn't have asked
     $spades = $answer === 'H' ? ['S' => 4] : [];
 
-    $this->add('4NT', new BidMeaning('Quantitative', $z['quantitative'], $z['slam'] - 1, $spades, note: 'invites 6NT', asks: 'quantitative', suit: 'NT'),
+    $this->add('4NT', new BidMeaning('Quantitative', $z['quantitative'], $z['slam'] - 1, $spades, note: 'invites 6NT', asks: 'quantitative', suit: 'NT', alert: true),
       fn (RobotHand $h) => $h->hcp() >= $z['quantitative']);
-    $this->add('3NT', new BidMeaning('Game', $z['game'], $z['quantitative'] - 1, $spades, asks: $answer === 'H' ? 'choose:S' : null, suit: 'NT', signoff: $answer !== 'H'),
+    $this->add('3NT', new BidMeaning('Game', $z['game'], $z['quantitative'] - 1, $spades, asks: $answer === 'H' ? 'choose:S' : null, suit: 'NT', signoff: $answer !== 'H', alert: $answer === 'H'),
       fn (RobotHand $h) => $h->hcp() >= $z['game']);
 
     if ($level === 1) {
@@ -351,7 +354,7 @@ class BiddingSystem
         fn (RobotHand $h) => $h->length($major) >= 4 && $h->hcp() >= $top);
     }
 
-    $this->add($v->cheapest($major), new BidMeaning('Completes the transfer', asks: 'after-transfer'), fn () => true);
+    $this->add($v->cheapest($major), new BidMeaning('Completes the transfer', asks: 'after-transfer', alert: true), fn () => true);
   }
 
   /**
@@ -376,9 +379,9 @@ class BiddingSystem
         fn (RobotHand $h) => $six($h) && $h->hcp() >= $z['invite']);
     }
 
-    $this->add('4NT', new BidMeaning('Quantitative', $z['quantitative'], $z['slam'] - 1, [$major => 5], note: 'invites 6NT', asks: 'quantitative', suit: 'NT'),
+    $this->add('4NT', new BidMeaning('Quantitative', $z['quantitative'], $z['slam'] - 1, [$major => 5], note: 'invites 6NT', asks: 'quantitative', suit: 'NT', alert: true),
       fn (RobotHand $h) => ! $six($h) && $h->hcp() >= $z['quantitative']);
-    $this->add('3NT', new BidMeaning('Choice of games', $z['game'], $z['quantitative'] - 1, [$major => 5], asks: "choose:$major", suit: 'NT'),
+    $this->add('3NT', new BidMeaning('Choice of games', $z['game'], $z['quantitative'] - 1, [$major => 5], asks: "choose:$major", suit: 'NT', alert: true),
       fn (RobotHand $h) => ! $six($h) && $h->hcp() >= $z['game']);
 
     if ($level === 1) {
@@ -505,7 +508,7 @@ class BiddingSystem
       fn (RobotHand $h) => $h->length($suit) >= $support && $h->hcp() >= 8);
 
     if ($isMajor) {
-      $this->add("4$suit", new BidMeaning('Raise', 0, 7, [$suit => 3], suit: $suit),
+      $this->add("4$suit", new BidMeaning('Raise', 0, 7, [$suit => 3], suit: $suit, alert: true),
         fn (RobotHand $h) => $h->length($suit) >= 3);
     }
 
@@ -515,7 +518,7 @@ class BiddingSystem
     }
 
     if ($v->isLegal('2NT')) {
-      $this->add('2NT', new BidMeaning('Negative', 0, 7, suit: 'NT'), fn (RobotHand $h) => $h->hcp() <= 7);
+      $this->add('2NT', new BidMeaning('Negative', 0, 7, suit: 'NT', alert: true), fn (RobotHand $h) => $h->hcp() <= 7);
     }
 
     $this->add('3NT', new BidMeaning('No fit', suit: 'NT'), fn () => true);
@@ -632,7 +635,7 @@ class BiddingSystem
       $nt = $v->cheapest('NT');
 
       if ($balancing && $nt === '1NT') {
-        $this->add('1NT', new BidMeaning('Balancing 1NT', 11, 14, balanced: true, suit: 'NT', tag: 'nt-overcall', stopped: $their),
+        $this->add('1NT', new BidMeaning('Balancing 1NT', 11, 14, balanced: true, suit: 'NT', tag: 'nt-overcall', stopped: $their, alert: true),
           fn (RobotHand $h) => $h->isBalanced() && $this->between($h, 11, 14) && $h->stops($their));
       } elseif (! $balancing && self::levelOf($nt) <= 2) {
         $this->add($nt, new BidMeaning('Overcall', 15, 18, balanced: true, suit: 'NT', tag: 'nt-overcall', stopped: $their),
@@ -674,7 +677,7 @@ class BiddingSystem
         $call = $v->jump($suit);
 
         if ($call !== null && AuctionView::level($call) <= 3) {
-          $this->add($call, new BidMeaning('Weak jump overcall', 5, 10, [$suit => 6], suit: $suit, tag: 'weak'),
+          $this->add($call, new BidMeaning('Weak jump overcall', 5, 10, [$suit => 6], suit: $suit, tag: 'weak', alert: true),
             fn (RobotHand $h) => $this->between($h, 5, 10) && $h->length($suit) >= 6 && $h->isGoodSuit($suit) && $h->longest($free) === $suit);
         }
       }
@@ -791,7 +794,7 @@ class BiddingSystem
 
     if (in_array($suit, RobotHand::MAJORS, true)) {
       if ($jump !== "4$suit") {
-        $this->add($jump, new BidMeaning('Jump raise', 11, $invite, [$suit => 3], invite: true, suit: $suit),
+        $this->add($jump, new BidMeaning('Jump raise', 11, $invite, [$suit => 3], invite: true, suit: $suit, alert: true),
           fn (RobotHand $h) => $support($h) && $this->between($h, 11, $invite));
       }
 
@@ -801,7 +804,7 @@ class BiddingSystem
     } else {
       $this->add('3NT', new BidMeaning('Game', 14, suit: 'NT', stopped: $their),
         fn (RobotHand $h) => $support($h) && $h->hcp() >= 14 && $h->stops($their) && $h->isSemiBalanced());
-      $this->add($jump, new BidMeaning('Jump raise', 11, $cue === null ? null : $invite, [$suit => 3], invite: true, suit: $suit),
+      $this->add($jump, new BidMeaning('Jump raise', 11, $cue === null ? null : $invite, [$suit => 3], invite: true, suit: $suit, alert: true),
         fn (RobotHand $h) => $support($h) && $h->hcp() >= 11 && ($cue === null || $h->hcp() <= $invite));
     }
 
@@ -868,18 +871,18 @@ class BiddingSystem
       fn ($suit) => self::levelOf($v->cheapest($suit)) <= 3));
 
     foreach ($new as $suit) {
-      $this->add($v->cheapest($suit), new BidMeaning('Extra values', 14, lengths: [$suit => 4], asks: 'after-cue', suit: $suit),
+      $this->add($v->cheapest($suit), new BidMeaning('Extra values', 14, lengths: [$suit => 4], asks: 'after-cue', suit: $suit, alert: true),
         fn (RobotHand $h) => $h->hcp() >= 14 && $h->longest($new, 4) === $suit);
     }
 
     $nt = $v->cheapest('NT');
 
     if (self::levelOf($nt) <= 3) {
-      $this->add($nt, new BidMeaning('Extra values', 14, suit: 'NT', asks: 'after-cue', stopped: $their),
+      $this->add($nt, new BidMeaning('Extra values', 14, suit: 'NT', asks: 'after-cue', stopped: $their, alert: true),
         fn (RobotHand $h) => $h->hcp() >= 14 && $h->stops($their));
     }
 
-    $this->add($v->jump($mine), new BidMeaning('Extra values', 14, lengths: [$mine => 5], asks: 'after-cue', suit: $mine),
+    $this->add($v->jump($mine), new BidMeaning('Extra values', 14, lengths: [$mine => 5], asks: 'after-cue', suit: $mine, alert: true),
       fn (RobotHand $h) => $h->hcp() >= 14);
     $this->add($v->cheapest($mine), new BidMeaning('Minimum', $overcall->min, 13, [$mine => 5], asks: 'after-cue', suit: $mine),
       fn () => true);
@@ -1051,7 +1054,7 @@ class BiddingSystem
     $overcalled = ! $v->isOurs($v->seatOf($v->lastContract()));
     $their = $v->theirSuits();
     $new = array_values(array_diff(RobotHand::SUITS, [$opened], $their));
-    $jumpShift = new BidMeaning('Jump shift', 19, force: BidMeaning::GAME, tag: 'jump-shift');
+    $jumpShift = new BidMeaning('Jump shift', 19, force: BidMeaning::GAME, tag: 'jump-shift', alert: true);
 
     // a jump shift: 19+ and a five-card suit
     foreach ($new as $suit) {
@@ -1065,9 +1068,9 @@ class BiddingSystem
 
       $this->add("2$opened", new BidMeaning('Raise', 6, 10, [$opened => 3], suit: $opened, tag: 'raise'),
         fn (RobotHand $h) => $support($h) && $this->between($h, 6, 10));
-      $this->add("3$opened", new BidMeaning('Limit raise', 11, 12, [$opened => 3], invite: true, suit: $opened, tag: 'raise'),
+      $this->add("3$opened", new BidMeaning('Limit raise', 11, 12, [$opened => 3], invite: true, suit: $opened, tag: 'raise', alert: true),
         fn (RobotHand $h) => $support($h) && $this->between($h, 11, 12));
-      $this->add("4$opened", new BidMeaning('Game raise', 13, lengths: [$opened => 3], suit: $opened, tag: 'raise'),
+      $this->add("4$opened", new BidMeaning('Game raise', 13, lengths: [$opened => 3], suit: $opened, tag: 'raise', alert: true),
         fn (RobotHand $h) => $support($h) && $h->hcp() >= 13);
     }
 
@@ -1101,9 +1104,9 @@ class BiddingSystem
     if ($overcalled) {
       $this->naturalNt($their, [[6, 10], [11, 12], [13, null]]);
     } else {
-      $this->add('2NT', new BidMeaning('Response', 13, 15, balanced: true, suit: 'NT', tag: 'nt-response'),
+      $this->add('2NT', new BidMeaning('Response', 13, 15, balanced: true, suit: 'NT', tag: 'nt-response', alert: true),
         fn (RobotHand $h) => $h->isBalanced() && $this->between($h, 13, 15));
-      $this->add('3NT', new BidMeaning('Response', 16, 18, balanced: true, suit: 'NT', tag: 'nt-response'),
+      $this->add('3NT', new BidMeaning('Response', 16, 18, balanced: true, suit: 'NT', tag: 'nt-response', alert: true),
         fn (RobotHand $h) => $h->isBalanced() && $this->between($h, 16, 18));
     }
 
@@ -1121,7 +1124,7 @@ class BiddingSystem
 
       $this->add("2$opened", new BidMeaning('Raise', 6, 10, [$opened => $length], suit: $opened, tag: 'raise'),
         fn (RobotHand $h) => $h->length($opened) >= $length && $this->between($h, 6, 10));
-      $this->add("3$opened", new BidMeaning('Limit raise', 11, 12, [$opened => 4], invite: true, suit: $opened, tag: 'raise'),
+      $this->add("3$opened", new BidMeaning('Limit raise', 11, 12, [$opened => 4], invite: true, suit: $opened, tag: 'raise', alert: true),
         fn (RobotHand $h) => $h->length($opened) >= 4 && $this->between($h, 11, 12));
     }
 
@@ -1133,7 +1136,7 @@ class BiddingSystem
 
   private function withSuit(BidMeaning $meaning, string $suit, int $length): BidMeaning
   {
-    return new BidMeaning($meaning->label, $meaning->min, $meaning->max, [$suit => $length], force: $meaning->force, suit: $suit, tag: $meaning->tag);
+    return new BidMeaning($meaning->label, $meaning->min, $meaning->max, [$suit => $length], force: $meaning->force, suit: $suit, tag: $meaning->tag, alert: $meaning->alert);
   }
 
   /**
@@ -1269,7 +1272,7 @@ class BiddingSystem
     $this->rebidOwnSuit($mine);
 
     foreach ($new as $suit) {
-      $this->add($v->jump($suit), new BidMeaning('Jump shift', 19, 21, [$suit => 4], force: BidMeaning::GAME, suit: $suit, tag: 'jump-shift'),
+      $this->add($v->jump($suit), new BidMeaning('Jump shift', 19, 21, [$suit => 4], force: BidMeaning::GAME, suit: $suit, tag: 'jump-shift', alert: true),
         fn (RobotHand $h) => $h->hcp() >= 19 && $h->longest($new, 4) === $suit);
     }
 
@@ -1279,7 +1282,7 @@ class BiddingSystem
     if (in_array($theirs, RobotHand::MINORS, true)) {
       $this->add($v->cheapest($theirs), new BidMeaning('Raise', self::OPENING, 18, [$theirs => 4], suit: $theirs),
         fn (RobotHand $h) => $h->length($theirs) >= 4 && $h->hcp() <= 18);
-      $this->add($v->jump($theirs), new BidMeaning('Jump raise', 19, 21, [$theirs => 4], force: BidMeaning::GAME, suit: $theirs),
+      $this->add($v->jump($theirs), new BidMeaning('Jump raise', 19, 21, [$theirs => 4], force: BidMeaning::GAME, suit: $theirs, alert: true),
         fn (RobotHand $h) => $h->length($theirs) >= 4);
     }
 
@@ -1348,7 +1351,7 @@ class BiddingSystem
       }
 
       $meaning = $reverse($suit)
-        ? new BidMeaning('Reverse', 17, 18, [$suit => 4], force: BidMeaning::ROUND, suit: $suit, tag: 'reverse')
+        ? new BidMeaning('Reverse', 17, 18, [$suit => 4], force: BidMeaning::ROUND, suit: $suit, tag: 'reverse', alert: true)
         : new BidMeaning('New suit', self::OPENING, 18, [$suit => 4], suit: $suit);
 
       $this->add($call, $meaning, fn (RobotHand $h) => $h->hcp() <= 18 && $h->longest($eligible($h), 4) === $suit);
@@ -1405,7 +1408,7 @@ class BiddingSystem
 
       // opposite a narrow no trump range only (12–14, 15–17, 18–19 …)
       if ($ntPartner && $p['max'] - $p['min'] <= 4) {
-        $this->add('4NT', new BidMeaning('Quantitative', max(0, self::SLAM - $p['max']), $min - 1, note: 'invites 6NT', asks: 'quantitative', suit: 'NT', stopped: $this->unstopped()),
+        $this->add('4NT', new BidMeaning('Quantitative', max(0, self::SLAM - $p['max']), $min - 1, note: 'invites 6NT', asks: 'quantitative', suit: 'NT', stopped: $this->unstopped(), alert: true),
           fn (RobotHand $h) => $h->hcp() + $p['max'] >= self::SLAM && $this->gameStrain($h) === 'NT');
       }
     }

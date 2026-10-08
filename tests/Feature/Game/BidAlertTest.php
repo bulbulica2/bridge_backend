@@ -30,9 +30,9 @@ use Tests\TestCase;
 
 /**
  * Self-alerts: the bidder marks their own call and says what it means. The
- * opponents see it, partner doesn't, until the board is finished; the
- * opponents may ask about any call, and its bidder (a robot at once)
- * answers.
+ * opponents see it, partner doesn't, until the auction is over — but a
+ * robot's partner does, at once; the opponents may ask about any call, and
+ * its bidder (a robot at once) answers.
  */
 class BidAlertTest extends TestCase
 {
@@ -381,10 +381,10 @@ class BidAlertTest extends TestCase
 
     $this->assertSame(['1NT', 'P', '2C', 'P', '2D'], array_map(fn ($call) => $call['bid']['call'], $state));
 
-    // the natural 1NT and the answer to Stayman aren't alerted
+    // the natural 1NT isn't alerted, Stayman and its artificial 2♦ answer are
     $this->assertNull($state[0]['alert']);
     $this->assertSame(['explanation' => 'Stayman: 8–17 HCP, asks for a four-card major'], $state[2]['alert']);
-    $this->assertNull($state[4]['alert']);
+    $this->assertSame(['explanation' => 'Stayman answer: no four-card major'], $state[4]['alert']);
     $this->assertAlertedTo(['E'], 2, 'Stayman: 8–17 HCP, asks for a four-card major');
 
     // asked, a robot answers with what its system reads into the call
@@ -399,10 +399,10 @@ class BidAlertTest extends TestCase
   }
 
   /**
-   * Robot N's conventional calls, with a human partner (S) and a human
-   * opponent (E): the dealer, N's hand (and W's, else W gets the smallest
-   * cards and passes throughout), the auction up to N's alerted call, and
-   * its explanation.
+   * Robot N's alerted calls, with a human partner (S) and a human opponent
+   * (E): the dealer, N's hand (and W's, else W gets the smallest cards and
+   * passes throughout), the auction up to N's alerted call, and its
+   * explanation.
    */
   public static function robotConventions(): array
   {
@@ -422,6 +422,22 @@ class BidAlertTest extends TestCase
       'a penalty double of their suit over our 1NT' => ['S', ['N' => 'Q43.KT98.AJ5.765', 'W' => 'K2.AQJ32.432.K32'], ['1NT', '2H', 'X'], 'Penalty double: 8+ HCP, 4+ ♥'],
       'a penalty double of their low suit later' => ['N', ['N' => 'K2.AQJ43.2.KQJ32', 'W' => 'Q3.K2.A876.AT987'], ['1H', 'P', '1S', '2C', 'X'], 'Penalty double: 14+ HCP, 4+ ♣'],
       'a cue bid' => ['E', ['N' => 'K2.AQ32.KJ32.432'], ['1C', '1S', 'P', '2C'], 'Cue bid: 12+ HCP, forcing, says nothing about ♣'],
+      'extra values over a cue bid' => ['W', ['N' => 'AKJ32.AQ32.32.32', 'W' => 'Q4.K54.54.AKJ654'], ['1C', '1S', 'P', '2C', 'P', '2H'], 'Extra values: 14+ HCP, 4+ ♥'],
+      'the 2♦ answer to Stayman' => ['N', ['N' => 'AK2.KQ2.A432.432'], ['1NT', 'P', '2C', 'P', '2D'], 'Stayman answer: no four-card major'],
+      'completing a transfer' => ['N', ['N' => 'AK2.KQ2.A432.432'], ['1NT', 'P', '2D', 'P', '2H'], 'Completes the transfer'],
+      'a choice of games' => ['S', ['N' => 'K32.KQ432.Q32.32'], ['1NT', 'P', '2D', 'P', '2H', 'P', '3NT'], 'Choice of games: 10–15 HCP, 5+ ♥'],
+      'a quantitative 4NT' => ['S', ['N' => 'KQ2.KQ2.AJ32.J32'], ['1NT', 'P', '4NT'], 'Quantitative: 16–17 HCP, invites 6NT'],
+      'a weak two' => ['N', ['N' => '32.KQJ432.432.32'], ['2H'], 'Weak two: 5–11 HCP, 6+ ♥'],
+      'a preempt' => ['N', ['N' => '2.32.KQJ5432.432'], ['3D'], 'Preempt: 5–10 HCP, 7+ ♦'],
+      'a jump shift' => ['S', ['N' => 'A2.AKQ32.KQ2.K32'], ['1C', 'P', '2H'], 'Jump shift: 19+ HCP, 4+ ♥, forcing to game'],
+      'a limit raise' => ['S', ['N' => 'K32.Q432.A32.K32'], ['1H', 'P', '3H'], 'Limit raise: 11–12 HCP, 3+ ♥, invites game'],
+      'a game raise' => ['S', ['N' => 'A32.Q432.A32.K32'], ['1H', 'P', '4H'], 'Game raise: 13+ HCP, 3+ ♥'],
+      'the 2NT answer' => ['S', ['N' => 'KQ2.32.AQ32.K432'], ['1H', 'P', '2NT'], 'Response: 13–15 HCP, balanced'],
+      'a reverse' => ['N', ['N' => 'A2.AKQ2.KQ432.32'], ['1D', 'P', '1S', 'P', '2H'], 'Reverse: 17–18 HCP, 4+ ♥, forcing'],
+      'the 2NT negative after 2♣' => ['S', ['N' => '5432.32.5432.432'], ['2C', 'P', '2D', 'P', '2H', 'P', '2NT'], 'Negative: 0–7 HCP'],
+      'a weak jump overcall' => ['W', ['N' => '32.KQJ432.432.32', 'W' => 'AK54.A65.65.K654'], ['1C', '2H'], 'Weak jump overcall: 5–10 HCP, 6+ ♥'],
+      'a balancing 1NT' => ['E', ['N' => 'K32.KQ2.Q432.K32'], ['1H', 'P', 'P', '1NT'], 'Balancing 1NT: 11–14 HCP, balanced, ♥ stopped'],
+      'a jump raise of an overcall' => ['E', ['N' => 'K32.Q32.A432.Q32'], ['1C', '1H', 'P', '3H'], 'Jump raise: 11 HCP, 3+ ♥, invites game'],
     ];
   }
 
@@ -430,20 +446,10 @@ class BidAlertTest extends TestCase
    * @param  list<string>  $auction
    */
   #[DataProvider('robotConventions')]
-  public function test_a_robots_convention_is_alerted_to_its_human_opponent_not_partner(string $dealer, array $hands, array $auction, string $explanation): void
+  public function test_a_robots_alert_reaches_its_human_opponent_and_partner(string $dealer, array $hands, array $auction, string $explanation): void
   {
     $this->partnersTable($dealer, $hands);
-
-    $seat = $dealer;
-
-    foreach ($auction as $call) {
-      if (isset($this->players[$seat])) {
-        $this->makeCall($seat, $call)->assertCreated();
-      }
-
-      $this->driveRobots();
-      $seat = Seats::next($seat);
-    }
+    $this->bid($dealer, $auction);
 
     $index = count($auction) - 1;
     $state = $this->state('E')
@@ -454,10 +460,123 @@ class BidAlertTest extends TestCase
     $this->assertSame($auction, array_map(fn ($call) => $call['bid']['call'], $state));
     $this->assertSame('N', $state[$index]['seat']);
     $this->assertSame(['explanation' => $explanation], $state[$index]['alert']);
-    $this->assertAlertedTo(['E'], $index, $explanation);
 
-    // partner learns of it only once the auction is over
+    // its human partner learns of it at once, as the opponent does
+    $this->assertAlertedTo(['E', 'S'], $index, $explanation);
+    $this->state('S')->assertJsonPath("data.auction.$index.alert", ['explanation' => $explanation]);
+  }
+
+  /**
+   * Robot N's natural calls, as `robotConventions()`: the call isn't
+   * alerted, to anyone.
+   */
+  public static function robotNaturalCalls(): array
+  {
+    return [
+      'a one-level opening' => ['N', ['N' => 'AK32.K32.Q32.432'], ['1C']],
+      'a 1NT opening' => ['N', ['N' => 'AK2.KQ2.A432.432'], ['1NT']],
+      'a simple raise' => ['S', ['N' => 'K32.Q432.K32.432'], ['1H', 'P', '2H']],
+      'a new suit answer' => ['S', ['N' => 'KQ32.32.A432.432'], ['1C', 'P', '1S']],
+      'an overcall' => ['W', ['N' => '32.AKJ32.432.432', 'W' => 'AK54.Q65.65.K765'], ['1C', '1H']],
+      'a takeout double' => ['W', ['N' => 'QJ32.AK32.KQ32.2', 'W' => 'AK54.Q65.65.K765'], ['1C', 'X']],
+      'a pass' => ['N', ['N' => '432.432.5432.432'], ['P']],
+    ];
+  }
+
+  /**
+   * @param  array<string, string>  $hands
+   * @param  list<string>  $auction
+   */
+  #[DataProvider('robotNaturalCalls')]
+  public function test_a_robots_natural_call_is_not_alerted(string $dealer, array $hands, array $auction): void
+  {
+    $this->partnersTable($dealer, $hands);
+    $this->bid($dealer, $auction);
+
+    $index = count($auction) - 1;
+    $state = $this->state('E')->assertJsonPath('data.turn', 'E')->json('data.auction');
+
+    $this->assertSame($auction, array_map(fn ($call) => $call['bid']['call'], $state));
+    $this->assertSame('N', $state[$index]['seat']);
+    $this->assertNull($state[$index]['alert']);
     $this->state('S')->assertJsonPath("data.auction.$index.alert", null);
+    $this->assertFalse(Auction::orderBy('id')->get()[$index]->alerted);
+    Event::assertNotDispatched(CallAlerted::class);
+  }
+
+  public function test_a_robots_alert_reaches_all_three_humans(): void
+  {
+    $this->partnersTable('N', ['N' => 'AKQ2.AKQ2.AK2.A2'], humans: ['E', 'S', 'W']);
+    $this->driveRobots();
+
+    $explanation = 'Strong 2♣: 22+ HCP, artificial, forcing';
+    $this->assertAlertedTo(['E', 'S', 'W'], 0, $explanation);
+
+    foreach (['E', 'S', 'W'] as $seat) {
+      $this->state($seat)->assertJsonPath('data.auction.0.alert', ['explanation' => $explanation]);
+    }
+  }
+
+  public function test_a_humans_alert_never_reaches_a_robot_partner(): void
+  {
+    // S, a human, alerts their 1C opposite robot N: E (human) is told, the
+    // robot's own state doesn't show it
+    $this->partnersTable('S', ['N' => '432.432.5432.432']);
+
+    $this->makeCall('S', '1C', ['explanation' => self::PRECISION])->assertCreated();
+    $this->driveRobots();
+
+    $this->assertAlertedTo(['E'], 0, self::PRECISION);
+    $this->state('E')->assertJsonPath('data.auction.0.alert', ['explanation' => self::PRECISION]);
+
+    $robot = User::whereKey(Auction::orderBy('id')->skip(2)->first()->user_id)->sole();
+    $this->assertTrue($robot->is_robot);
+    $this->assertNull(app(PlayingStateService::class)->stateFor($this->table, $robot)['auction'][0]['alert']);
+  }
+
+  public function test_a_robots_alerts_are_not_shown_again_when_the_auction_ends(): void
+  {
+    // N 1NT, S Stayman, N's alerted 2♦, S 3NT: S had N's alert at once
+    $this->partnersTable('N', ['N' => 'AK2.KQ2.A432.432']);
+    $this->bid('N', ['1NT', 'P', '2C', 'P', '2D', 'P', '3NT', 'P', 'P', 'P']);
+
+    $this->state('S')
+      ->assertJsonPath('data.phase', 'play')
+      ->assertJsonPath('data.auction.4.alert', ['explanation' => 'Stayman answer: no four-card major']);
+
+    // N is a robot, and W's partner E alerted nothing: nobody is told
+    $this->assertAlertedTo(['E', 'S'], 4, 'Stayman answer: no four-card major');
+    Event::assertNotDispatched(AuctionAlertsShown::class);
+  }
+
+  public function test_a_robots_answer_to_a_question_reaches_its_partner_too(): void
+  {
+    // N's 1NT isn't alerted; E asks, and N's answer reaches S as well
+    $this->partnersTable('N', ['N' => 'AK2.KQ2.A432.432']);
+    $this->driveRobots();
+
+    $this->ask('E', 0)->assertOk()->assertJsonPath('message', 'Question answered.');
+
+    $this->assertAlertedTo(['E', 'S'], 0, 'Opening: 15–17 HCP, balanced');
+    $this->state('S')->assertJsonPath('data.auction.0.alert', ['explanation' => 'Opening: 15–17 HCP, balanced']);
+
+    // a question is still the opponents' alone
+    $this->ask('S', 0)
+      ->assertStatus(409)
+      ->assertJsonPath('message', "Ask the opponents about their own calls: that call is your side's.");
+  }
+
+  public function test_a_kibitzer_still_sees_no_robots_explanation_during_the_auction(): void
+  {
+    $this->partnersTable('N', ['N' => 'AKQ2.AKQ2.AK2.A2']);
+    $this->driveRobots();
+
+    $kibitzer = User::factory()->create();
+    $this->actingAs($kibitzer)->postJson("/tables/{$this->table->id}/kibitzers")->assertSuccessful();
+
+    $this->actingAs($kibitzer)->getJson("/tables/{$this->table->id}/playing")
+      ->assertOk()
+      ->assertJsonPath('data.auction.0.alert', ['explanation' => null]);
   }
 
   /**
@@ -515,15 +634,16 @@ class BidAlertTest extends TestCase
   }
 
   /**
-   * Humans E and S, robots N and W, `$dealer` dealing: N holds its hand
-   * (spades.hearts.diamonds.clubs), W its own or else the 13 smallest
-   * cards left, and the humans the rest.
+   * Humans E and S (or `$humans`), robots in the other seats, `$dealer`
+   * dealing: N holds its hand (spades.hearts.diamonds.clubs), W its own or
+   * else the 13 smallest cards left, and E and S the rest.
    *
    * @param  array<string, string>  $hands
+   * @param  list<string>  $humans
    */
-  private function partnersTable(string $dealer, array $hands): void
+  private function partnersTable(string $dealer, array $hands, array $humans = ['E', 'S']): void
   {
-    foreach (['E', 'S'] as $seat) {
+    foreach ($humans as $seat) {
       $this->players[$seat] = User::factory()->create();
     }
 
@@ -563,6 +683,26 @@ class BidAlertTest extends TestCase
 
     foreach ($seats as $card => $seat) {
       DB::table('board_card')->where('board_id', $this->table->board_id)->where('card_id', $card)->update(['seat' => $seat]);
+    }
+  }
+
+  /**
+   * The calls of `$auction` in turn from `$dealer`: the humans' through the
+   * endpoint, the robots' made by themselves (the caller checks them).
+   *
+   * @param  list<string>  $auction
+   */
+  private function bid(string $dealer, array $auction): void
+  {
+    $seat = $dealer;
+
+    foreach ($auction as $call) {
+      if (isset($this->players[$seat])) {
+        $this->makeCall($seat, $call)->assertCreated();
+      }
+
+      $this->driveRobots();
+      $seat = Seats::next($seat);
     }
   }
 
