@@ -91,7 +91,7 @@ the same pattern:
 
 | Service | Responsible for | Tests |
 |---|---|---|
-| `TableSeatService` | joining, moving, leaving and kicking (`seat()`, `leave()`, `remove()`), heartbeats (`touch()`), freeing idle seats (`releaseIdleSeats()`), the away rule and turn clock (`checkAway()`), a robot taking the seat of a player who walks out on a set (`replaceWithRobot()`, `walksOut()`) and deleting unattended tables (`deleteUnattendedTables()`) | `tests/Feature/Table*` |
+| `TableSeatService` | joining, moving, leaving and kicking (`seat()`, `leave()`, `remove()`, `kick()`), heartbeats (`touch()`), freeing idle seats (`releaseIdleSeats()`), the away rule and turn clock (`checkAway()`), a robot taking the seat of a player who walks out on a set (`replaceWithRobot()`, `walksOut()`) and deleting unattended tables (`deleteUnattendedTables()`) | `tests/Feature/Table*` |
 | `KibitzerService` | kibitzers, people watching a table without a seat (`table_kibitzers`): `watch()` (403 when the table doesn't allow it, 409 while seated anywhere; watching another table moves the row), `stop()`, `stopWatching()` (from `TableSeatService::seat()` and `UserBanService::ban()`), `touch()` (the heartbeat), `admit()` (a player the Start timer unseats stays as a kibitzer), `removeAll()` (`allow_kibitzers` turned off, `UnseatedFromTable` to each) and `releaseIdle()` (`tables:release-idle-seats`); every change sends `TableUpdated` | `tests/Feature/Table/KibitzerTest` |
 | `BoardSelectionService` | which board a table plays and when: Start (`start()`, `withdrawStart()`, the Start timer `syncStartDeadline()`, `revokeStarts()` on a new set time), deals once a full table's humans have all pressed it (`startIfReady()`) as the first board of a new set, moves on after a finished board within the set (by itself after `bridge.next_board_seconds`, `dealNext()` from the queued `App\Jobs\DealNextBoard`, or at once once every human asked, `moveOn()`), detaches a board abandoned mid-play (`abandonPlaying()`) and ends a set one of its players left (`abandonSet()`) | `tests/Feature/Table/StartBoardTest`, `StartTimerTest`, `AssignBoardTest`, `AwayMidSetTest`, `tests/Feature/Game/TurnTimerTest`, `tests/Feature/Game/NextBoardTest`, `AutoNextBoardTest`, `BoardSetTest` |
 | `PlayingStateService` | the one place that works out a playing's phase, calls, cards, turn, who acts (`actingUserId()`, with `dummyPlaysForDeclarer()`: a human dummy plays a robot declarer's cards), the hands, dummy and a human dummy's `declarer_hand` | feature tests (`HumanDummyPlaysTest` for the human dummy) |
@@ -116,7 +116,10 @@ Things worth knowing before you change them:
   locked lowest id first so two opposite moves can't deadlock. A unique-index
   violation (SQLSTATE 23000) becomes `SeatUnavailableException`. `seat()`
   and `remove()` take an optional `$by`, the acting user, for when a manager
-  seats or kicks somebody else.
+  seats or kicks somebody else. A kick goes through `kick()`, which refuses
+  it (`KickRefusedException`, 409) while the table's set is running, robots
+  included, unless an admin kicks or the target is a robot at an
+  unattended table; it checks under the table lock, then calls `remove()`.
 - **Leaving** is the same code whether the player quit, was kicked or timed
   out: `remove()` deletes the table if that was the last player, otherwise
   hands `moderated_by` on (to the **human** seated there longest, never
@@ -158,9 +161,9 @@ Things worth knowing before you change them:
   completes the set on its last board — after which `moveOn()` 409s and
   `start()` accepts a Start even with the same four seated. `remove()` ends
   an unfinished set as `abandoned` (`abandonSet()`, which records the
-  leaver as `ended_by` unless a manager kicked them while there), even between boards —
+  leaver as `ended_by` unless an admin kicked them while there), even between boards —
   unless the leaver walked out on it (ran out of time on their turn or for the set, moved
-  to another table, was kicked while away or banned) and another human
+  to another table, was kicked by an admin while away or banned) and another human
   stays: then `replaceWithRobot()` sits a `RobotPool` robot in the seat,
   hands it the set's seat (`table_set_seats.replaced_user_id`/`_reason`)
   and the open board's hand (`board_table_seats.replaced_user_id`, which
@@ -316,7 +319,9 @@ Policies in `app/Policies/` are auto-discovered.
   `RemoveUserFromSeatRequest::authorize()` through `Gate::inspect()` so the
   403 names the reason) lets anyone take their own seat, a manager anyone
   else's, and anyone a robot's at an unattended table — except an admin's,
-  which only the admin or another admin may take.
+  which only the admin or another admin may take. That a set is running is
+  not the policy's business (it would be a 403): `TableSeatService::kick()`
+  answers a manager's kick mid-set with a 409.
 - `TablePolicy::play` limits every action at a table (Start, Next, calls,
   cards, claims, the chat) to players seated there; `TablePolicy::watch`
   (`play`, or a kibitzer of the table) gates the game state — a kibitzer's

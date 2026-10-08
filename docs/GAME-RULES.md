@@ -639,8 +639,9 @@ partner doesn't lose for it:
 - Pressing **Leave** mid-set counts as going away (held for 2 minutes; they
   may come back before then). **Moving** to another table
   mid-set is walking out too: a robot takes the seat at once (`moved`), and
-  so it does when a manager **kicks** a player who is away, or an admin
-  bans a player (`kicked`).
+  so it does when an admin **kicks** a player who is away, or bans a
+  player (`kicked`). Nobody else may kick a player mid-set, robots
+  included (409): an away player is replaced at their `replace_at`.
 - Robots are never away and have no clock.
 - **Admins** are never replaced: an admin has no clock (the table just
   waits for them), an absent admin is shown away but their seat is never
@@ -684,7 +685,7 @@ player stats (#121); today it is only recorded on the set.
 
 A set ends **early**, with no winner, when one of its four players is taken
 out of the table before its last board is finished other than by walking
-out (`ended: abandoned`): a kick of a player who is there, leaving while an
+out (`ended: abandoned`): an admin's kick of a player who is there, leaving while an
 admin is away, an admin leaving — or by walking out with no other human
 left. The board in play is abandoned as before (detached); the next board
 waits for everyone's Start and opens a new set. Outside a set nothing of this applies: Leave is immediate and the
@@ -759,8 +760,9 @@ Over HTTP:
   longest, and the last player out deletes the table. A table manager
   can seat another user (`POST /tables/{table}/seats/users`) or a robot
   (`POST /tables/{table}/seats/robots`, §9), or kick a player
-  (`DELETE /tables/{table}/seats/{user}`); a kick is not recorded, so the
-  player may rejoin at once.
+  (`DELETE /tables/{table}/seats/{user}`) — never in the middle of a set,
+  when only an admin may; a kick is not recorded, so the player may rejoin
+  at once.
 - Once dealt, the board can be **seen**: `GET /tables/{table}/playing`
   (`PlayingStateService`) gives each seated player the phase, board number,
   dealer, vulnerability, the four players from the `board_table_seats`

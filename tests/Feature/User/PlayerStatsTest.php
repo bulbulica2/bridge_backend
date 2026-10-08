@@ -171,11 +171,10 @@ class PlayerStatsTest extends TestCase
     // off to another table
     $this->actingAs($mover)->postJson('/tables/'.Table::factory()->create(['board_id' => null])->id.'/seats', ['seat' => 'N'])->assertCreated();
 
-    // away, then kicked by the one human left
-    $moderator = $players[Seats::partner($turn)];
-    $table->update(['moderated_by' => $moderator->id]);
+    // away, then kicked by an admin, the one human left playing on
+    $partner = $players[Seats::partner($turn)];
     $this->actingAs($kicked)->deleteJson("/tables/{$table->id}/seats")->assertStatus(202);
-    $this->actingAs($moderator)->deleteJson("/tables/{$table->id}/seats/{$kicked->id}")->assertOk();
+    $this->actingAs(User::factory()->create(['is_admin' => true]))->deleteJson("/tables/{$table->id}/seats/{$kicked->id}")->assertOk();
 
     $this->assertNull(TableSet::sole()->finished_at);
     $this->stats($late)->assertJsonPath('data.leaving.abandoned_by_reason.turn_timeout', 1);
@@ -186,7 +185,7 @@ class PlayerStatsTest extends TestCase
       ->assertJsonPath('data.leaving.left_rate', 1);
 
     // never the partner they left behind
-    $this->stats($moderator)->assertJsonPath('data.leaving.abandoned', 0);
+    $this->stats($partner)->assertJsonPath('data.leaving.abandoned', 0);
   }
 
   public function test_leaving_a_set_that_then_ends_abandoned_counts_against_whoever_left(): void
@@ -217,11 +216,10 @@ class PlayerStatsTest extends TestCase
     $this->assertSame($players['S']->id, TableSet::sole()->ended_by);
     $this->stats($players['S'])->assertJsonPath('data.leaving.abandoned_by_reason.left', 1);
 
-    // a new set, and the moderator kicks somebody who is there
+    // a new set, and the admin kicks somebody who is there
     app(TableSeatService::class)->seat($table, $players['S'], 'S');
     $this->startBoard($table->refresh());
-    $table->update(['moderated_by' => $players['N']->id]);
-    $this->actingAs($players['N'])->deleteJson("/tables/{$table->id}/seats/{$players['E']->id}")->assertOk();
+    $this->actingAs($players['S'])->deleteJson("/tables/{$table->id}/seats/{$players['E']->id}")->assertOk();
 
     $set = TableSet::latest('id')->first();
     $this->assertSame([TableSet::ENDED_ABANDONED, null], [$set->ended, $set->ended_by]);
