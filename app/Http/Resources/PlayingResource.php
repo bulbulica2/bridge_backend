@@ -30,7 +30,8 @@ use Illuminate\Http\Resources\Json\JsonResource;
  * over, so `stateFor()` adds them per viewer (`PlayingStateService::alerts()`).
  *
  * `forReview()` serves a finished playing after the fact
- * (`GET /playings/{playing}`), away from any live table, with every call's
+ * (`GET /playings/{playing}`), away from any live table, with only the
+ * board's place in its set (`setPlace()`), every call's
  * alert, the board's whole chat (`messages`) and its double dummy analysis
  * (`double_dummy`, `DoubleDummyService::forPlaying()`).
  */
@@ -43,7 +44,8 @@ class PlayingResource extends JsonResource
    * asked for the next board, `next_board_at`, when it is dealt, and
    * `turn_started_at`, `turn_deadline` and `turn_deadline_by`, when the
    * board began waiting for the player on turn, when they run out of time
-   * and which clock that is. Add
+   * and which clock that is, and of `set` all but the board's place in it
+   * (`setPlace()`). Add
    * each call's `alert` and the board's chat, `messages`, all public once
    * the board is over, and the double dummy analysis, `double_dummy`.
    */
@@ -100,7 +102,10 @@ class PlayingResource extends JsonResource
     return [
       'phase' => $state->phase($playing),
       'playing_id' => $playing->id,
-      'set' => $playing->tableSet === null ? null : self::set($playing->tableSet, (int) $playing->set_position),
+      // a review only places the board in its set, as the history does
+      'set' => $this->live
+        ? ($playing->tableSet === null ? null : self::set($playing->tableSet, (int) $playing->set_position))
+        : self::setPlace($playing),
       'board' => [
         'id' => $playing->board->id,
         'number' => $playing->board->number,
@@ -186,6 +191,26 @@ class PlayingResource extends JsonResource
       'replaced' => $set->replacements(),
       'minutes' => $set->minutes,
       'time_left' => self::timeLeft($set),
+    ];
+  }
+
+  /**
+   * Which board of its set a playing was, `{id, number, board, of}` — the
+   * first four fields of `set()` — or null for a playing outside any set.
+   * What a review and a history row show: nothing about the set's clock or
+   * how it ended, which only mean something at a live table.
+   *
+   * @return array{id: int, number: int, board: int, of: int}|null
+   */
+  public static function setPlace(BoardTable $playing): ?array
+  {
+    $set = $playing->tableSet;
+
+    return $set === null ? null : [
+      'id' => (int) $set->id,
+      'number' => $set->number,
+      'board' => (int) $playing->set_position,
+      'of' => $set->size,
     ];
   }
 

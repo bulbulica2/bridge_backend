@@ -229,12 +229,7 @@ class BoardResultsService
           'playing_id' => $playing->id,
           'table_id' => $playing->table_id,
           // to group the history by set (GET /sets/{set} has its results)
-          'set' => $playing->tableSet === null ? null : [
-            'id' => $playing->tableSet->id,
-            'number' => $playing->tableSet->number,
-            'board' => $playing->set_position,
-            'of' => $playing->tableSet->size,
-          ],
+          'set' => PlayingResource::setPlace($playing),
           'board' => self::board($playing->board),
           'seat' => $seat,
           'partner' => $partner === null ? null : new UserResource($partner),
