@@ -18,6 +18,7 @@ class TableSeat extends Model
     'seat',
     'last_seen_at',
     'ready_at',
+    'start_deadline',
     'away_since',
     'replace_at',
   ];
@@ -27,6 +28,7 @@ class TableSeat extends Model
     return [
       'last_seen_at' => 'datetime',
       'ready_at' => 'datetime',
+      'start_deadline' => 'datetime',
       'away_since' => 'datetime',
       'replace_at' => 'datetime',
     ];

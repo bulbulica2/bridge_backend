@@ -92,7 +92,7 @@ the same pattern:
 | Service | Responsible for | Tests |
 |---|---|---|
 | `TableSeatService` | joining, moving, leaving and kicking (`seat()`, `leave()`, `remove()`), heartbeats (`touch()`), freeing idle seats (`releaseIdleSeats()`), the away rule and turn clock (`checkAway()`), a robot taking the seat of a player who walks out on a set (`replaceWithRobot()`, `walksOut()`) and deleting unattended tables (`deleteUnattendedTables()`) | `tests/Feature/Table*` |
-| `BoardSelectionService` | which board a table plays and when: Start (`start()`, `withdrawStart()`), deals once a full table's humans have all pressed it (`startIfReady()`) as the first board of a new set, moves on after a finished board within the set (by itself after `bridge.next_board_seconds`, `dealNext()` from the queued `App\Jobs\DealNextBoard`, or at once once every human asked, `moveOn()`), detaches a board abandoned mid-play (`abandonPlaying()`) and ends a set one of its players left (`abandonSet()`) | `tests/Feature/Table/StartBoardTest`, `AssignBoardTest`, `AwayMidSetTest`, `tests/Feature/Game/TurnTimerTest`, `tests/Feature/Game/NextBoardTest`, `AutoNextBoardTest`, `BoardSetTest` |
+| `BoardSelectionService` | which board a table plays and when: Start (`start()`, `withdrawStart()`, the Start timer `syncStartDeadline()`, `revokeStarts()` on a new set time), deals once a full table's humans have all pressed it (`startIfReady()`) as the first board of a new set, moves on after a finished board within the set (by itself after `bridge.next_board_seconds`, `dealNext()` from the queued `App\Jobs\DealNextBoard`, or at once once every human asked, `moveOn()`), detaches a board abandoned mid-play (`abandonPlaying()`) and ends a set one of its players left (`abandonSet()`) | `tests/Feature/Table/StartBoardTest`, `StartTimerTest`, `AssignBoardTest`, `AwayMidSetTest`, `tests/Feature/Game/TurnTimerTest`, `tests/Feature/Game/NextBoardTest`, `AutoNextBoardTest`, `BoardSetTest` |
 | `PlayingStateService` | the one place that works out a playing's phase, calls, cards, turn, who acts (`actingUserId()`, with `dummyPlaysForDeclarer()`: a human dummy plays a robot declarer's cards), the hands, dummy and a human dummy's `declarer_hand` | feature tests (`HumanDummyPlaysTest` for the human dummy) |
 | `AuctionService` | one call (`call()`, with its self-alert), a question about a call (`ask()`) and its bidder's answer (`explain()`), both also written into the chat; `nextToCall`, `illegalReason`, `isOver`, `result` | `tests/Unit/AuctionServiceTest`, `tests/Feature/Game/BidAlertTest` |
 | `BoardChatService` | the board's chat: who may read a message (`messagesFor()`, `BoardMessage::visibleTo()`: never partner's `opponents` message until the board is finished), sending one (`send()`: `table` or `opponents` in every phase, a robot answering a question about its call with `robotReading()` or, as a defender, about its card with `RobotCarding::explain()`), and `post()`, which writes a message and pushes it to its human readers — `AuctionService` writes its questions and answers through it | `tests/Feature/Game/BoardChatTest` |
@@ -132,7 +132,16 @@ Things worth knowing before you change them:
   ([`GAME-RULES.md` §8](GAME-RULES.md#8-game-flow-checklist-for-implementers))
   needs all four players' history. `startIfReady()` runs on every Start and
   every `seat()` (a robot can be the one that completes the table); dealing
-  clears the humans' Start. While the same four sit there, a finished board
+  clears the humans' Start. Nobody holds a full table up: outside a set,
+  once every seat but one human's is ready and another human is,
+  `syncStartDeadline()` (run under the table lock after every Start,
+  withdrawal, `seat()` and `remove()`) gives that seat a
+  `table_seats.start_deadline` `bridge.start_seconds` (15) ahead and
+  queues `App\Jobs\ExpireStart`, whose `TableSeatService::expireStart()`
+  frees the seat through `remove()` if the deadline is still there and
+  past, and tells the player `UnseatedFromTable`. A `PATCH
+  /tables/{table}` that changes `set_minutes` revokes every human's Start
+  (`revokeStarts()`). While the same four sit there, a finished board
   of a set is followed by its next board `bridge.next_board_seconds` later
   (`BoardTable::finish()` queues `App\Jobs\DealNextBoard`, which runs
   `dealNext()`; `PlayingStateService::nextBoardAt()` is the state's
@@ -334,6 +343,7 @@ to run it: [`RUNNING.md`](RUNNING.md#realtime-reverb)).
 | `CallQuestioned` | `App.Models.User.{id}` | `index` of the call, `asked_by` | an opponent asks about a human's call: to its bidder only (`AuctionService::ask()`) |
 | `BoardMessageSent` | `App.Models.User.{id}` | `table_id`, `playing_id` and the chat `message` (`BoardMessageResource`) | a chat message is written (sent, a robot's answer, or an alert question or answer): to each human seated at the table who may read it, the sender included — all four for a `table` message, never partner for an `opponents` one during the board, never the table channel (`BoardChatService::post()`) |
 | `UserBanned` | `App.Models.User.{id}` | the ban: `reason`, `until`, `banned_at` | an admin bans that user, so their open client logs out |
+| `UnseatedFromTable` | `App.Models.User.{id}` | `table_id`, `reason` (`start_timeout`), `kibitzing` (false) | `TableSeatService::expireStart()` freed their seat: they didn't press Start by its `start_deadline` |
 
 - Events implement `ShouldBroadcast` (queued, so a Reverb outage fails a
   queued job, not the player's request) and `ShouldDispatchAfterCommit`
@@ -395,7 +405,10 @@ Three long-running processes sit next to `php artisan serve`:
   worker, see below) and
   deals a set's next board when its pause is up (`App\Jobs\DealNextBoard`,
   dispatched the same way from `BoardTable::finish()` with a delay up to
-  `next_board_at`). It also solves the double dummy analysis
+  `next_board_at`), and frees the seat of a player who didn't press Start
+  in time (`App\Jobs\ExpireStart`, dispatched the same way by
+  `BoardSelectionService::syncStartDeadline()` with a delay up to the
+  seat's `start_deadline`; no fallback without a worker). It also solves the double dummy analysis
   (`App\Jobs\SolveDoubleDummyTable` when a board is dealt,
   `App\Jobs\SolveOpeningLeads` when a playing finishes; see
   [Game services](#game-services)), the only place DDS ever runs.
@@ -530,9 +543,10 @@ rules refuse (`RobotFallbackTest`).
   request on the playing or `tables:check-away`, just not on the second.
 - **Delayed jobs run at once in the tests.** The `sync` queue ignores
   `delay`, so `ExpireClaim` runs the moment its claim is made and
-  `DealNextBoard` the moment its board finishes and, not due yet, they do
-  nothing. Tests travel in time and run the job themselves
-  (`ClaimTest::runJob()`, `AutoNextBoardTest::runJob()`).
+  `DealNextBoard` the moment its board finishes (and `ExpireStart` the
+  moment its timer starts) and, not due yet, they do nothing. Tests travel
+  in time and run the job themselves (`ClaimTest::runJob()`,
+  `AutoNextBoardTest::runJob()`, `StartTimerTest`).
 - **2-space indentation**, including PHP (`.editorconfig`). Pint can't indent
   with 2 spaces, so `pint.json` turns its indentation fixers off: Pint
   neither catches nor fixes bad indentation. Don't remove those rules, or a

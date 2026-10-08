@@ -236,8 +236,16 @@ to the current time; cast to datetime — also set by a `creating` hook, so a
 fresh seat is never idle), `ready_at` (nullable timestamp, cast to datetime:
 when the seat's player pressed Start, `POST /tables/{table}/start`; a robot's
 is set as it sits down, a human's starts null and is cleared again by a seat
-change at the same table and by every deal; `TableSeatResource` shows it as
-`ready`), `away_since` (nullable timestamp, cast to datetime: set only in
+change at the same table, by every deal and by a `PATCH /tables/{table}`
+that changes `set_minutes` (`BoardSelectionService::revokeStarts()`);
+`TableSeatResource` shows it as `ready`), `start_deadline` (nullable
+timestamp, cast to datetime: the **Start timer**, kept by
+`BoardSelectionService::syncStartDeadline()` after every seat or Start
+change — outside a set, at a full table where every seat but this human's
+is ready and at least one other human is, now + `bridge.start_seconds`
+(15), null on every other seat and at every other time; the queued
+`ExpireStart` frees the seat once it has passed,
+`TableSeatService::expireStart()`), `away_since` (nullable timestamp, cast to datetime: set only in
 the middle of a set, while the player is **away** — to their `last_seen_at`
 once `tables:check-away` notices a minute without a sign of life, or to now
 when they press Leave; cleared by any sign of life (`touch()`)) and
@@ -283,7 +291,8 @@ Seats are managed through `App\Services\TableSeatService`:
   - A new row gets `ready_at` set for a robot and null for a human, then
     `BoardSelectionService::startIfReady()` runs: a robot filling the fourth
     seat after every human pressed Start deals the board; a human sitting
-    down never does.
+    down never does, but may start the Start timer (`start_deadline`) for
+    themselves, the last one not ready.
   - `$by` is the acting user when that isn't the user being seated. A manager
     may only seat somebody who sits nowhere: pulling a player off a table they
     chose would abandon that table's board for three other people, so it stays

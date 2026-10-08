@@ -544,7 +544,10 @@ they played at is gone.
 **In code:** `App\Services\BoardSelectionService::startIfReady()`, called by
 `start()` (`POST /tables/{table}/start`) and by `TableSeatService::seat()`,
 which deals once the table is full and every seat's Start is set
-(`table_seats.ready_at`; robots' from the moment they sit down). It applies rule
+(`table_seats.ready_at`; robots' from the moment they sit down). The last
+human not ready, once another human is, has `bridge.start_seconds` (15,
+`table_seats.start_deadline`, `syncStartDeadline()`) to press it, or their
+seat is freed (`ExpireStart`). It applies rule
 1, then rule 2 — both over the human players' history only, robots being
 left out (§9) — and if neither leaves a candidate it **deals a brand-new
 board** rather than repeating one — boards are only shuffled deals, so the app

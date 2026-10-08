@@ -12,6 +12,7 @@ use App\Events\DeclarerHandShown;
 use App\Events\HandDealt;
 use App\Events\PlayingUpdated;
 use App\Events\TableUpdated;
+use App\Events\UnseatedFromTable;
 use App\Events\UserBanned;
 use App\Http\Resources\PlayingResource;
 use App\Models\Auction;
@@ -165,7 +166,7 @@ class BroadcastSizeTest extends TestCase
     $this->longestAuction();
     $this->play(52);
     $this->finish();
-    $this->table->seats()->update(['ready_at' => now(), 'away_since' => now(), 'replace_at' => now(), 'last_seen_at' => now()]);
+    $this->table->seats()->update(['ready_at' => now(), 'start_deadline' => now(), 'away_since' => now(), 'replace_at' => now(), 'last_seen_at' => now()]);
     // robots took three seats over: the longest `replaced` a set can have
     // while a human is left to play with them
     TableSetSeat::query()->where('seat', '!=', 'N')->each(fn (TableSetSeat $seat) => $seat->update([
@@ -177,6 +178,7 @@ class BroadcastSizeTest extends TestCase
     $this->assertCount(3, $table['set']['replaced']);
     $this->assertNotNull($table['seats'][0]['away_since']);
     $this->assertNotNull($table['seats'][0]['replace_at']);
+    $this->assertNotNull($table['seats'][0]['start_deadline']);
 
     $this->assertFits(new TableUpdated($this->table));
   }
@@ -248,6 +250,11 @@ class BroadcastSizeTest extends TestCase
     ]);
 
     $this->assertFits(new UserBanned($ban));
+  }
+
+  public function test_being_unseated_fits(): void
+  {
+    $this->assertFits(new UnseatedFromTable($this->players['N']->id, $this->table->id, UnseatedFromTable::REASON_START_TIMEOUT));
   }
 
   public function test_the_broadcast_decodes_back_to_the_public_state(): void

@@ -107,7 +107,16 @@ class TableController extends BaseController
         return false;
       }
 
-      $table->update(['set_minutes' => $request->validated('set_minutes')]);
+      $minutes = (int) $request->validated('set_minutes');
+
+      // the same value changes nothing, nobody's Start included
+      if ($minutes === $table->set_minutes) {
+        return true;
+      }
+
+      $table->update(['set_minutes' => $minutes]);
+      // a Start pressed for the old set time isn't one for the new
+      $boards->revokeStarts($table);
 
       TableUpdated::dispatch($table);
 
