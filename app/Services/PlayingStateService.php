@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\auxiliary\Seats;
 use App\Http\Resources\PlayingResource;
+use App\Models\Auction;
 use App\Models\Bid;
 use App\Models\Board;
 use App\Models\BoardTable;
@@ -304,6 +305,8 @@ class PlayingStateService
    * `question` (`{asked_by}`, the opponent whose question about it is still
    * open) for their own calls and the opponents', but null for partner's
    * during the auction: seeing those would be unauthorised information.
+   * A robot partner's alerts show all the same (`robotCalled()`), since its
+   * human partner has to learn its system at the table; its questions don't.
    * Once the auction is over every alert is open to the four players, while
    * partner's questions stay hidden; once the board is finished every alert
    * is public, to anyone (`$seat` null too), and no question is open any
@@ -320,9 +323,9 @@ class PlayingStateService
 
     return $playing->auctions
       ->sortBy('id')
-      ->map(function ($call) use ($seat, $finished, $ended, $watching) {
+      ->map(function ($call) use ($playing, $seat, $finished, $ended, $watching) {
         $notPartners = $seat !== null && $call->seat !== Seats::partner($seat);
-        $sees = $finished || $notPartners || ($ended && $seat !== null);
+        $sees = $finished || $notPartners || ($seat !== null && ($ended || self::robotCalled($playing, $call)));
 
         return [
           'alert' => match (true) {
@@ -336,6 +339,17 @@ class PlayingStateService
       })
       ->values()
       ->all();
+  }
+
+  /**
+   * Whether a robot made `$call`: its user holds a seat of the snapshot
+   * and is a robot. A human a robot replaced isn't in the snapshot any
+   * more (`board_table_seats.replaced_user_id`), so their calls stay a
+   * human's.
+   */
+  public static function robotCalled(BoardTable $playing, Auction $call): bool
+  {
+    return (bool) $playing->seats->firstWhere('user_id', $call->user_id)?->user?->is_robot;
   }
 
   /**

@@ -145,43 +145,76 @@ Each call's meaning has a short **explanation**:
 
 ### Alerts
 
-A robot **alerts** its conventional and artificial calls to the opponents,
-with the explanation above, as a human does with `alert` on
-`POST /tables/{table}/calls` ([`API.md`](API.md#alerts)). Which calls those
-are is marked on the rule itself in `BiddingSystem` (`alert: true` on its
-`BidMeaning`), and `RobotBidder::bid()` returns it as `alert`:
+A robot **alerts** every call whose meaning the call alone doesn't say —
+artificial, conventional, asking, or a range or length a natural reading
+wouldn't give — with the explanation above, as a human does with `alert`
+on `POST /tables/{table}/calls` ([`API.md`](API.md#alerts)). Which calls
+those are is marked on the rule itself in `BiddingSystem` (`alert: true`
+on its `BidMeaning`), and `RobotBidder::bid()` returns it as `alert`:
 
-- **Stayman** (2♣/3♣ over 1NT/2NT) — but not the answer to it;
-- **Jacoby transfers** (2♦/2♥, 3♦/3♥) and the **super-accept** — but not
-  the plain completion of a transfer;
-- the **strong 2♣** opening and the **2♦ waiting** answer;
-- **Gerber** (4♣ over no trump) and **Blackwood** (4NT), and the **ace
-  answers** to either;
-- **fourth suit forcing**;
-- the advancer's **cue bid** of opener's suit
-  ([§8](#8-advancing-partner-overcalled-or-doubled)) — but not the
-  overcaller's answer to it;
-- the **negative double**;
+- **Openings**: the **strong 2♣**; **weak twos** (2♦/2♥/2♠, 5–11 HCP);
+  **preempts** (three of a suit, four of a major, 5–10 HCP);
+- **over partner's no trump**: **Stayman** (2♣/3♣) and its **2♦ answer**
+  (no four-card major; 2♥/2♠ are natural); **Jacoby transfers** (2♦/2♥,
+  3♦/3♥), the **completion** of a transfer (it says nothing about the
+  major) and the **super-accept**; 3NT as a **choice of games** after a
+  transfer (five of the major), and 3NT with four spades over the 2♥
+  answer to Stayman; the **quantitative 4NT** (directly, after Stayman or
+  a transfer, and later opposite a narrow no trump range); **Gerber**;
+- **after 2♣**: the **2♦ waiting** answer, and responder's **2NT
+  negative** (0–7 HCP) and **weak raise to game** (0–7 HCP) over opener's
+  suit;
+- **responses to one of a suit**: the **jump shift** (19+ HCP, forcing to
+  game), the **limit raise** (three of opener's suit, 11–12), the **game
+  raise** of a major (13+, not a preempt), the **2NT** (13–15, balanced)
+  and **3NT** (16–18, balanced) answers;
+- **opener's rebids**: the **reverse** (17–18, forcing), opener's **jump
+  shift** (19–21, forcing to game) and **jump raise of partner's minor**
+  (19–21, forcing to game);
+- **competing**: the **weak jump overcall** (5–10), the **balancing 1NT**
+  (11–14), the advancer's **jump raise** of partner's overcall
+  (invitational, not preemptive), the advancer's **cue bid** of opener's
+  suit ([§8](#8-advancing-partner-overcalled-or-doubled)) and the
+  overcaller's **extra values** answer to it (a new suit, no trump or a
+  jump in their suit; 14+); the **negative double**;
+- **slams**: **Blackwood** (4NT) and the **ace answers** to it or to
+  Gerber; **fourth suit forcing**;
 - every **penalty double**: of no trump (their 1NT/2NT opening, a 1NT
   overcall of partner's opening, their no trump later on) and of a suit
   (their bid over partner's no trump, and a low contract later on), since
   a low double of a suit is takeout or negative unless said otherwise.
 
-`tests/Feature/Game/BidAlertTest` has a robot make each of these (but
-the super-accept and the later double of their no trump) at a table and
-checks its human opponent gets the alert (`CallAlerted` and
-`alert` in their state) while its human partner doesn't, until the
-auction is over.
+Plainly natural calls aren't alerted — one of a suit and the 1NT/2NT
+openings, simple raises, a new suit, the 1NT answer, opener's no trump and
+suit rebids, overcalls (the 1NT overcall too), the takeout double,
+natural no trump and game bids, the answers to a cue bid with a minimum,
+passes — nor is a call that fell back to a pass.
 
-Natural calls aren't alerted — openings, raises, overcalls, the takeout
-double, no trump bids, the quantitative 4NT, passes — nor is a call that
-fell back to a pass. Asked about **any** of its calls
+A robot's alert goes to the **opponents and to its human partner at
+once**, during the auction: a human partnered with a robot has to learn
+its system at the table, and the alert is how they learn what its 2♣ or
+4NT means while there is still bidding to do. The other way round stays
+as between humans: a human's alert goes to the opponents only, never to a
+robot partner during the auction (it reads every call through its own
+system anyway), and two human partners see each other's alerts only once
+the auction is over. Questions are still the opponents' alone, and a
+kibitzer still gets no explanation until the board is finished. When the
+auction ends, `AuctionAlertsShown` leaves out a robot partner's alerts,
+since the human had each one as it was made.
+
+`tests/Feature/Game/BidAlertTest` has a robot make most of these at a
+table and checks that its human opponent **and** its human partner get
+the alert (`CallAlerted` and `alert` in their state), that its natural
+calls aren't alerted, and that a human's alert still never reaches their
+partner; `tests/Unit/Robots/RobotBidderTest` checks each family above is
+alerted and each natural call isn't.
+
+Asked about **any** of its calls
 (`POST /tables/{table}/calls/{index}/question`), a robot answers at once,
 with `RobotBidder::read()`'s explanation of that call ("Natural" for one
-no rule makes), which alerts the call and goes to both opponents (to all
-four humans once the auction is over) — and, like the question, into the
-board's chat. A robot's alerts reach its human partner when the auction
-ends (`AuctionAlertsShown`), as a human's do.
+no rule makes), which alerts the call and goes to both opponents and its
+human partner (to all four humans once the auction is over) — and, like
+the question, into the board's chat, to the opponents.
 
 ### Answering in the chat
 

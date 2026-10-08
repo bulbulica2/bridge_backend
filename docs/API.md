@@ -1030,7 +1030,7 @@ explanation shows as it does to the players; `question` is always `null`.
 | `turn_started_at` | when the board began waiting for `acting_user_id` (ISO 8601): the deal, the previous call or card, a claim made or cleared, or a robot taking a seat over. `set.time_left` is as of then: count the acting seat's bank down from it. `null` while `waiting`. Not in `GET /playings/{playing}` |
 | `turn_deadline` | when the turn of `acting_user_id` runs out (ISO 8601, like `claim.expires_at`): the earlier of their [turn clock](#away-mid-set-and-the-turn-clock), `BRIDGE_TURN_SECONDS` (60) after `turn_started_at` — for a player away, their seat's `replace_at` instead — and the end of their [time for the set](#the-set-clock). Past it, `tables:check-away` takes them out and a robot plays their seat for the rest of the set (`set.replaced` reason `"set_time"`, `"turn_timeout"` or `"away"`). Only a call, card or claim action moves it (and an away player coming back on their turn); a heartbeat or a chat line doesn't. `null` whenever nobody's clock runs: `waiting`, `finished` (between boards), a claim pending, or `acting_user_id` a robot or an admin. Count down from it, never from when the state arrived. In `PlayingUpdated` too; not in `GET /playings/{playing}` |
 | `turn_deadline_by` | which clock `turn_deadline` is: `"move"` (the turn clock), `"away"` (the player is away: their seat's `replace_at`) or `"set"` (the time for the set ends first, or with it); `null` whenever `turn_deadline` is. Not in `GET /playings/{playing}` |
-| `auction` | the calls made so far, in order: `{seat, bid, alert, question}`, where `bid` is `{id, call, level, strain, special}` — `call` is the short name (`P`, `X`, `XX`, `1C`…`7NT`) and the only field telling pass, double and redouble apart; `level`/`strain` are null for those three. `[]` before the first call. A call's place in this list (from 0) is its `index` in the [alert](#alerts) endpoints and events. `alert` and `question` are **per viewer** ([Alerts](#alerts)): for the caller's own calls and the opponents', `alert` is `{explanation}` (`explanation` a string, or null for "alerted, no description") once the call is alerted, else null, and `question` is `{asked_by}` (the asking opponent's seat) while a question about it is open, else null; for **partner's** calls both are null during the auction — partner seeing them would be unauthorised information. Once the auction is over (phase `play`) every call's `alert` shows to all four players, partner's included, while partner's `question` stays null. Once the board is `finished`, every call's `alert` shows, to everyone, and `question` is null. Neither field is ever on the table channel (`PlayingUpdated`) |
+| `auction` | the calls made so far, in order: `{seat, bid, alert, question}`, where `bid` is `{id, call, level, strain, special}` — `call` is the short name (`P`, `X`, `XX`, `1C`…`7NT`) and the only field telling pass, double and redouble apart; `level`/`strain` are null for those three. `[]` before the first call. A call's place in this list (from 0) is its `index` in the [alert](#alerts) endpoints and events. `alert` and `question` are **per viewer** ([Alerts](#alerts)): for the caller's own calls and the opponents', `alert` is `{explanation}` (`explanation` a string, or null for "alerted, no description") once the call is alerted, else null, and `question` is `{asked_by}` (the asking opponent's seat) while a question about it is open, else null; for **partner's** calls both are null during the auction — partner seeing them would be unauthorised information — except that a **robot** partner's `alert` shows at once (its `question` doesn't). Once the auction is over (phase `play`) every call's `alert` shows to all four players, partner's included, while partner's `question` stays null. Once the board is `finished`, every call's `alert` shows, to everyone, and `question` is null. Neither field is ever on the table channel (`PlayingUpdated`) |
 | `contract` | `null` during the auction and on a passed out board; once the auction ends with a bid, `{bid, doubled, declarer, dummy}` — `bid` shaped as above, `doubled` 0 (none), 1 (X) or 2 (XX), `declarer` the seat of the first player on the winning side to name the strain, `dummy` declarer's partner |
 | `tricks` | the **complete** tricks, in order: `{round, leader, cards, winner}` — `round` 1–13, `leader` the seat that led, `cards` the four `{seat, card}` in the order played (`seat` is the hand the card came from, so dummy's seat for dummy's cards), `winner` the seat whose card won. `[]` until the first trick is complete. `null` whenever `contract` is |
 | `current_trick` | the trick in progress, as `{seat, card}` in the order played: `[]` before the opening lead and between a trick's 4th card and the next lead (the finished trick is then the last of `tricks`). `null` whenever `contract` is |
@@ -1169,8 +1169,9 @@ opponents may ask for one. It is stored on the call (`auctions.alerted`,
 caller and of the two opponents, never partner's during the auction, and is
 pushed to the human opponents as [`CallAlerted`](#event-callalerted). Once
 the auction is over partner sees it too
-([`AuctionAlertsShown`](#event-auctionalertsshown)). `PlayingUpdated` carries
-nothing of it.
+([`AuctionAlertsShown`](#event-auctionalertsshown)). A **robot's** alert
+reaches its human partner at once as well ([Alerts](#alerts)); a human's
+never reaches a robot partner. `PlayingUpdated` carries nothing of it.
 
 A pass is always legal. The auction ends after three passes following a bid,
 X or XX, or after four passes from the start. It then writes the result on
@@ -1199,10 +1200,19 @@ unauthorised information for anyone:
 - each alert or answer made during the auction is pushed to the bidder's
   two opponents (the humans) as [`CallAlerted`](#event-callalerted) on their
   own channel;
+- **a robot's alerts are the exception**: a human partnered with a robot
+  has to learn its system at the table, so each alert or answer a robot
+  makes reaches its human partner too, at once — `CallAlerted` on their
+  channel and `alert` on that call in their state, during the auction. Not
+  the other way round: a human's alert never goes to a robot partner, and
+  two human partners still see nothing of each other's until the auction
+  is over. Questions stay the opponents' (`question` is null on partner's
+  calls, a robot's too), and a kibitzer still gets no explanation until the
+  board is finished;
 - once the auction is over (phase `play`, or the passed out board's
   `finished`) every call's `alert` is in all four players' state, partner's
   included; `question` stays per viewer (null on partner's calls). Each
-  human whose partner alerted something gets those alerts once, as
+  human whose (human) partner alerted something gets those alerts once, as
   [`AuctionAlertsShown`](#event-auctionalertsshown), since the auction
   usually ends on a robot's call; an answer given during the play goes to
   all four humans as `CallAlerted`;
@@ -1219,9 +1229,10 @@ question from the asker as `"What does 1C mean?"` (`Pass`, `Double`,
 too — as its explanation. So a client may show the conversation in the
 chat alone and keep `alert`/`question` for the auction box.
 
-Robots alert their conventional calls themselves (Stayman, transfers, the
-strong 2♣ …, listed in [`ROBOTS.md`](ROBOTS.md)), with their system's
-explanation.
+Robots alert themselves every call whose meaning the call alone doesn't
+say (Stayman, transfers, the strong 2♣, weak twos, limit raises, jump
+shifts, reverses …, listed in [`ROBOTS.md`](ROBOTS.md#alerts)), with their
+system's explanation, to the opponents and their human partner.
 
 `{index}` below is the call's place in `auction`, from 0. Both endpoints work
 from the first call until the board is `finished` (through the play too),
@@ -2104,7 +2115,7 @@ protocol, so any Pusher client (`pusher-js`, Laravel Echo) works.
 | Channel (as the client names it) | Echo | Who may subscribe | Carries |
 |---|---|---|---|
 | `private-table.{id}` | `echo.private('table.' + id)` | players seated at table `{id}` and its [kibitzers](#kibitzers) (`routes/channels.php`) | `TableUpdated`, `PlayingUpdated` |
-| `private-App.Models.User.{id}` | `echo.private('App.Models.User.' + id)` | user `{id}` only | `HandDealt` — one player's own cards; `DeclarerHandShown` — a robot declarer's cards, for its human dummy; `CallAlerted` — an opponent's alert or answer (anyone's, in the play); `AuctionAlertsShown` — partner's alerts, when the auction ends; `CallQuestioned` — a question about your call; `BoardMessageSent` — a chat message you may read; `UserBanned`; `UnseatedFromTable` — your seat (or kibitzer's place) was taken away without you asking |
+| `private-App.Models.User.{id}` | `echo.private('App.Models.User.' + id)` | user `{id}` only | `HandDealt` — one player's own cards; `DeclarerHandShown` — a robot declarer's cards, for its human dummy; `CallAlerted` — an opponent's alert or answer, or a robot partner's (anyone's, in the play); `AuctionAlertsShown` — partner's alerts, when the auction ends; `CallQuestioned` — a question about your call; `BoardMessageSent` — a chat message you may read; `UserBanned`; `UnseatedFromTable` — your seat (or kibitzer's place) was taken away without you asking |
 
 A client should subscribe to its table's channel **after** it has a seat or
 is watching (`POST /tables/{table}/kibitzers`; the subscription is refused
@@ -2408,12 +2419,13 @@ Class `App\Events\CallAlerted`, on `private-App.Models.User.{id}` (Echo:
 delivery as `TableUpdated`.
 
 **Sent when** a call is alerted (`POST /tables/{table}/calls` with `alert`
-or an `explanation`, or a robot's conventional call) or its bidder explains
+or an `explanation`, or a robot's alerted call) or its bidder explains
 it (`PUT .../explanation`, or a robot answering a question): one event to
-each **human opponent of the bidder** during the auction — never to partner,
-never on the table channel. Once the auction is over (an answer given during
-the play) it goes to each of the **four** humans, the bidder and partner
-included.
+each **human opponent of the bidder** during the auction — never to a human
+bidder's partner, never on the table channel. When the bidder is a
+**robot**, its human partner gets it too, during the auction. Once the
+auction is over (an answer given during the play) it goes to each of the
+**four** humans, the bidder and partner included.
 
 ```json
 {
@@ -2437,7 +2449,8 @@ Class `App\Events\AuctionAlertsShown`, on `private-App.Models.User.{id}`
 **Sent when** the auction ends (with a contract, or passed out): to each
 **human** whose partner alerted at least one call, with those alerts — the
 ones they couldn't see during the auction. Nothing is sent to a player whose
-partner alerted nothing, and the opponents get none (they had each alert as
+partner alerted nothing, nor for a **robot** partner's alerts (the human had
+each as it was made), and the opponents get none (they had each alert as
 it was made, through `CallAlerted`). The auction usually ends on a robot's
 call, made in the queue, so no HTTP answer of the human's has them yet.
 

@@ -138,7 +138,11 @@ meaning is no longer unauthorised information — declarer and dummy may
 know what each other's calls meant while they play — so every alert is
 shown to the four players; questions and answers in the play still go to
 the bidder's opponents first. Once the board is over nothing is hidden:
-every alert is shown to all.
+every alert is shown to all. A **robot's** alerts are the exception: its
+human partner gets them at once, as the opponents do, since a human
+partnered with a robot has to learn the robot's system at the table (§9);
+a human's alerts still never reach their partner, robot or human, during
+the auction.
 
 **Table talk.** Players at a table are often strangers, so the whole
 table may talk at any time — greet each other, wish good luck, apologise,
@@ -193,11 +197,13 @@ open to all.
   an `explanation` (up to 200 characters; a non-empty one alerts the call),
   stored as `auctions.alerted`/`explanation`. `AuctionService::alertTo()`
   pushes it to the bidder's two opponents (`CallAlerted`, their own
-  channels) during the auction, to all four from its end;
-  `PlayingStateService::alerts()` shows each call's alert in a
-  player's own state for their own and the opponents' calls, partner's
-  only once the auction is over (when `AuctionService` sends each human
-  partner's alerts as `AuctionAlertsShown`), and to everyone once the board
+  channels) during the auction — and to its partner too when a robot made
+  the call (`PlayingStateService::robotCalled()`) — to all four from its
+  end; `PlayingStateService::alerts()` shows each call's alert in a
+  player's own state for their own and the opponents' calls, a robot
+  partner's at once, a human partner's only once the auction is over (when
+  `AuctionService` sends each human a human partner's alerts as
+  `AuctionAlertsShown`), and to everyone once the board
   is finished (`GET /playings/{playing}` too). A question stays hidden from
   the bidder's partner until the board is finished. `PlayingUpdated`, on the table channel,
   carries none. An opponent asks with
@@ -863,8 +869,11 @@ Rules the robots keep, and that keep them honest:
   `CardPlayService::actingSeat($turn, $declarer, $dummyPlays)` and
   `ClaimService::illegalPlayerReason(..., $dummyPlays)`. A human declarer
   with a robot dummy plays both hands as before.
-- **Robots alert.** A robot alerts its conventional calls to the
-  opponents, with its system's explanation, and answers a question about
+- **Robots alert.** A robot alerts every call whose meaning the call
+  alone doesn't say (artificial, conventional, asking, or a range a
+  natural reading wouldn't give: weak twos, limit raises, jump shifts,
+  reverses …) to the opponents **and its human partner**, at once, with
+  its system's explanation, and answers a question about
   any of its calls at once (`RobotBidder::read()`, "Natural" for a call no
   rule makes), through the question endpoint or in the board's chat — the
   list is in [`ROBOTS.md`](ROBOTS.md#alerts). Asked in the chat about a

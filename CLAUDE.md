@@ -429,7 +429,10 @@ vendor/bin/pint --test            # check formatting without changing files
   the `board_table_seats` snapshot) and `auction_ended_at`; a passed out
   board is finished at once through `BoardTable::finish(null)` (score 0).
 - **Alerts**: self-alerts, for the bidder's **opponents only** during the
-  auction, for all four players from its end (`auction_ended_at`), public
+  auction — except a robot's, which its human partner gets at once too
+  (`PlayingStateService::robotCalled()`, from the call's `user_id` in the
+  seat snapshot; never the other way round) — for all four players from
+  its end (`auction_ended_at`), public
   once the board is finished. A call's `alert`/`explanation` (≤ 200 chars)
   are stored on `auctions` (`alerted`, `explanation`, `question_seat` for an
   open question); `AuctionService::ask()`
@@ -437,16 +440,20 @@ vendor/bin/pint --test            # check formatting without changing files
   `explain()` (`PUT .../explanation`) use the same row lock. Alerts go out
   as `CallAlerted` on the two opponents' own channels (all four humans' once
   the auction is over), questions as `CallQuestioned` to the bidder; when
-  the auction ends each human gets partner's alerts as
+  the auction ends each human gets a human partner's alerts as
   `AuctionAlertsShown` (none if partner alerted nothing; `split()` over
   several events past the broadcast budget); a robot alerts the rules marked
-  `alert: true` in `BiddingSystem` — every artificial or conventional call
-  and every penalty double, each made by a robot at a table in
-  `BidAlertTest::test_a_robots_convention_is_alerted_to_its_human_opponent_not_partner`
-  (add a case there with a new one) — and answers questions at once with
+  `alert: true` in `BiddingSystem` — every call whose meaning the call
+  alone doesn't say (artificial, conventional, asking, or a range a natural
+  reading wouldn't give: weak twos, limit raises, jump shifts, reverses …)
+  and every penalty double, listed in `docs/ROBOTS.md` Alerts, each family
+  in `RobotBidderTest::alerts()` and most made by a robot at a table in
+  `BidAlertTest::test_a_robots_alert_reaches_its_human_opponent_and_partner`
+  (add a case to both with a new one) — and answers questions at once with
   `RobotBidder::read()`. `PlayingStateService::alerts()` adds `alert` and
   `question` to each `auction` entry in `stateFor()` only (null for
-  partner's calls, but `alert` shows once the auction is over) — never in
+  partner's calls, but `alert` shows once the auction is over, and at once
+  for a robot partner's) — never in
   `PlayingResource`'s public part, so never in `PlayingUpdated`; the review (`forReview()`) shows every `alert`.
 - **Chat**: `App\Services\BoardChatService` keeps a chat per board
   (`board_messages`, `BoardMessage`, `GET`/`POST /tables/{table}/messages`,

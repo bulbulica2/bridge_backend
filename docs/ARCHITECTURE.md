@@ -264,8 +264,9 @@ Robot players are `users` rows with `is_robot` (see
   so far. A robot makes the first legal rule its hand fits, and every call
   — its partner's, a human's — is read back through the same rules, so
   what a robot means and what its partner understands can't drift apart;
-  `BidMeaning::explanation()` is the text a robot alerts its conventional
-  calls with (`BidMeaning::$alert`) and answers questions with. Each reads only the arrays
+  `BidMeaning::explanation()` is the text a robot alerts its calls with
+  (`BidMeaning::$alert`: every call whose meaning the call alone doesn't
+  say) and answers questions with. Each reads only the arrays
   `PlayingStateService::stateFor()` serves the robot's seat — its own hand,
   dummy once face up, a claimer's hand, the cards played — never another
   hand, so a robot knows no more than a human in its seat. Each returns a
@@ -349,8 +350,8 @@ to run it: [`RUNNING.md`](RUNNING.md#realtime-reverb)).
 | `PlayingUpdated` | `table.{id}` | the public game state (no hand, no `my_seat`) in its compact shape (`PlayingResource::compact()`: cards and bids as ids) | a board is dealt, after every accepted call, card or claim action (a robot's too), and when a robot takes a walked-out player's seat; `DriveRobots` listens to it |
 | `HandDealt` | `App.Models.User.{id}` | that player's 13 cards | a board is dealt (humans only) |
 | `DeclarerHandShown` | `App.Models.User.{id}` | declarer's 13 cards (`declarer_hand`) | an auction ends with a robot declarer and a human dummy, who plays both hands (to that human only; `AuctionService`) |
-| `CallAlerted` | `App.Models.User.{id}` | `index` of the call in the auction, its `explanation` | a call is alerted or its bidder explains it (a robot's too): during the auction to each human opponent of the bidder, never partner; from the end of the auction to all four humans (`AuctionService::alertTo()`) |
-| `AuctionAlertsShown` | `App.Models.User.{id}` | `alerts`: `{index, explanation}` of each of partner's alerted calls | the auction ends: to each human whose partner alerted something, once; split over several events (`AuctionAlertsShown::split()`) when one would pass the broadcast budget (`AuctionService::showPartnersAlerts()`) |
+| `CallAlerted` | `App.Models.User.{id}` | `index` of the call in the auction, its `explanation` | a call is alerted or its bidder explains it (a robot's too): during the auction to each human opponent of the bidder, never a human bidder's partner, but a robot's human partner too (`PlayingStateService::robotCalled()`); from the end of the auction to all four humans (`AuctionService::alertTo()`) |
+| `AuctionAlertsShown` | `App.Models.User.{id}` | `alerts`: `{index, explanation}` of each of partner's alerted calls | the auction ends: to each human whose human partner alerted something, once (a robot partner's alerts they had at once); split over several events (`AuctionAlertsShown::split()`) when one would pass the broadcast budget (`AuctionService::showPartnersAlerts()`) |
 | `CallQuestioned` | `App.Models.User.{id}` | `index` of the call, `asked_by` | an opponent asks about a human's call: to its bidder only (`AuctionService::ask()`) |
 | `BoardMessageSent` | `App.Models.User.{id}` | `table_id`, `playing_id` and the chat `message` (`BoardMessageResource`) | a chat message is written (sent, a robot's answer, or an alert question or answer): to each human seated at the table who may read it, the sender included — all four for a `table` message, never partner for an `opponents` one during the board, never the table channel (`BoardChatService::post()`) |
 | `UserBanned` | `App.Models.User.{id}` | the ban: `reason`, `until`, `banned_at` | an admin bans that user, so their open client logs out |
@@ -367,8 +368,8 @@ to run it: [`RUNNING.md`](RUNNING.md#realtime-reverb)).
   channel must therefore only carry what any player may see; anything private
   to one player goes on their `App.Models.User.{id}` channel. Dummy's hand
   and a claimer's hand are the exceptions, because they are face up. Alerts
-  are private too, to the bidder's opponents during the auction and to the
-  four players from its end: they go on the players' own channels, and only
+  are private too, to the bidder's opponents (and a robot bidder's human
+  partner) during the auction and to the four players from its end: they go on the players' own channels, and only
   `stateFor()` (per viewer) shows them — never `PlayingResource`'s public
   part. The table channel admits the table's kibitzers too (who see the
   same public part, and get none of the per-player events) and refuses a

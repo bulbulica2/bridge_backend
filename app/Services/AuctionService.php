@@ -29,13 +29,16 @@ use Illuminate\Support\Facades\DB;
  *
  * Alerts (`GAME-RULES.md` §4) are self-alerts: the bidder marks their own
  * call and may say what it means. During the auction the two opponents
- * learn it on their own channels (`CallAlerted`), never partner, and may
- * ask about any call of the other side (`ask()`), which its bidder answers
- * (`explain()`). The question and the answer go into the board's chat as
- * well (`BoardChatService`), to the bidder's opponents. Once the auction is
+ * learn it on their own channels (`CallAlerted`), never partner — except
+ * that a robot's alerts go to its partner as well
+ * (`PlayingStateService::robotCalled()`), who has to learn its system at
+ * the table. The opponents may ask about any call of the other side
+ * (`ask()`), which its bidder answers (`explain()`). The question and the
+ * answer go into the board's chat as well (`BoardChatService`), to the
+ * bidder's opponents. Once the auction is
  * over its meaning is no longer unauthorised information: each player gets
- * partner's alerts (`AuctionAlertsShown`), and an explanation given during
- * the play goes to all four.
+ * the alerts of partner's they haven't seen (`AuctionAlertsShown`), and an
+ * explanation given during the play goes to all four.
  */
 class AuctionService
 {
@@ -98,7 +101,7 @@ class AuctionService
       ]);
 
       if ($alert) {
-        $this->alertTo($playing, $seat, count($calls), $explanation);
+        $this->alertTo($playing, $seat, count($calls), $explanation, (bool) $user->is_robot);
       }
 
       $calls[] = ['seat' => $seat, 'bid' => $bid];
@@ -224,7 +227,7 @@ class AuctionService
   {
     $call->update(['alerted' => true, 'explanation' => $explanation, 'question_seat' => null]);
 
-    $this->alertTo($playing, $call->seat, $index, $explanation);
+    $this->alertTo($playing, $call->seat, $index, $explanation, PlayingStateService::robotCalled($playing, $call));
 
     $bidder = $playing->seats->firstWhere('seat', $call->seat)->user;
     $this->chat->post($playing, $bidder, $call->seat, BoardMessage::TO_OPPONENTS, $explanation, $index);
@@ -248,12 +251,13 @@ class AuctionService
   /**
    * Send the call at `$index`, made from `$seat`, to the humans among that
    * seat's two opponents (`CallAlerted`): never to partner during the
-   * auction. Once it is over every alert is open to all four, so an
-   * explanation given during the play goes to every human.
+   * auction, unless a robot made the call (`$byRobot`), whose partner
+   * learns its system at the table. Once it is over every alert is open to
+   * all four, so an explanation given during the play goes to every human.
    */
-  private function alertTo(BoardTable $playing, string $seat, int $index, ?string $explanation): void
+  private function alertTo(BoardTable $playing, string $seat, int $index, ?string $explanation, bool $byRobot): void
   {
-    $readers = $playing->auction_ended_at === null
+    $readers = $playing->auction_ended_at === null && ! $byRobot
       ? [Seats::next($seat), Seats::partner(Seats::next($seat))]
       : Seats::SEATS;
 
@@ -268,8 +272,9 @@ class AuctionService
 
   /**
    * The auction has just ended: send each human the alerts of partner's
-   * they couldn't see during it (`AuctionAlertsShown`), if there are any.
-   * The opponents had each of them as it was made.
+   * they couldn't see during it (`AuctionAlertsShown`), if there are any:
+   * not a robot partner's, which they had as it was made, as the opponents
+   * had each of them.
    */
   private function showPartnersAlerts(BoardTable $playing): void
   {
@@ -281,7 +286,8 @@ class AuctionService
       }
 
       $alerts = $calls
-        ->filter(fn (Auction $call) => $call->alerted && $call->seat === Seats::partner($seat->seat))
+        ->filter(fn (Auction $call) => $call->alerted && $call->seat === Seats::partner($seat->seat)
+          && ! PlayingStateService::robotCalled($playing, $call))
         ->map(fn (Auction $call, int $index) => ['index' => $index, 'explanation' => $call->explanation])
         ->values()
         ->all();
