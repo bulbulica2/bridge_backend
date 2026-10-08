@@ -26,6 +26,8 @@ class StoreTableRequest extends FormRequest
       'robots' => ['sometimes', 'boolean'],
       // each player's time for a set, in minutes (bridge.set_minutes if absent)
       'set_minutes' => ['sometimes', 'integer', Rule::in(Table::SET_MINUTES)],
+      // whether people without a seat may watch (true if absent)
+      'allow_kibitzers' => ['sometimes', 'boolean'],
     ];
   }
 }

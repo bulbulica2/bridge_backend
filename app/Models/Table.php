@@ -63,12 +63,23 @@ class Table extends Model
     'board_id',
     'unattended_since',
     'set_minutes',
+    'allow_kibitzers',
+  ];
+
+  /**
+   * The column's default, so a table just created shows it too.
+   *
+   * @var array<string, mixed>
+   */
+  protected $attributes = [
+    'allow_kibitzers' => true,
   ];
 
   protected function casts(): array
   {
     return [
       'set_minutes' => 'integer',
+      'allow_kibitzers' => 'boolean',
       'unattended_since' => 'datetime',
     ];
   }
@@ -109,6 +120,12 @@ class Table extends Model
   public function seats(): HasMany
   {
     return $this->hasMany(TableSeat::class);
+  }
+
+  // people watching without a seat
+  public function kibitzers(): HasMany
+  {
+    return $this->hasMany(TableKibitzer::class);
   }
 
   // calls and cards of every board still attached to this table; a detached

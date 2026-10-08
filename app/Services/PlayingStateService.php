@@ -307,23 +307,30 @@ class PlayingStateService
    * Once the auction is over every alert is open to the four players, while
    * partner's questions stay hidden; once the board is finished every alert
    * is public, to anyone (`$seat` null too), and no question is open any
-   * more.
+   * more. A kibitzer (`$watching`, `$seat` null) sees that a call is
+   * alerted, but not what it means until the board is finished, nor any
+   * question.
    *
    * @return list<array{alert: array{explanation: string|null}|null, question: array{asked_by: string}|null}>
    */
-  public function alerts(BoardTable $playing, ?string $seat): array
+  public function alerts(BoardTable $playing, ?string $seat, bool $watching = false): array
   {
     $finished = $playing->finished_at !== null;
     $ended = $playing->auction_ended_at !== null;
 
     return $playing->auctions
       ->sortBy('id')
-      ->map(function ($call) use ($seat, $finished, $ended) {
+      ->map(function ($call) use ($seat, $finished, $ended, $watching) {
         $notPartners = $seat !== null && $call->seat !== Seats::partner($seat);
         $sees = $finished || $notPartners || ($ended && $seat !== null);
 
         return [
-          'alert' => $sees && $call->alerted ? ['explanation' => $call->explanation] : null,
+          'alert' => match (true) {
+            ! $call->alerted => null,
+            $sees => ['explanation' => $call->explanation],
+            $watching => ['explanation' => null],
+            default => null,
+          },
           'question' => $notPartners && ! $finished && $call->question_seat !== null ? ['asked_by' => $call->question_seat] : null,
         ];
       })
@@ -508,15 +515,31 @@ class PlayingStateService
   }
 
   /**
+   * What a kibitzer sees (`TablePolicy::watch`, not seated): the public
+   * state in `stateFor()`'s shape with no seat and no hand, and each call's
+   * `alert` with no explanation until the board is finished (`alerts()`).
+   * Never the caller's own hand, even one they held on this board before
+   * they lost their seat.
+   *
    * @return array<string, mixed>
    */
-  private function stateOf(?BoardTable $playing, User $user): array
+  public function watcherStateFor(Table $table): array
   {
-    $seat = $playing === null ? null : $this->seatOf($playing, $user);
+    return $this->stateOf($this->currentPlaying($table), null);
+  }
+
+  /**
+   * `$user`'s state, or a kibitzer's with `$user` null.
+   *
+   * @return array<string, mixed>
+   */
+  private function stateOf(?BoardTable $playing, ?User $user): array
+  {
+    $seat = $playing === null || $user === null ? null : $this->seatOf($playing, $user);
     $public = json_decode(json_encode(new PlayingResource($playing)), true);
 
     if ($playing !== null) {
-      $alerts = $this->alerts($playing, $seat);
+      $alerts = $this->alerts($playing, $seat, watching: $user === null);
 
       foreach ($public['auction'] as $index => $call) {
         $public['auction'][$index] = [...$call, ...$alerts[$index]];

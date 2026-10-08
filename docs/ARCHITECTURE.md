@@ -92,6 +92,7 @@ the same pattern:
 | Service | Responsible for | Tests |
 |---|---|---|
 | `TableSeatService` | joining, moving, leaving and kicking (`seat()`, `leave()`, `remove()`), heartbeats (`touch()`), freeing idle seats (`releaseIdleSeats()`), the away rule and turn clock (`checkAway()`), a robot taking the seat of a player who walks out on a set (`replaceWithRobot()`, `walksOut()`) and deleting unattended tables (`deleteUnattendedTables()`) | `tests/Feature/Table*` |
+| `KibitzerService` | kibitzers, people watching a table without a seat (`table_kibitzers`): `watch()` (403 when the table doesn't allow it, 409 while seated anywhere; watching another table moves the row), `stop()`, `stopWatching()` (from `TableSeatService::seat()` and `UserBanService::ban()`), `touch()` (the heartbeat), `admit()` (a player the Start timer unseats stays as a kibitzer), `removeAll()` (`allow_kibitzers` turned off, `UnseatedFromTable` to each) and `releaseIdle()` (`tables:release-idle-seats`); every change sends `TableUpdated` | `tests/Feature/Table/KibitzerTest` |
 | `BoardSelectionService` | which board a table plays and when: Start (`start()`, `withdrawStart()`, the Start timer `syncStartDeadline()`, `revokeStarts()` on a new set time), deals once a full table's humans have all pressed it (`startIfReady()`) as the first board of a new set, moves on after a finished board within the set (by itself after `bridge.next_board_seconds`, `dealNext()` from the queued `App\Jobs\DealNextBoard`, or at once once every human asked, `moveOn()`), detaches a board abandoned mid-play (`abandonPlaying()`) and ends a set one of its players left (`abandonSet()`) | `tests/Feature/Table/StartBoardTest`, `StartTimerTest`, `AssignBoardTest`, `AwayMidSetTest`, `tests/Feature/Game/TurnTimerTest`, `tests/Feature/Game/NextBoardTest`, `AutoNextBoardTest`, `BoardSetTest` |
 | `PlayingStateService` | the one place that works out a playing's phase, calls, cards, turn, who acts (`actingUserId()`, with `dummyPlaysForDeclarer()`: a human dummy plays a robot declarer's cards), the hands, dummy and a human dummy's `declarer_hand` | feature tests (`HumanDummyPlaysTest` for the human dummy) |
 | `AuctionService` | one call (`call()`, with its self-alert), a question about a call (`ask()`) and its bidder's answer (`explain()`), both also written into the chat; `nextToCall`, `illegalReason`, `isOver`, `result` | `tests/Unit/AuctionServiceTest`, `tests/Feature/Game/BidAlertTest` |
@@ -139,7 +140,8 @@ Things worth knowing before you change them:
   `table_seats.start_deadline` `bridge.start_seconds` (15) ahead and
   queues `App\Jobs\ExpireStart`, whose `TableSeatService::expireStart()`
   frees the seat through `remove()` if the deadline is still there and
-  past, and tells the player `UnseatedFromTable`. A `PATCH
+  past (at a table that allows kibitzers the player stays as one,
+  `KibitzerService::admit()`), and tells the player `UnseatedFromTable`. A `PATCH
   /tables/{table}` that changes `set_minutes` revokes every human's Start
   (`revokeStarts()`). While the same four sit there, a finished board
   of a set is followed by its next board `bridge.next_board_seconds` later
@@ -315,7 +317,11 @@ Policies in `app/Policies/` are auto-discovered.
   403 names the reason) lets anyone take their own seat, a manager anyone
   else's, and anyone a robot's at an unattended table — except an admin's,
   which only the admin or another admin may take.
-- `TablePolicy::play` limits the game state to players seated at the table.
+- `TablePolicy::play` limits every action at a table (Start, Next, calls,
+  cards, claims, the chat) to players seated there; `TablePolicy::watch`
+  (`play`, or a kibitzer of the table) gates the game state — a kibitzer's
+  is the public one, `PlayingStateService::watcherStateFor()` — the
+  heartbeat and the `table.{id}` channel.
 - `UserPolicy::ban` lets only an admin ban, and never themselves, another
   admin or a robot (a `Response` with the reason, returned from
   `BanUserRequest::authorize()`); `UserPolicy::manageBans` (admins) gates
@@ -334,7 +340,7 @@ to run it: [`RUNNING.md`](RUNNING.md#realtime-reverb)).
 
 | Event | Channel | Carries | Sent when |
 |---|---|---|---|
-| `TableUpdated` | `table.{id}` | the `TableResource` JSON, without `can_manage` | any seat change that didn't delete the table, a Start pressed or taken back, a board dealt, a player away or back, a robot taking a walked-out player's seat |
+| `TableUpdated` | `table.{id}` | the `TableResource` JSON, without `can_manage` | any seat change that didn't delete the table, a Start pressed or taken back, a board dealt, a player away or back, a robot taking a walked-out player's seat, a settings change, a kibitzer coming or going |
 | `PlayingUpdated` | `table.{id}` | the public game state (no hand, no `my_seat`) in its compact shape (`PlayingResource::compact()`: cards and bids as ids) | a board is dealt, after every accepted call, card or claim action (a robot's too), and when a robot takes a walked-out player's seat; `DriveRobots` listens to it |
 | `HandDealt` | `App.Models.User.{id}` | that player's 13 cards | a board is dealt (humans only) |
 | `DeclarerHandShown` | `App.Models.User.{id}` | declarer's 13 cards (`declarer_hand`) | an auction ends with a robot declarer and a human dummy, who plays both hands (to that human only; `AuctionService`) |
@@ -343,7 +349,7 @@ to run it: [`RUNNING.md`](RUNNING.md#realtime-reverb)).
 | `CallQuestioned` | `App.Models.User.{id}` | `index` of the call, `asked_by` | an opponent asks about a human's call: to its bidder only (`AuctionService::ask()`) |
 | `BoardMessageSent` | `App.Models.User.{id}` | `table_id`, `playing_id` and the chat `message` (`BoardMessageResource`) | a chat message is written (sent, a robot's answer, or an alert question or answer): to each human seated at the table who may read it, the sender included — all four for a `table` message, never partner for an `opponents` one during the board, never the table channel (`BoardChatService::post()`) |
 | `UserBanned` | `App.Models.User.{id}` | the ban: `reason`, `until`, `banned_at` | an admin bans that user, so their open client logs out |
-| `UnseatedFromTable` | `App.Models.User.{id}` | `table_id`, `reason` (`start_timeout`), `kibitzing` (false) | `TableSeatService::expireStart()` freed their seat: they didn't press Start by its `start_deadline` |
+| `UnseatedFromTable` | `App.Models.User.{id}` | `table_id`, `reason`, `kibitzing` | the user is sent away from a table without asking: `start_timeout`, `TableSeatService::expireStart()` freed their seat because they didn't press Start by its `start_deadline` (`kibitzing` true when the table allows kibitzers: they stay as one); `kibitzers_off`, a manager turned `allow_kibitzers` off while they watched (`KibitzerService::removeAll()`) |
 
 - Events implement `ShouldBroadcast` (queued, so a Reverb outage fails a
   queued job, not the player's request) and `ShouldDispatchAfterCommit`
@@ -359,8 +365,9 @@ to run it: [`RUNNING.md`](RUNNING.md#realtime-reverb)).
   are private too, to the bidder's opponents during the auction and to the
   four players from its end: they go on the players' own channels, and only
   `stateFor()` (per viewer) shows them — never `PlayingResource`'s public
-  part. The table channel refuses a banned
-  user.
+  part. The table channel admits the table's kibitzers too (who see the
+  same public part, and get none of the per-player events) and refuses a
+  banned user.
 
 ### Message size
 
@@ -451,7 +458,8 @@ claim once its `claim_expires_at` has passed
 (`ClaimService::expireOverdue()`, the same `expire()` as the job under the
 `board_table` row lock, so only the first of request, job and scheduler
 clears it), and the request never finds a dead claim still pending —
-add it to any new route that reads or acts on the playing. `tables:release-idle-seats` frees seats idle for
+add it to any new route that reads or acts on the playing. `tables:release-idle-seats` drops kibitzers
+silent for as long (`KibitzerService::releaseIdle()`, any time) and frees seats idle for
 `config('bridge.idle_seat_minutes')` (5) at a table that isn't mid-set,
 through the normal `remove()`, so it behaves exactly like the player
 leaving; mid-set `tables:check-away` marks them away instead, and hands

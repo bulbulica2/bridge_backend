@@ -244,7 +244,8 @@ seconds:
   as if they had left (see [`API.md`](API.md#post-tablestableheartbeat)) —
   only at tables that aren't in the middle of a set. Robots and admins are
   never idle: an admin's seat is only ever taken by the admin or another
-  admin.
+  admin. It also drops every kibitzer (somebody watching a table without a
+  seat) silent for as long, at any table.
 - `tables:check-away` (every **ten seconds**) handles the middle of a set
   (see [`API.md`](API.md#away-mid-set-and-the-turn-clock)): it marks a human
   with no sign of life for `BRIDGE_AWAY_SECONDS` as away, keeping their

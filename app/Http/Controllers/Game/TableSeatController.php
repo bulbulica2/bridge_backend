@@ -11,6 +11,7 @@ use App\Http\Requests\Table\RemoveUserFromSeatRequest;
 use App\Http\Resources\TableResource;
 use App\Models\Table;
 use App\Models\User;
+use App\Services\KibitzerService;
 use App\Services\PlayingStateService;
 use App\Services\RobotService;
 use App\Services\TableSeatService;
@@ -148,15 +149,21 @@ class TableSeatController extends BaseController
    * A sign of life from a seated player, sent every ~30 s while the table is
    * open, so `tables:release-idle-seats` doesn't free their seat and, mid-set,
    * `tables:check-away` doesn't mark them away (it brings back one who is).
+   * A kibitzer sends it too, or the same sweep drops them.
    */
-  public function heartbeat(Request $request, Table $table, TableSeatService $seatService): JsonResponse
-  {
-    $this->authorize('play', $table);
+  public function heartbeat(
+    Request $request,
+    Table $table,
+    TableSeatService $seatService,
+    KibitzerService $kibitzers
+  ): JsonResponse {
+    $this->authorize('watch', $table);
 
-    $seatService->touch($table, $request->user());
+    $user = $request->user();
+    $seatService->touch($table, $user);
 
     return $this->sendResponse(
-      ['last_seen_at' => $table->seats()->where('user_id', $request->user()->id)->first()->last_seen_at],
+      ['last_seen_at' => $table->seats()->where('user_id', $user->id)->first()?->last_seen_at ?? $kibitzers->touch($table, $user)],
       'Heartbeat received.'
     );
   }

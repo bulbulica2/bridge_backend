@@ -255,6 +255,7 @@ class BroadcastSizeTest extends TestCase
   public function test_being_unseated_fits(): void
   {
     $this->assertFits(new UnseatedFromTable($this->players['N']->id, $this->table->id, UnseatedFromTable::REASON_START_TIMEOUT));
+    $this->assertFits(new UnseatedFromTable($this->players['N']->id, PHP_INT_MAX, UnseatedFromTable::REASON_KIBITZERS_OFF, true));
   }
 
   public function test_the_broadcast_decodes_back_to_the_public_state(): void

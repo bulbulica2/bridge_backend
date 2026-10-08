@@ -9,12 +9,15 @@ use Illuminate\Contracts\Events\ShouldDispatchAfterCommit;
 use Illuminate\Foundation\Events\Dispatchable;
 
 /**
- * A player's seat was freed without them asking, sent on their own
- * `private-App.Models.User.{id}` channel: they are no longer on the table
- * channel's seats, and may not be listening there by the time they look.
- * `reason` says why (`start_timeout`: they didn't press Start in time,
- * `TableSeatService::expireStart()`); `kibitzing` whether they stay at the
- * table as a watcher (never yet: there are no kibitzers).
+ * Somebody was sent away from a table without asking, sent on their own
+ * `private-App.Models.User.{id}` channel: the table channel no longer
+ * counts them among its seats or kibitzers, and they may not be listening
+ * there by the time they look. `reason` says why (`start_timeout`: they
+ * didn't press Start in time, `TableSeatService::expireStart()`;
+ * `kibitzers_off`: they were watching and a manager stopped the table
+ * allowing it, `KibitzerService::removeAll()`); `kibitzing` whether they
+ * stay at the table as a watcher (a freed seat at a table that allows
+ * kibitzers).
  *
  * Same delivery as `TableUpdated`: queued, sent only once the transaction
  * commits.
@@ -25,6 +28,9 @@ class UnseatedFromTable implements ShouldBroadcast, ShouldDispatchAfterCommit
 
   /** The table waited for their Start for `bridge.start_seconds`. */
   public const REASON_START_TIMEOUT = 'start_timeout';
+
+  /** A manager turned `allow_kibitzers` off while they were watching. */
+  public const REASON_KIBITZERS_OFF = 'kibitzers_off';
 
   public function __construct(
     public int $userId,

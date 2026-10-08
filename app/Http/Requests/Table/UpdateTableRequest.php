@@ -21,7 +21,9 @@ class UpdateTableRequest extends FormRequest
   {
     return [
       // each player's time for a set, in minutes, from the next set on
-      'set_minutes' => ['required', 'integer', Rule::in(Table::SET_MINUTES)],
+      'set_minutes' => ['required_without:allow_kibitzers', 'integer', Rule::in(Table::SET_MINUTES)],
+      // whether people without a seat may watch; off sends the ones watching away
+      'allow_kibitzers' => ['required_without:set_minutes', 'boolean'],
     ];
   }
 

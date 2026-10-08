@@ -11,7 +11,7 @@ use Illuminate\Support\Str;
 
 class UserBanService
 {
-  public function __construct(private TableSeatService $seats) {}
+  public function __construct(private TableSeatService $seats, private KibitzerService $kibitzers) {}
 
   /**
    * `$admin` bans `$user` for `$days` days, telling them `$reason`. Who may
@@ -56,6 +56,9 @@ class UserBanService
         $replaced = $this->seats->removalReplaces($seat->table, $user, TableSetSeat::REASON_KICKED);
         $this->seats->remove($seat->table, $user, $admin, TableSetSeat::REASON_KICKED);
       }
+
+      // nor do they watch one
+      $this->kibitzers->stopWatching($user);
 
       if (config('session.driver') === 'database') {
         DB::connection(config('session.connection'))

@@ -167,8 +167,11 @@ Fields: `name` (string, nullable; at most `Table::NAME_MAX`, 50 characters, sinc
 time bank for a set, in minutes, one of `Table::SET_MINUTES` — 8, 12, 16,
 20; a `creating` hook fills in `bridge.set_minutes`, `BRIDGE_SET_MINUTES`,
 when none is given; `POST /tables` and, between sets, `PATCH
-/tables/{table}` set it, and a set copies it when it opens). All are
-fillable. There is **no** `closed_at` and no closed/archived state.
+/tables/{table}` set it, and a set copies it when it opens),
+`allow_kibitzers` (boolean, default true, cast `boolean`: whether people
+without a seat may watch, `table_kibitzers`; set by `POST /tables` and, between
+sets, `PATCH /tables/{table}`, where false deletes the table's kibitzers).
+All are fillable. There is **no** `closed_at` and no closed/archived state.
 **Active table** = at least one `table_seats` row points at it; query with the
 `Table::active()` scope. A table lives only while somebody sits at it: the last
 player to leave deletes the row (`TableSeatService::remove()`).
@@ -648,6 +651,22 @@ value, for `time_used` in `GET /sets/{set}`. All fillable, timestamps. Unique `(
 Relations: `user` (belongsTo). `GET /sets/{set}` lets these four, and the
 humans a robot replaced, see the set's results (`TableSetPolicy::view`).
 
+### TableKibitzer (`table_kibitzers`, model class `TableKibitzer`)
+Somebody watching a table without a seat (`KibitzerService`, see
+[`API.md`](API.md#kibitzers)). Fields: `table_id` (FK, cascade delete: a
+deleted table's kibitzers go with it), `user_id` (FK, cascade delete,
+**unique**: one table watched at a time; `User::kibitzing()`), `last_seen_at`
+(timestamp, indexed, defaults to the current time and set by a `creating`
+hook, cast to datetime: the kibitzer's last heartbeat, read by
+`tables:release-idle-seats`), timestamps. All three are fillable.
+A player whose seat the Start timer frees gets one at that table when it
+allows kibitzers (`KibitzerService::admit()`). Watching another table moves
+the row; taking a seat anywhere or a ban deletes it, so a user never has both a `table_seats` and a `table_kibitzers`
+row (`watch()` refuses a seated user). `Table::kibitzers()` is the
+`TableResource` count. A kibitzer leaves no trace on any board: they are in
+no `board_table_seats` snapshot, so board selection (`GAME-RULES.md` §8)
+may later deal them a board they watched.
+
 ## Relationship summary
 
 The foreign keys between the tables. Each model defines only the relations
@@ -655,6 +674,7 @@ the code uses (listed under it above), so not every arrow here has one.
 
 ```
 User ──< TableSeat >── Table           (a User may be a robot: is_robot)
+User ──  TableKibitzer >── Table      (watching without a seat; one per user)
   │                       └── board_id ──> Board (current board)
   ├── (created_by / moderated_by on Table; never a robot)
   └──< UserBan                           (+banned_by, lifted_by ──> User)

@@ -17,6 +17,9 @@ use Illuminate\Support\Arr;
  * viewer (the TableUpdated broadcast) leaves it out through withoutViewer()
  * rather than sending one player's answer to everyone.
  *
+ * `kibitzers` is how many people watch the table without a seat
+ * (`KibitzerService`), next to the model's `allow_kibitzers`.
+ *
  * `set` is the table's current set, or the one it finished last
  * (`PlayingResource::set()`, `board` being how many boards it has dealt so
  * far); null before the table's first Start.
@@ -66,9 +69,10 @@ class TableResource extends JsonResource
   public function toArray(Request $request): array
   {
     return [
-      ...Arr::except(parent::toArray($request), ['latest_set']),
+      ...Arr::except(parent::toArray($request), ['latest_set', 'kibitzers_count']),
       'seats' => $this->whenLoaded('seats', fn () => TableSeatResource::collection($this->seats)),
       'free_seats' => $this->resource->freeSeats(),
+      'kibitzers' => $this->resource->kibitzers_count ?? $this->resource->kibitzers()->count(),
       'set' => $this->set(),
       'can_manage' => $this->when($this->withViewer, fn () => (bool) $request->user()?->can('manage', $this->resource)),
       'playing' => $this->when($this->withPlaying, fn () => $this->playing),
