@@ -116,6 +116,15 @@ php artisan migrate:status
 Server listens on `http://localhost:8000` (matches `APP_URL` in `.env`).
 
 Config of note (`.env`):
+- `APP_NAME=Bridge4U` — the name the mail the backend sends goes out under
+  (the password reset mail's subject, "Reset your Bridge4U password", its
+  text and signature, and the sender name through
+  `MAIL_FROM_NAME="${APP_NAME}"`). An existing `.env` from before
+  `77-bridge4u-name` still says `APP_NAME=Laravel` (`.env` isn't committed):
+  change it to `APP_NAME=Bridge4U` by hand, then run
+  `php artisan config:clear` (and restart `queue:work`, which sends queued
+  mail with the old name otherwise). With no `APP_NAME` at all, both
+  `config('app.name')` and the sender name default to `Bridge4U`
 - `DB_DATABASE=bridge`, `DB_HOST=127.0.0.1`, `DB_PORT=3306`, `DB_USERNAME=root`, no password
 - `FRONTEND_URL` — the SPA's origin, used for CORS `allowed_origins` and
   Sanctum's stateful domains; not in `.env.example`, so it defaults to

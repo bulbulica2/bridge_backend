@@ -32,7 +32,7 @@ header.
 |---|---|---|---|---|
 | POST | `/register` | `Auth\RegisteredUserController@store` | `guest` | body `{name, username, email, password, password_confirmation}`; creates user, logs them in, 204 |
 | POST | `/login` | `Auth\AuthenticatedSessionController@store` | `guest` | body `{email, password, remember?}` (validated via `Auth\LoginRequest`); `remember` keeps the user logged in past the session, see [Remember me](#remember-me); never logs in a robot; 204 |
-| POST | `/forgot-password` | `Auth\PasswordResetLinkController@store` | `guest` | sends reset link email |
+| POST | `/forgot-password` | `Auth\PasswordResetLinkController@store` | `guest` | sends reset link email ("Reset your Bridge4U password", from `MAIL_FROM_NAME`, which defaults to `APP_NAME` = Bridge4U), linking to the SPA's `{FRONTEND_URL}/password-reset/{token}?email=…` (`AppServiceProvider::boot`) |
 | POST | `/reset-password` | `Auth\NewPasswordController@store` | `guest` | |
 | GET | `/verify-email/{id}/{hash}` | `Auth\VerifyEmailController` | `auth`, `signed`, `throttle:6,1` | signed link from email |
 | POST | `/email/verification-notification` | `Auth\EmailVerificationNotificationController@store` | `auth`, `throttle:6,1` | resend verification email |
