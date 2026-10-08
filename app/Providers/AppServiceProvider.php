@@ -9,6 +9,7 @@ use Barryvdh\Debugbar\Facades\Debugbar;
 use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
+use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 
@@ -51,8 +52,20 @@ class AppServiceProvider extends ServiceProvider
    */
   public function boot(): void
   {
-    ResetPassword::createUrlUsing(function (object $notifiable, string $token) {
-      return config('app.frontend_url')."/password-reset/$token?email={$notifiable->getEmailForPasswordReset()}";
+    // Laravel's own subject ("Reset Password Notification") doesn't say
+    // whose password; name the app (Bridge4U), as the sender and the
+    // signature already do through config('app.name'). The link goes to
+    // the SPA's reset page
+    ResetPassword::toMailUsing(function (object $notifiable, string $token) {
+      $url = config('app.frontend_url')."/password-reset/$token?email={$notifiable->getEmailForPasswordReset()}";
+      $minutes = config('auth.passwords.'.config('auth.defaults.passwords').'.expire');
+
+      return (new MailMessage)
+        ->subject(__('Reset your :app password', ['app' => config('app.name')]))
+        ->line(__('You are receiving this email because we received a password reset request for your :app account.', ['app' => config('app.name')]))
+        ->action(__('Reset Password'), $url)
+        ->line(__('This password reset link will expire in :count minutes.', ['count' => $minutes]))
+        ->line(__('If you did not request a password reset, no further action is required.'));
     });
 
     // POST /tables/{table}/messages: 10 messages per 30 seconds per player
