@@ -241,7 +241,7 @@ is never ready). The request that deals is the first to carry a non-null
 `board_id`. Dealing clears every human's Start. `board_id` goes back to null
 if a player leaves before the board is finished, and the refilled table needs
 everyone's Start again. Once a board is finished, the **same four** get the
-set's next board by themselves `BRIDGE_NEXT_BOARD_SECONDS` (10) later, at the
+set's next board by themselves `BRIDGE_NEXT_BOARD_SECONDS` (15) later, at the
 state's `next_board_at` (or at once with
 [`POST /tables/{table}/playing/next`](#post-tablestableplayingnext)); if one of
 them was replaced meanwhile, it is Start again. Boards come in
@@ -913,7 +913,7 @@ page refresh or a reconnect. No body. Built by
 | `result` | `null` until the phase is `finished`. Then `{contract, doubled, declarer, tricks_won, score_ns, made_by, claimed}`: `contract` is the final bid (shaped as `bid` above), `doubled` 0/1/2, `declarer` its seat, `tricks_won` the tricks declarer's side took, `score_ns` the duplicate score (`GAME-RULES.md` §6) **from N-S's point of view** — positive when N-S scored, negative when E-W did, whichever side declared — `made_by` the overtricks (`+1`), `0` for just made, or undertricks (`-2`), and `claimed` whether the play ended by an accepted claim rather than at trick 13 (`tricks_won` then includes the claimed tricks). A **passed out** board has `score_ns: 0`, `claimed: false` and every other field `null`. Example: `{"contract": {"id": 22, "call": "4S", ...}, "doubled": 0, "declarer": "E", "tricks_won": 11, "score_ns": -650, "made_by": 1, "claimed": false}` — E-W vulnerable, 4♠ by East making 11 |
 | `deal` | `null` until the phase is `finished`. Then all four hands **as dealt** (from `board_card`, not what is left after the play): `{N: [...], E: [...], S: [...], W: [...]}`, each in `hand`'s order and card shape. Public — it is on the table channel too — since the board is over |
 | `ready` | `null` until the phase is `finished`. Then the seats whose players have asked for the next board (`POST /tables/{table}/playing/next`), in N, E, S, W order: `[]` right after the board ends |
-| `next_board_at` | when the set's next board is dealt **by itself** (ISO 8601, like `claim.expires_at`): `BRIDGE_NEXT_BOARD_SECONDS` (10) after the board finished. `null` until the phase is `finished`, and whenever no automatic deal is coming: the set is over (its last board, or abandoned), a seat is empty, or the four seated aren't the four who played the board (everyone's Start deals the next one then). Count down from it, never from when the state arrived. Not in `GET /playings/{playing}` |
+| `next_board_at` | when the set's next board is dealt **by itself** (ISO 8601, like `claim.expires_at`): `BRIDGE_NEXT_BOARD_SECONDS` (15) after the board finished. `null` until the phase is `finished`, and whenever no automatic deal is coming: the set is over (its last board, or abandoned), a seat is empty, or the four seated aren't the four who played the board (everyone's Start deals the next one then). Count down from it, never from when the state arrived. Not in `GET /playings/{playing}` |
 | `my_seat` | the caller's seat in the snapshot |
 | `hand` | the caller's **own** cards only: the 13 `board_card` rows for their seat, less any card already in `cardplays`, sorted spades, hearts, diamonds, clubs and high to low within a suit. Card `rank` is 2–10, J=12, Q=13, K=14, A=15. Apart from this and `declarer_hand`, the only cards in the payload are face up: those in `tricks` / `current_trick`, after the opening lead `dummy_hand`, a pending claim's `claim.hand`, and once the board is finished `deal` |
 | `declarer_hand` | **only** for a human dummy whose declarer is a robot, who plays declarer's cards (see `acting_user_id`): declarer's **remaining** cards, in `hand`'s order and card shape, from the end of the auction (all 13, before the opening lead) to the end of the play. `null` for everyone else and at any other time, including once the board is `finished` (`deal` then shows it). Private to that player like `hand`: it is in their own answers only (this endpoint and the answers to calls, cards, claims, Start and Next), never on the table channel or in anyone else's state — the defenders see only dummy's cards after the lead. The auction usually ends on a robot's call, so it is also pushed as [`DeclarerHandShown`](#event-declarerhandshown) |
@@ -927,7 +927,7 @@ While `phase` is `waiting`, **every other field is null** (including `hand`,
 An optional **"deal now"**. Once a board is `finished` (13 tricks played, a
 claim accepted, or passed out) and its [set](#sets) isn't over, the set's
 next board is dealt **by itself** at the state's `next_board_at`,
-`BRIDGE_NEXT_BOARD_SECONDS` (default **10**) after the board finished — the
+`BRIDGE_NEXT_BOARD_SECONDS` (default **15**) after the board finished — the
 finished board stays on the table, `result` and the whole `deal` on show,
 until then. Nobody has to press anything. This endpoint deals it **earlier**:
 once **every human** at the table has asked, the last one to ask deals it at
@@ -1600,7 +1600,7 @@ Play at a table goes in **sets** of four boards (`bridge.set_size`, env
 1. everybody presses Start ([`POST /tables/{table}/start`](#post-tablestablestart))
    → the set's first board;
 2. after each board its result stays on show for `BRIDGE_NEXT_BOARD_SECONDS`
-   (10; the state's `next_board_at`) and then the next board is dealt by
+   (15; the state's `next_board_at`) and then the next board is dealt by
    itself — or at once when every human has asked for it
    ([`POST /tables/{table}/playing/next`](#post-tablestableplayingnext)) →
    boards 2, 3 and 4;

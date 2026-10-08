@@ -64,7 +64,7 @@ return [
 
   'set_size' => (int) env('BRIDGE_SET_SIZE', 4),
 
-  'next_board_seconds' => (int) env('BRIDGE_NEXT_BOARD_SECONDS', 10),
+  'next_board_seconds' => (int) env('BRIDGE_NEXT_BOARD_SECONDS', 15),
 
   /*
   |--------------------------------------------------------------------------

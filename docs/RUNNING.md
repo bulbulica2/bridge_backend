@@ -288,7 +288,7 @@ stays until somebody kicks its robots.
 |---|---|---|
 | `BRIDGE_SET_SIZE` | `4` | boards in a set (`config/bridge.php`): Start deals the first, the rest come by themselves (below), and after the last it takes everyone's Start again. A set keeps the size it opened with |
 | `BRIDGE_SET_MINUTES` | `16` | each human's time bank for a whole set, in minutes, for a table that doesn't choose one (`POST /tables` `set_minutes`; one of 8, 12, 16, 20): it runs only while the board waits for them, and running out hands their seat to a robot like a turn timeout. A table keeps what it was created with, and a set what it opened with |
-| `BRIDGE_NEXT_BOARD_SECONDS` | `10` | seconds a finished board of a set (not its last) stays on show before the set's next board is dealt by itself (the state's `next_board_at`); every human pressing Next deals it sooner |
+| `BRIDGE_NEXT_BOARD_SECONDS` | `15` | seconds a finished board of a set (not its last) stays on show before the set's next board is dealt by itself (the state's `next_board_at`); every human pressing Next deals it sooner |
 
 The automatic deal is a delayed queued job (`App\Jobs\DealNextBoard`), so
 **`queue:work` must be running**, or a finished board stays on the table

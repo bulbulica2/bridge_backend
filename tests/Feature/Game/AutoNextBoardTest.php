@@ -65,7 +65,7 @@ class AutoNextBoardTest extends TestCase
     $this->passOut();
 
     $finishedAt = $this->playing->fresh()->finished_at;
-    $nextAt = $finishedAt->copy()->addSeconds(10)->toJSON();
+    $nextAt = $finishedAt->copy()->addSeconds(15)->toJSON();
 
     $this->state('N')
       ->assertJsonPath('data.phase', 'finished')
@@ -74,7 +74,7 @@ class AutoNextBoardTest extends TestCase
       && $job->delay->toJSON() === $nextAt);
 
     // not due yet: the result stays on show
-    $this->travel(9)->seconds();
+    $this->travel(14)->seconds();
     $this->assertNull($this->runJob());
     $this->state('N')->assertJsonPath('data.phase', 'finished');
 
@@ -128,13 +128,13 @@ class AutoNextBoardTest extends TestCase
     $claims->respond($this->table, $this->players['E'], true);
     $claims->respond($this->table, $this->players['W'], true);
 
-    $nextAt = $this->playing->fresh()->finished_at->addSeconds(10)->toJSON();
+    $nextAt = $this->playing->fresh()->finished_at->addSeconds(15)->toJSON();
     $this->state('S')
       ->assertJsonPath('data.result.claimed', true)
       ->assertJsonPath('data.next_board_at', $nextAt);
     Bus::assertDispatchedTimes(DealNextBoard::class, 1);
 
-    $this->travel(10)->seconds();
+    $this->travel(15)->seconds();
 
     $this->assertNotNull($this->runJob());
     $this->state('S')->assertJsonPath('data.phase', 'auction')->assertJsonPath('data.set.board', 2);
@@ -165,7 +165,7 @@ class AutoNextBoardTest extends TestCase
     $this->seats->remove($this->table, $this->players['E']);
     $this->state('N')->assertJsonPath('data.next_board_at', null);
 
-    $this->travel(10)->seconds();
+    $this->travel(15)->seconds();
     $this->assertNull($this->runJob());
 
     $this->seats->seat($this->table, User::factory()->create(), 'E');
@@ -189,7 +189,7 @@ class AutoNextBoardTest extends TestCase
       ->assertJsonPath('data.next_board_at', null);
     Bus::assertNotDispatched(DealNextBoard::class);
 
-    $this->travel(10)->seconds();
+    $this->travel(15)->seconds();
     $this->assertNull($this->runJob());
     $this->assertDatabaseCount('board_table', 1);
   }
@@ -206,7 +206,7 @@ class AutoNextBoardTest extends TestCase
 
     // the finished board keeps its four; E doesn't hold up the others' Next
     $this->assertSame($this->players['E']->id, (int) $this->playing->seats()->where('seat', 'E')->value('user_id'));
-    $this->state('N')->assertJsonPath('data.next_board_at', $this->playing->fresh()->finished_at->addSeconds(10)->toJSON());
+    $this->state('N')->assertJsonPath('data.next_board_at', $this->playing->fresh()->finished_at->addSeconds(15)->toJSON());
 
     $this->next('N');
     $this->next('S');
@@ -227,7 +227,7 @@ class AutoNextBoardTest extends TestCase
 
     $this->assertDatabaseCount('board_table', 2);
 
-    $this->travel(10)->seconds();
+    $this->travel(15)->seconds();
     $this->assertNull($this->runJob());
     $this->assertDatabaseCount('board_table', 2);
   }
@@ -273,9 +273,9 @@ class AutoNextBoardTest extends TestCase
     $away = $this->table->seats()->where('seat', 'E')->sole();
     $this->assertNotNull($away->away_since);
 
-    $this->state('N')->assertJsonPath('data.next_board_at', $this->playing->fresh()->finished_at->addSeconds(10)->toJSON());
+    $this->state('N')->assertJsonPath('data.next_board_at', $this->playing->fresh()->finished_at->addSeconds(15)->toJSON());
 
-    $this->travel(10)->seconds();
+    $this->travel(15)->seconds();
     $this->assertNotNull($this->runJob());
 
     // being dealt to is no sign of life: still away, the clock running on
@@ -291,7 +291,7 @@ class AutoNextBoardTest extends TestCase
 
     $this->table->delete();
 
-    $this->travel(10)->seconds();
+    $this->travel(15)->seconds();
     $this->assertNull($this->runJob());
     $this->assertNull(app(PlayingStateService::class)->nextBoardAt($this->playing->fresh()));
   }
