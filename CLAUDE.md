@@ -302,7 +302,7 @@ vendor/bin/pint --test            # check formatting without changing files
   `bridge.set_size` = 4): a Start's deal opens a set (`openSet()`), and its
   next boards (`board_table.table_set_id`/`set_position`) come by themselves:
   `BoardTable::finish()` queues `App\Jobs\DealNextBoard` with a delay of
-  `bridge.next_board_seconds` (10), whose `dealNext()` deals for the same
+  `bridge.next_board_seconds` (15), whose `dealNext()` deals for the same
   four under the table lock unless the table moved on, the four changed or
   the set ended (`PlayingStateService::nextBoardAt()`, the state's
   `next_board_at`, says when; tests travel and run it, as for claims),

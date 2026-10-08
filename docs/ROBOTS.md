@@ -1088,7 +1088,7 @@ and the robot holds the ♠A: one sure winner → **rejects**.
 When a board is finished (played out, claimed or passed out), each robot asks
 for the next board — the same as a human's `POST /tables/{table}/playing/next`
 — one per event, straight away. It no longer needs to: the next board of the
-set is dealt by itself `BRIDGE_NEXT_BOARD_SECONDS` (10) after the board ended
+set is dealt by itself `BRIDGE_NEXT_BOARD_SECONDS` (15) after the board ended
 (`DealNextBoard`), or at once when every **human** at the table has asked,
 robots counting as asked either way. So the robots' asking only fills in
 `ready`; it never deals and never holds the deal up. The board comes with the

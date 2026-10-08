@@ -565,7 +565,7 @@ Play at a table goes in **sets** of `bridge.set_size` boards (4, env
 1. Everybody at a full table presses **Start** → the first board of a new
    set is dealt.
 2. After each board, its result stays on show for
-   `bridge.next_board_seconds` (10, env `BRIDGE_NEXT_BOARD_SECONDS`) → then
+   `bridge.next_board_seconds` (15, env `BRIDGE_NEXT_BOARD_SECONDS`) → then
    the set's next board is dealt by itself, by the selection rule above.
    Every human asking for it (`playing/next`; robots count as asking) deals
    it at once instead.
@@ -788,7 +788,7 @@ Over HTTP:
   the state gains `result`.
 - **Step 6's "pick the table's next board" is built**: a finished board
   (played out, claimed or passed out) stays on the table, whole deal shown,
-  for `bridge.next_board_seconds` (10; the state's `next_board_at`), and then
+  for `bridge.next_board_seconds` (15; the state's `next_board_at`), and then
   the queued `App\Jobs\DealNextBoard` (`BoardSelectionService::dealNext()`)
   deals the next board with the same selection rule and the same four
   players in the same seats — even while one of them is away. Earlier, once
