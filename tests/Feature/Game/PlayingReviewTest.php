@@ -14,7 +14,6 @@ use App\Services\TableSeatService;
 use Database\Seeders\game\BidSeeder;
 use Database\Seeders\game\CardSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Arr;
 use Illuminate\Testing\TestResponse;
 use Tests\TestCase;
 
@@ -126,10 +125,52 @@ class PlayingReviewTest extends TestCase
     $this->assertSame(count(self::CALLS), $this->playing->auctions()->count());
     $this->assertSame(52, $this->playing->cardPlays()->count());
 
-    // only the set has moved on: its players left before its last board
-    $after = $this->review('S')->assertOk()->json('data');
-    $this->assertSame(['finished' => true, 'ended' => 'abandoned'], Arr::only($after['set'], ['finished', 'ended']));
-    $this->assertSame(Arr::except($before, 'set'), Arr::except($after, 'set'));
+    // the set was abandoned since, but a review only says where the board
+    // was in it
+    $this->assertSame($before, $this->review('S')->assertOk()->json('data'));
+    $this->assertSame(1, $before['set']['board']);
+  }
+
+  public function test_the_review_says_which_board_of_its_set_the_playing_was(): void
+  {
+    $this->playCards(52);
+
+    // the set's second board: everyone asks for it, then it is passed out
+    foreach (Seats::SEATS as $seat) {
+      $this->actingAs($this->players[$seat])->postJson("/tables/{$this->table->id}/playing/next")->assertOk();
+    }
+
+    $second = BoardTable::where('table_id', $this->table->id)->where('set_position', 2)->sole();
+    $seat = $second->board->dealer;
+
+    for ($i = 0; $i < 4; $i++) {
+      $this->actingAs($this->players[$seat])
+        ->postJson("/tables/{$this->table->id}/calls", ['bid_id' => Bid::where('suit', 'P')->value('id')])
+        ->assertCreated();
+      $seat = Seats::next($seat);
+    }
+
+    $set = $second->tableSet;
+
+    $this->actingAs($this->players['E'])
+      ->getJson("/playings/$second->id")
+      ->assertOk()
+      ->assertJsonPath('data.phase', 'finished')
+      ->assertJsonPath('data.set', ['id' => $set->id, 'number' => $set->number, 'board' => 2, 'of' => 4])
+      ->assertJsonPath('data.board.number', $second->board->number);
+
+    // the first board is still the first
+    $this->review('E')->assertJsonPath('data.set.board', 1);
+  }
+
+  public function test_a_playing_outside_any_set_has_no_set(): void
+  {
+    $this->playCards(52);
+    $this->playing->update(['table_set_id' => null, 'set_position' => null]);
+
+    $this->review('N')
+      ->assertOk()
+      ->assertJsonPath('data.set', null);
   }
 
   public function test_a_board_ended_by_a_claim_shows_the_tricks_up_to_the_claim(): void

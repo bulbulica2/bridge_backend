@@ -1006,7 +1006,7 @@ explanation shows as it does to the players; `question` is always `null`.
 |---|---|
 | `phase` | `waiting` — the table has no board (`tables.board_id` null, fewer than four players); `auction` — `board_table.auction_ended_at` is null; `play` — the auction ended with a contract (`finished_at` still null); `finished` — `finished_at` is set: after the 13th trick, when a claim is accepted, or straight away on a **passed out** board. |
 | `playing_id` | the `board_table.id` |
-| `set` | the [set](#sets) this board was dealt in: `id` (for [`GET /sets/{set}`](#get-setsset)), `number` (1, 2, 3… at this table), `board` (this board's place in it, 1–`of`), `of` (how many boards the set has, 4), `finished` (true once the set is over: after its last board is finished, or earlier if one of its four left), `ended` (`null` while it goes on, then `completed` or `abandoned`) and `replaced` (the players a robot took a seat over from mid-set, `[{seat, user_id, reason}]`, `[]` for none; see [Away mid-set](#away-mid-set-and-the-turn-clock)), `minutes` (each player's time bank for the set) and `time_left` (`{N, E, S, W}`: seconds left on each seat's bank as of `turn_started_at`, `null` for a robot or an admin; see [the set clock](#the-set-clock)). After the last board `finished` is true while that board is still on show: time for the set's results and everyone's Start |
+| `set` | the [set](#sets) this board was dealt in: `id` (for [`GET /sets/{set}`](#get-setsset)), `number` (1, 2, 3… at this table), `board` (this board's place in it, 1–`of`), `of` (how many boards the set has, 4), `finished` (true once the set is over: after its last board is finished, or earlier if one of its four left), `ended` (`null` while it goes on, then `completed` or `abandoned`) and `replaced` (the players a robot took a seat over from mid-set, `[{seat, user_id, reason}]`, `[]` for none; see [Away mid-set](#away-mid-set-and-the-turn-clock)), `minutes` (each player's time bank for the set) and `time_left` (`{N, E, S, W}`: seconds left on each seat's bank as of `turn_started_at`, `null` for a robot or an admin; see [the set clock](#the-set-clock)). After the last board `finished` is true while that board is still on show: time for the set's results and everyone's Start. In `GET /playings/{playing}` only `{id, number, board, of}` |
 | `board` | `id`, `number`, `dealer` (`N/E/S/W`) and `vulnerable` (a `Vulnerability` value) from `boards` |
 | `players` | seat → public profile less `description` (`PlayerResource`, as a seat's `user`: no email; `is_robot` marks a robot), from the playing's `board_table_seats` snapshot, not from `table_seats` — so a robot that took a seat over mid-board shows here from then on |
 | `turn` | the seat expected to act. During the `auction`: the dealer first, then clockwise after the last call. During the `play`: the **hand** the next card comes from — declarer's left-hand opponent leads the first trick, then clockwise, and each trick's winner leads the next. When it is dummy's seat, declarer plays it (see `acting_user_id`). `null` while `waiting` and once `finished` |
@@ -1653,12 +1653,23 @@ better contract. `{playing}` is a `board_table.id`: the `playing_id` on each
 [`GET /tables/{table}/playing`](#get-tablestableplaying)
 (`PlayingResource`) for that playing, with `phase: "finished"`, **less
 `ready` and `next_board_at`** (which only mean something at a live table) and without the
-viewer's `my_seat` / `hand`: `playing_id`, `board`, `players` (from the seat
+viewer's `my_seat` / `hand`: `playing_id`, `set`, `board`, `players` (from the seat
 snapshot), `turn` and `acting_user_id` (both `null`), `auction` (every call
 in order), `contract`, `tricks` (the complete tricks in order),
 `current_trick`, `tricks_won`, `dummy_hand`, `claim` (`null`), `claim_locked` (`false`), `result` and
 `deal` (all four hands as dealt). It works the same once the table has been
 deleted.
+
+`set` says which board of its [set](#sets) this was, in the same shape as a
+history row's `set` (`GET /users/{user}/playings`):
+`{id, number, board, of}` — the set's id (for `GET /sets/{set}`), its number
+at the table, `board`, this playing's place in it (1–`of`, the `position`
+`GET /sets/{set}` gives it), and `of`, the set's size. **None of the live
+`set`'s other fields** (`finished`, `ended`, `replaced`, `minutes`,
+`time_left`): they describe a set in progress, and `GET /sets/{set}` has how
+it ended. `null` for a playing outside any set. Show "Board 2 of 4" from it;
+`board.number` is the board's number in the global sequence, which means
+nothing to a player (the PBN export uses it).
 
 Each `auction` entry is `{seat, bid, alert}`: once the board is over every
 alert is public, so `alert` is the call's `{explanation}` (null explanation:
