@@ -28,8 +28,9 @@ use Tests\TestCase;
  * for the rest of the set (`away`), every away seat whose time is up in the
  * same check. Away on turn, the turn clock doesn't apply but their time for
  * the set runs (`SetClockTest`). Leave mid-set is going away; moving to
- * another table, or being kicked while away, hands the seat to a robot at
- * once; with no human left to play with, the set is abandoned instead.
+ * another table, or being kicked by an admin while away, hands the seat to a
+ * robot at once; with no human left to play with, the set is abandoned
+ * instead.
  * Robots are never away and an admin is never replaced.
  */
 class AwayMidSetTest extends TestCase
@@ -469,11 +470,17 @@ class AwayMidSetTest extends TestCase
       ->assertJsonPath('message', 'Seat taken successfully.');
   }
 
-  public function test_kicking_an_away_player_hands_the_seat_to_a_robot_and_kicking_a_present_one_abandons(): void
+  public function test_an_admin_kicking_an_away_player_hands_the_seat_to_a_robot_and_kicking_a_present_one_abandons(): void
   {
     $this->leave('E')->assertStatus(202);
 
+    // not the moderator's to do mid-set: the away rule replaces them
     $this->actingAs($this->players['N'])->deleteJson("/tables/{$this->table->id}/seats/{$this->players['E']->id}")
+      ->assertStatus(409);
+
+    $admin = User::factory()->create(['is_admin' => true]);
+
+    $this->actingAs($admin)->deleteJson("/tables/{$this->table->id}/seats/{$this->players['E']->id}")
       ->assertOk()
       ->assertJsonPath('message', 'Player removed from the table. They were away mid-set, so a robot took their seat.')
       ->assertJsonPath('data.set.ended', null)
@@ -481,7 +488,7 @@ class AwayMidSetTest extends TestCase
       ->assertJsonPath('data.free_seats', []);
 
     // a kick of somebody who is there ends the set
-    $this->actingAs($this->players['N'])->deleteJson("/tables/{$this->table->id}/seats/{$this->players['S']->id}")
+    $this->actingAs($admin)->deleteJson("/tables/{$this->table->id}/seats/{$this->players['S']->id}")
       ->assertOk()
       ->assertJsonPath('message', 'Player removed from the table.')
       ->assertJsonPath('data.set.ended', 'abandoned')

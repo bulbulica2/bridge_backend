@@ -211,9 +211,9 @@ class RobotSeatingTest extends TestCase
     $this->assertSame('robot-4', $table->seats()->where('seat', 'E')->firstOrFail()->user->username);
   }
 
-  public function test_with_a_human_at_the_table_only_a_manager_kicks_a_robot(): void
+  public function test_with_a_human_at_the_table_only_a_manager_kicks_a_robot_and_not_mid_set(): void
   {
-    $table = $this->robotTable();
+    $table = $this->robotTable(start: false);
     $robot = $table->seats()->where('seat', 'E')->firstOrFail()->user;
 
     $this->actingAs(User::factory()->create())
@@ -225,6 +225,17 @@ class RobotSeatingTest extends TestCase
       ->assertOk()
       ->assertJsonPath('message', 'Player removed from the table.')
       ->assertJsonPath('data.free_seats', ['E']);
+
+    // once the set is under way, the robot plays it to the end
+    $this->actingAs($this->owner)->postJson("/tables/$table->id/seats/robots", ['seat' => 'E'])->assertCreated();
+    $this->actingAs($this->owner)->postJson("/tables/$table->id/start")->assertOk();
+    $robot = $table->seats()->where('seat', 'E')->firstOrFail()->user;
+
+    $this->actingAs($this->owner)
+      ->deleteJson("/tables/$table->id/seats/$robot->id")
+      ->assertStatus(409)
+      ->assertJsonPath('message', "You can't remove a player in the middle of a set: wait until it is over.");
+    $this->assertSame($robot->id, $table->seats()->where('seat', 'E')->value('user_id'));
   }
 
   public function test_the_last_human_leaving_leaves_the_table_unattended(): void
@@ -466,10 +477,13 @@ class RobotSeatingTest extends TestCase
    * The owner at N and robots in the other three seats, board dealt by the
    * owner's Start.
    */
-  private function robotTable(): Table
+  private function robotTable(bool $start = true): Table
   {
     $id = $this->actingAs($this->owner)->postJson('/tables', ['robots' => true])->assertCreated()->json('data.id');
-    $this->actingAs($this->owner)->postJson("/tables/$id/start")->assertOk();
+
+    if ($start) {
+      $this->actingAs($this->owner)->postJson("/tables/$id/start")->assertOk();
+    }
 
     return Table::findOrFail($id);
   }

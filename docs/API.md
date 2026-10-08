@@ -59,7 +59,7 @@ lobby, profiles, histories, results — stays open.
 | DELETE | `/tables/{table}/seats` | `Game\TableSeatController@destroy` | `auth` | give up your seat; deletes the table if you were the last player |
 | POST | `/tables/{table}/seats/users` | `Game\TableSeatController@storeUser` | `auth` + `TablePolicy::manage` | a table manager seats another user (201) |
 | POST | `/tables/{table}/seats/robots` | `Game\TableSeatController@storeRobot` | `auth` + `TablePolicy::manage` | a table manager puts a robot in a free seat (201) |
-| DELETE | `/tables/{table}/seats/{user}` | `Game\TableSeatController@destroyUser` | `auth` (+ `TablePolicy::kick`: a manager, to remove anyone but yourself or an admin; another admin, to remove an admin; anyone, to remove a robot from an unattended table) | quit your seat, or kick that player out |
+| DELETE | `/tables/{table}/seats/{user}` | `Game\TableSeatController@destroyUser` | `auth` (+ `TablePolicy::kick`: a manager, to remove anyone but yourself or an admin; another admin, to remove an admin; anyone, to remove a robot from an unattended table; mid-set only an admin, or anyone for a robot at an unattended table) | quit your seat, or kick that player out |
 | POST | `/tables/{table}/start` | `Game\TableStartController@store` | `auth` + seated at the table (`TablePolicy::play`) | press Start; the first board of a new set is dealt once the table is full and every human there has pressed it (200, the table plus `playing`) |
 | DELETE | `/tables/{table}/start` | `Game\TableStartController@destroy` | `auth` + seated at the table (`TablePolicy::play`) | take your Start back while no board is dealt (200, the table) |
 | POST | `/tables/{table}/heartbeat` | `Game\TableSeatController@heartbeat` | `auth` + seated at or watching the table (`TablePolicy::watch`) | "still here": keeps the caller's seat (or kibitzer's place) from being freed as idle (200, `{last_seen_at}`) |
@@ -641,9 +641,25 @@ Take a player out of their seat. No body. `{user}` is a `users.id`.
   ```json
   {"status": 200, "message": "You left the table. Nobody was left, so the table was deleted.", "data": {"table_deleted": true}}
   ```
-- A kick frees the seat at once, even mid-set, and abandons an unfinished
-  playing just as a freed seat on `DELETE /tables/{table}/seats` does.
-  Mid-set it ends the set `abandoned` — unless the kicked player was
+- **409** `"You can't remove a player in the middle of a set: wait until it
+  is over."` for a kick while the table's [set](#sets) is running — a board
+  of it in progress, or between two of its boards (`set.finished` false) —
+  robots included: the other three are playing it, and the moderator can't
+  break it up. Before the first set and once the last one is over (however
+  it ended) a manager kicks as described here. Mid-set, three things stay
+  allowed:
+  - a **quit** (`{user}` is yourself): the held seat (**202**) above;
+  - an **admin**'s kick, there to stop cheating, with the consequences
+    below;
+  - **anyone** sending a **robot** away from an **unattended** table, where
+    no human plays.
+
+  A player who is away mid-set needs no kick: the [away
+  rule](#away-mid-set-and-the-turn-clock) hands their seat to a robot at
+  their `replace_at`.
+- A kick frees the seat at once and abandons an unfinished playing just as
+  a freed seat on `DELETE /tables/{table}/seats` does. Mid-set (an admin's
+  kick) it ends the set `abandoned` — unless the kicked player was
   **away**: then a **robot takes their seat** for the rest of the set and
   plays the board on (`replaced` reason `"kicked"`; not when they were the
   last human there), and the message adds `" They were away mid-set, so a
@@ -796,8 +812,8 @@ and at most ten seconds more), does it:
    that was never taken back, say).
 
 **Moving** to another table mid-set hands the seat to a robot at once
-(`moved`), and so does a manager **kicking** a player who is away
-(`kicked`, as does an admin's ban mid-set). **Robots** never have a clock
+(`moved`), and so does an admin **kicking** a player who is away
+(`kicked`, as does an admin's ban mid-set; nobody else may kick mid-set). **Robots** never have a clock
 and are never away. A set is never forfeited: whoever walks out is
 replaced, and the set's result stands for the seats as they end it.
 
@@ -1738,13 +1754,13 @@ Each player has a time bank for the whole set (`minutes`, from the table's
 A player who **walks out** on a set — lets their turn clock run out
 (`turn_timeout`) or their time for the set (`set_time`), stays away past
 their seat's `replace_at` (`away`), moves to another table
-(`moved`), or is kicked while away or banned (`kicked`) — doesn't end it: a
+(`moved`), or is kicked by an admin while away or banned (`kicked`) — doesn't end it: a
 robot takes their seat and plays on, and the set's `replaced` lists them
 (see [Away mid-set](#away-mid-set-and-the-turn-clock)). A Leave mid-set only
 holds the seat for 2 minutes (`replace_at`).
 
 A set ends early, even between boards, as `abandoned`, with no winner, when
-one of its four is taken out of the table otherwise (kicked while there,
+one of its four is taken out of the table otherwise (kicked by an admin while there,
 leaving while an admin there is away, an admin leaving), or walks out with
 no other human left at the table to play with a robot.
 
@@ -2053,7 +2069,7 @@ of `GET /users/{user}`. Admins are counted like anyone.
 | `leaving.left_rate` | `abandoned / (sets.played + abandoned)` |
 
 A rate or percentage with nothing to divide by is `null`; whole numbers come
-as JSON integers (`1`, `100`). A set kicked out of shape by a manager
+as JSON integers (`1`, `100`). A set kicked out of shape by an admin
 removing a player **who was there** ends `abandoned` with nobody to blame
 (`ended_by` null), so it counts against nobody. Sets that ended `abandoned`
 before `ended_by` existed aren't attributed to anyone.

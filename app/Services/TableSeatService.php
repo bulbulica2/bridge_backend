@@ -7,6 +7,7 @@ use App\Events\DeclarerHandShown;
 use App\Events\PlayingUpdated;
 use App\Events\TableUpdated;
 use App\Events\UnseatedFromTable;
+use App\Exceptions\KickRefusedException;
 use App\Exceptions\SeatUnavailableException;
 use App\Models\BoardTable;
 use App\Models\Table;
@@ -319,8 +320,44 @@ class TableSeatService
   }
 
   /**
+   * `$by` takes `$user` out of their seat at `$table` (a kick, which
+   * `TablePolicy::kick` has allowed), through remove().
+   *
+   * Never in the middle of a set (currentSet(): a board in progress or
+   * between its boards), robots included: the other three are playing it.
+   * Only an admin may then, to stop cheating, and anyone may still send a
+   * robot away from an unattended table, where no human plays. A player
+   * who is away mid-set needs no kick: the away rule hands their seat to a
+   * robot at its `replace_at` (checkAway()).
+   *
+   * Returns true if the table was deleted, as remove().
+   *
+   * @throws KickRefusedException
+   * @throws SeatUnavailableException
+   */
+  public function kick(Table $table, User $user, User $by): bool
+  {
+    return DB::transaction(function () use ($table, $user, $by) {
+      Table::whereKey($table->getKey())->lockForUpdate()->firstOrFail();
+      $table->refresh();
+
+      $refused = ! $by->is_admin
+        && ! ($user->is_robot && $table->unattended_since !== null)
+        && $this->boardSelection->currentSet($table) !== null
+        // nobody seated there is remove()'s 404, set or not
+        && $table->seats()->where('user_id', $user->id)->exists();
+
+      if ($refused) {
+        throw new KickRefusedException("You can't remove a player in the middle of a set: wait until it is over.");
+      }
+
+      return $this->remove($table, $user, $by);
+    });
+  }
+
+  /**
    * Free the seat a user holds at a table, whether they quit or a manager
-   * kicked them out.
+   * kicked them out (kick(), which refuses a manager mid-set).
    *
    * `$by` is who asked, when that isn't `$user` themselves (a manager
    * removing another player); it only changes the wording of the error.
@@ -330,7 +367,7 @@ class TableSeatService
    * Mid-set, a player taken out for running out of time on their turn
    * (`$walkOut` `turn_timeout`, `set_time` or `away`, from checkAway()), walking out on
    * the set (`moved`: a move to another table from seat(); `kicked`: a ban
-   * from `UserBanService::ban()`) or kicked while away has a **robot take
+   * from `UserBanService::ban()`) or kicked by an admin while away has a **robot take
    * their seat** for the rest of the set (replaceWithRobot(), with that
    * reason), unless walksOut() lets them off or no human would be left:
    * the set and the board in progress go on, and they may not sit down

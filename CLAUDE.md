@@ -134,7 +134,9 @@ vendor/bin/pint --test            # check formatting without changing files
   (join/leave a seat) plus `storeUser` (`POST /tables/{table}/seats/users`,
   a manager seats someone else) and `destroyUser`
   (`DELETE /tables/{table}/seats/{user}`, quit if it's your own seat,
-  otherwise a kick, `TablePolicy::kick`) and `storeRobot`
+  otherwise a kick, `TablePolicy::kick`, through `TableSeatService::kick()`,
+  which 409s a kick while the set is running unless an admin makes it or
+  the target is a robot at an unattended table) and `storeRobot`
   (`POST /tables/{table}/seats/robots`, a manager seats a robot), all behind
   the `auth` middleware. `POST /tables` takes `robots: true` to fill the
   other three seats with robots (it deals nothing). Both serialise a
@@ -280,7 +282,7 @@ vendor/bin/pint --test            # check formatting without changing files
   `GET /sets/{set}` `time_used`. Sets are never forfeited: `remove()` calls
   `replaceWithRobot()` instead of abandoning when `$walkOut` says so
   (`turn_timeout`/`set_time`/`away` from the check, `moved` from `seat()`, `kicked`
-  from a ban) or the player is away (a kick: `kicked`), as decided by
+  from a ban) or the player is away (an admin's kick: `kicked`), as decided by
   `replacementReason()`/`walksOut()`: never a robot or an admin, only while
   another human stays at the table, and, except for running out of time,
   nobody while an admin at the table is away. A `RobotPool` robot sits down

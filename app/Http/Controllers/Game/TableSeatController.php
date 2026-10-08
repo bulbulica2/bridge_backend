@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Game;
 
+use App\Exceptions\KickRefusedException;
 use App\Exceptions\SeatUnavailableException;
 use App\Http\Controllers\BaseController;
 use App\Http\Requests\Table\AddRobotToSeatRequest;
@@ -130,9 +131,12 @@ class TableSeatController extends BaseController
         return $this->leaveResponse($table, $seatService->leave($table, $user));
       }
 
-      // kicking a player who is away mid-set hands their seat to a robot
+      // an admin kicking a player who is away mid-set hands their seat to a
+      // robot (nobody else may kick mid-set)
       $replaced = $seatService->removalReplaces($table, $user);
-      $tableDeleted = $seatService->remove($table, $user, $request->user());
+      $tableDeleted = $seatService->kick($table, $user, $request->user());
+    } catch (KickRefusedException $e) {
+      return $this->sendError($e->getMessage(), 409);
     } catch (SeatUnavailableException $e) {
       // the seat is addressed in the URL, so "nobody sits there" is a 404
       return $this->sendError($e->getMessage(), 404);

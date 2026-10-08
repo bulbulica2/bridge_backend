@@ -357,7 +357,7 @@ Seats are managed through `App\Services\TableSeatService`:
   `remove(..., $walkOut)` hands the seat to a robot (`replaceWithRobot()`,
   with the reason) instead of abandoning the set when the player going ran
   out of time (`turn_timeout`/`set_time`/`away`), is moving to another table
-  (`moved`), is banned (`kicked`) or is kicked while away (`kicked`),
+  (`moved`), is banned (`kicked`) or is kicked by an admin while away (`kicked`),
   mid-set, while another human stays at the table, except an admin or —
   for anything but running out of time — while an admin there is away
   (`replacementReason()`, `walksOut()`). The robot comes from `RobotPool`,
@@ -619,7 +619,7 @@ Fields (all fillable):
   (`PlayerStatsService`, `GET /users/{user}/stats`). Set by
   `abandonSet($table, $leaver)` from `remove()` for anyone's own going (a
   Leave, running out of time, a move, a ban, a kick while away); null for
-  a `completed` set, for one ended by a manager kicking a player who was
+  a `completed` set, for one ended by an admin kicking a player who was
   there, for the guards (`openSet()`, `Table::deleting`) and for sets that
   ended before the column existed.
 - timestamps.
