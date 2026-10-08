@@ -6,6 +6,7 @@ use App\auxiliary\Seats;
 use App\Events\DeclarerHandShown;
 use App\Events\PlayingUpdated;
 use App\Events\TableUpdated;
+use App\Events\UnseatedFromTable;
 use App\Exceptions\SeatUnavailableException;
 use App\Models\BoardTable;
 use App\Models\Table;
@@ -122,6 +123,7 @@ class TableSeatService
             'last_seen_at' => now(),
             'ready_at' => $user->is_robot ? $held->ready_at : null,
           ]);
+          $this->boardSelection->syncStartDeadline($table);
 
           TableUpdated::dispatch($table);
 
@@ -153,6 +155,8 @@ class TableSeatService
         // a robot filling the table after every human pressed Start deals;
         // a human sitting down never does, they have still to press it
         $this->boardSelection->startIfReady($table);
+        // or, everyone else being ready, time the one who isn't
+        $this->boardSelection->syncStartDeadline($table);
 
         TableUpdated::dispatch($table);
 
@@ -345,7 +349,8 @@ class TableSeatService
    * ended it (`ended_by`) unless somebody else kicked them while they were
    * there.
    * The leaver's Start goes with their seat row; whoever takes the seat next
-   * has to press it.
+   * has to press it. Any Start timer stops (the table is short of a player,
+   * or mid-set, where there is none).
    *
    * Mutates `$table` (moderator handover, `board_id`) and returns true if the
    * table was deleted. Broadcasts `TableUpdated` unless it was, and
@@ -409,6 +414,9 @@ class TableSeatService
       } elseif ((int) $table->moderated_by === $user->id) {
         $table->update(['moderated_by' => $next->user_id]);
       }
+
+      // the table is short of a player now: any Start timer stops
+      $this->boardSelection->syncStartDeadline($table);
 
       // a deleted table has nobody left to tell
       if (! $quietly) {
@@ -823,6 +831,43 @@ class TableSeatService
     }
 
     return $deleted;
+  }
+
+  /**
+   * Free a seat whose Start timer has run out (`start_deadline`, see
+   * `BoardSelectionService::syncStartDeadline()`), run by the queued
+   * `ExpireStart`. Rechecked under the table lock: by now they may have
+   * pressed Start, the timer may have stopped or started afresh, or the
+   * seat may be gone. The seat goes through remove(), exactly like a
+   * leave: moderation is handed on (a moderator or an admin is no
+   * exception), and the others are told. Nothing is held against the
+   * player, who may sit down again at once; they are told on their own
+   * channel (`UnseatedFromTable`, `start_timeout`).
+   *
+   * Returns whether the seat was freed.
+   */
+  public function expireStart(int $seatId): bool
+  {
+    return DB::transaction(function () use ($seatId) {
+      $tableId = TableSeat::whereKey($seatId)->value('table_id');
+
+      if ($tableId === null) {
+        return false;
+      }
+
+      $table = Table::whereKey($tableId)->lockForUpdate()->first();
+      $seat = TableSeat::whereKey($seatId)->where('table_id', $tableId)->with('user')->first();
+
+      if ($table === null || $seat?->start_deadline === null || $seat->start_deadline->isFuture()) {
+        return false;
+      }
+
+      $this->remove($table, $seat->user);
+
+      UnseatedFromTable::dispatch($seat->user_id, $table->id, UnseatedFromTable::REASON_START_TIMEOUT);
+
+      return true;
+    });
   }
 
   /**

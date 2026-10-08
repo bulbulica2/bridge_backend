@@ -289,6 +289,15 @@ vendor/bin/pint --test            # check formatting without changing files
   ready (never at a robots-only table). Dealing clears the humans'
   `ready_at`; leaving deletes the seat row and its Start with it, and a seat
   change at the same table clears it. Nobody presses Start for anyone else.
+  **Start timer**: outside a set, once a full table has every seat but one
+  human's ready and another human ready, `syncStartDeadline()` (run before
+  `TableUpdated` after every Start, withdrawal, `seat()` and `remove()`)
+  sets that seat's `table_seats.start_deadline` (`bridge.start_seconds`,
+  15) and queues `ExpireStart`, whose `TableSeatService::expireStart()`
+  frees it through `remove()` (admins and moderators too) and sends
+  `UnseatedFromTable` on the player's own channel. `PATCH /tables/{table}`
+  with a changed `set_minutes` revokes every human's Start
+  (`revokeStarts()`).
   Start 409s (`StartBoardException`) while a board is in its auction or play,
   or finished mid-set with the same four still seated (they use Next). Not at
   `POST /tables`, because the selection rule needs all four

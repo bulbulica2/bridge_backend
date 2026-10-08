@@ -68,6 +68,20 @@ return [
 
   /*
   |--------------------------------------------------------------------------
+  | Start timer
+  |--------------------------------------------------------------------------
+  |
+  | Outside a set, once a full table waits for one human's Start only (and
+  | at least one other human has pressed it), that human has this many
+  | seconds to press it (`table_seats.start_deadline`), or their seat is
+  | freed. The queued `ExpireStart` job does it, so it needs `queue:work`.
+  |
+  */
+
+  'start_seconds' => (int) env('BRIDGE_START_SECONDS', 15),
+
+  /*
+  |--------------------------------------------------------------------------
   | Set clock
   |--------------------------------------------------------------------------
   |

@@ -149,7 +149,7 @@ What runs where:
 |---|---|---|
 | API | `php artisan serve --host=localhost` (or Apache, see [Local speed](#local-speed)) | HTTP, including `POST /broadcasting/auth` |
 | Websocket server | `php artisan reverb:start` (add `--debug` to log every frame) | holds the players' connections on port 8080 |
-| Queue worker | `php artisan queue:work --sleep=0.1`; with the double dummy solver on XAMPP, `php -d extension=ffi -d xdebug.mode=off artisan queue:work --sleep=0.1` | broadcasts are queued jobs; the worker sends them to Reverb. It also runs the robots' moves (`DriveRobots`), expires unanswered claims (`ExpireClaim`), deals a set's next board when its pause is up (`DealNextBoard`) and solves the double dummy analysis (`SolveDoubleDummyTable`, `SolveOpeningLeads`; see [Double dummy](#double-dummy-dds)) |
+| Queue worker | `php artisan queue:work --sleep=0.1`; with the double dummy solver on XAMPP, `php -d extension=ffi -d xdebug.mode=off artisan queue:work --sleep=0.1` | broadcasts are queued jobs; the worker sends them to Reverb. It also runs the robots' moves (`DriveRobots`), expires unanswered claims (`ExpireClaim`), deals a set's next board when its pause is up (`DealNextBoard`), frees the seat of a player who didn't press Start in time (`ExpireStart`) and solves the double dummy analysis (`SolveDoubleDummyTable`, `SolveOpeningLeads`; see [Double dummy](#double-dummy-dds)) |
 
 Broadcast events implement `ShouldBroadcast`, so they go through the queue: a
 Reverb server that is down fails a queued job, not the player's request. The
@@ -293,6 +293,16 @@ stays until somebody kicks its robots.
 The automatic deal is a delayed queued job (`App\Jobs\DealNextBoard`), so
 **`queue:work` must be running**, or a finished board stays on the table
 (past its `next_board_at`) until every human there presses Next.
+
+### Start timer
+
+| Key | Default | Meaning |
+|---|---|---|
+| `BRIDGE_START_SECONDS` | `15` | outside a set, once a full table waits for one human's Start only (and another human has pressed it), seconds they have to press it (the seat's `start_deadline`) before their seat is freed |
+
+Freeing the seat is a delayed queued job (`App\Jobs\ExpireStart`), so
+**`queue:work` must be running**, or the table goes on waiting for that
+player's Start (a manager can still kick them).
 
 ### Claims
 

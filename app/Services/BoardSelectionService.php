@@ -9,6 +9,7 @@ use App\Events\PlayingUpdated;
 use App\Events\TableUpdated;
 use App\Exceptions\NextBoardException;
 use App\Exceptions\StartBoardException;
+use App\Jobs\ExpireStart;
 use App\Models\Board;
 use App\Models\BoardTable;
 use App\Models\Card;
@@ -37,7 +38,10 @@ use RuntimeException;
  * Boards come in sets (`TableSet`, `bridge.set_size` boards): everyone's
  * Start opens a set with its first board, the rest follow as above, and
  * after the last one Next is refused and it takes everyone's Start again to
- * open the next set. A set one of its four players leaves is over too
+ * open the next set. Nobody holds the others up with their Start: once a
+ * full table waits for one human only, they have `bridge.start_seconds` to
+ * press it or lose their seat (`syncStartDeadline()`). A set one of its
+ * four players leaves is over too
  * (`abandonSet()`), except when they walk out on it (their turn clock runs
  * out, they move tables, are kicked while away or banned): a robot takes
  * their seat and the set goes on (`TableSeatService::remove()`).
@@ -74,6 +78,7 @@ class BoardSelectionService
       $seat->update(['ready_at' => now()]);
 
       $playing = $this->startIfReady($table);
+      $this->syncStartDeadline($table);
 
       TableUpdated::dispatch($table);
 
@@ -97,9 +102,77 @@ class BoardSelectionService
       }
 
       $seat->update(['ready_at' => null]);
+      $this->syncStartDeadline($table);
 
       TableUpdated::dispatch($table);
     });
+  }
+
+  /**
+   * The Start timer: outside a set, at a full table where every seat but
+   * one is ready, that one is a human and at least one other human is
+   * ready, that seat has until `start_deadline` (`bridge.start_seconds`
+   * from when this first found it so) to press Start, or the queued
+   * `ExpireStart` frees it (`TableSeatService::expireStart()`). Robots are
+   * always ready but never start the clock by themselves: a human alone
+   * with three robots deals with their own Start anyway.
+   *
+   * Run under the table lock after every change to who sits where or who
+   * is ready, before the caller's `TableUpdated`, which carries it. A
+   * deadline already running is kept while the same seat is the one
+   * waited for; any other is cleared, so once the condition holds again
+   * (somebody withdrew and pressed again, a seat was refilled) the clock
+   * starts afresh.
+   */
+  public function syncStartDeadline(Table $table): void
+  {
+    $waiting = $this->startWaitsFor($table);
+
+    $table->seats()
+      ->whereNotNull('start_deadline')
+      ->when($waiting !== null, fn ($seats) => $seats->whereKeyNot($waiting->getKey()))
+      ->update(['start_deadline' => null]);
+
+    if ($waiting === null || $waiting->start_deadline !== null) {
+      return;
+    }
+
+    $deadline = now()->addSeconds((int) config('bridge.start_seconds'));
+    $waiting->update(['start_deadline' => $deadline]);
+
+    ExpireStart::dispatch($waiting->id)->delay($deadline)->afterCommit();
+  }
+
+  /**
+   * Revoke every human's Start, and so any Start timer: the table's
+   * settings changed (`PATCH /tables/{table}`), and a Start pressed for the
+   * old ones isn't one for the new. Robots stay ready. Run under the table
+   * lock, before the caller's `TableUpdated`.
+   */
+  public function revokeStarts(Table $table): void
+  {
+    $table->seats()->whereHas('user', fn ($user) => $user->humans())->update(['ready_at' => null]);
+    $table->seats()->update(['start_deadline' => null]);
+  }
+
+  /**
+   * The seat the Start timer runs for (see syncStartDeadline()), if any.
+   */
+  private function startWaitsFor(Table $table): ?TableSeat
+  {
+    $seats = $table->seats()->with('user')->get();
+    $unready = $seats->whereNull('ready_at');
+    $readyHumans = $seats->whereNotNull('ready_at')->reject(fn ($seat) => $seat->user->is_robot);
+
+    if ($seats->count() < count(Seats::SEATS)
+      || $unready->count() !== 1
+      || $unready->first()->user->is_robot
+      || $readyHumans->isEmpty()
+      || $this->currentSet($table) !== null) {
+      return null;
+    }
+
+    return $unready->first();
   }
 
   /**

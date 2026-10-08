@@ -161,7 +161,8 @@ Every table payload — from index, store, show or leave — is built by
 (`id`, `name`, `created_by`, `moderated_by`, `board_id`, `unattended_since`,
 `set_minutes`, timestamps), plus
 `seats` (`TableSeat` rows — `id`, `table_id`, `user_id`, `seat`,
-`last_seen_at`, `ready_at`, `away_since`, `replace_at`, timestamps — each
+`last_seen_at`, `ready_at`, `start_deadline`, `away_since`, `replace_at`,
+timestamps — each
 with its `user` and `ready`),
 `free_seats` (the unoccupied seats in `N, E, S, W` order), `set` and
 `can_manage`.
@@ -185,7 +186,9 @@ their `replace_at` and the end of their time for the set).
 A seat's `ready` (boolean, from `ready_at`) is whether its player has pressed
 **Start** (see [`POST /tables/{table}/start`](#post-tablestablestart)); a
 robot's is always true. It is public: everyone at the table sees who is
-waiting for whom. The `TableUpdated` websocket event carries this same
+waiting for whom. A seat's `start_deadline` (ISO 8601, or null) is the
+[Start timer](#the-start-timer): when that seat is freed unless its player
+presses Start. The `TableUpdated` websocket event carries this same
 shape less `can_manage` (see [Realtime](#realtime-websocket)).
 
 `can_manage` (boolean) is whether **the caller** may manage the table —
@@ -252,8 +255,35 @@ the next set.
 Start belongs to the seat: leaving, moving (to another table or another seat
 at this one), being kicked or being released as idle all drop it, and
 whoever sits down starts not ready. Nobody presses Start for anyone else, not
-a manager or an admin either: a player who never presses is handled like any
-idle player, or removed by a manager.
+a manager or an admin either; a player who never presses runs out of the
+[Start timer](#the-start-timer).
+
+#### The Start timer
+
+Nobody holds a full table up by not pressing Start. Outside a set, once the
+table is **full**, every seat but one is ready, that one is a **human**, and
+**at least one other human** has pressed Start, that seat gets a
+`start_deadline` = now + `BRIDGE_START_SECONDS` (**15**). Robots are always
+ready but never start the clock by themselves: a human alone with three
+robots deals with their own Start anyway. So with two humans and two robots,
+one Start gives the other human 15 s; with four humans, the fourth gets 15 s
+once three have pressed (two pressed: no timer yet).
+
+- The deadline clears when that player presses Start (which deals), or when
+  the condition stops holding: somebody withdraws their Start, leaves,
+  moves, is kicked or banned, a seat empties, or the
+  [set time changes](#patch-tablestable). Whenever it holds again, a new
+  15 s starts. Somebody else pressing (again) doesn't restart it.
+- Past the deadline the seat is **freed** (the queued `ExpireStart` job,
+  so it needs `queue:work`), exactly like a leave: anyone may take it,
+  nothing is held against the player (they may sit down again at once),
+  `moderated_by` is handed on to the human seated longest if they were the
+  moderator, and an **admin** is no exception (they stay an admin; only the
+  seat goes). The table gets a `TableUpdated` with the seat free, and the
+  player an [`UnseatedFromTable`](#event-unseatedfromtable) on their own
+  channel.
+- Count down from `start_deadline`, never from when the payload arrived. It
+  is in every table payload and in `TableUpdated`.
 
 ### `GET /tables`
 Every table. Ordered by `created_at` then `id`, newest first.
@@ -347,6 +377,11 @@ table's settings. Body (JSON):
 
 - **200**, message `"Table updated successfully."`, `data` the table as in
   `GET /tables/{table}`; a `TableUpdated` tells the table.
+- A **changed** `set_minutes` revokes every Start: each human seat's
+  `ready` goes back to false and any [Start timer](#the-start-timer)
+  (`start_deadline`) is cleared, in the same one `TableUpdated` — a Start
+  pressed for the old set time isn't one for the new. Robots stay ready.
+  The same value as now changes nothing (200, no event).
 - **409** while a set is going on (a board of it in progress, or between
   its boards): `"A set is going on at this table: change its settings once
   it is over."` After a set's last board, or once it ended `abandoned`, it
@@ -785,6 +820,11 @@ which takes the table row lock like seat changes do.
     [`GET /tables/{table}/playing`](#get-tablestableplaying) would answer,
     so no request is needed after it.
 - Pressing again changes nothing (same 200, no event).
+- Once every seat but yours is ready and another human has pressed, you
+  have until your seat's `start_deadline` to press, or your seat is freed:
+  see [the Start timer](#the-start-timer). Your Start can make it start for
+  the one player left (it is in this answer's seats and in the
+  `TableUpdated`).
 - The board is chosen by the rule in
   [`GAME-RULES.md` §8](GAME-RULES.md#board-selection-rule): one none of the
   four has played, else one where nobody holds a seat they have held on it
@@ -815,7 +855,8 @@ Take your Start back while no board is dealt. No body.
 
 - **200**, message `"Start withdrawn."`, the table (no `playing`). Taking
   back a Start you hadn't pressed is a 200 too, with no event; otherwise
-  `TableUpdated` is broadcast.
+  `TableUpdated` is broadcast. A [Start timer](#the-start-timer) running
+  for somebody else stops.
 - **409**, **403**, **401** and **404** as for `POST`.
 
 ## Playing (game state)
@@ -1965,7 +2006,7 @@ protocol, so any Pusher client (`pusher-js`, Laravel Echo) works.
 | Channel (as the client names it) | Echo | Who may subscribe | Carries |
 |---|---|---|---|
 | `private-table.{id}` | `echo.private('table.' + id)` | players seated at table `{id}` (`routes/channels.php`) | `TableUpdated`, `PlayingUpdated` |
-| `private-App.Models.User.{id}` | `echo.private('App.Models.User.' + id)` | user `{id}` only | `HandDealt` — one player's own cards; `DeclarerHandShown` — a robot declarer's cards, for its human dummy; `CallAlerted` — an opponent's alert or answer (anyone's, in the play); `AuctionAlertsShown` — partner's alerts, when the auction ends; `CallQuestioned` — a question about your call; `BoardMessageSent` — a chat message you may read; `UserBanned` |
+| `private-App.Models.User.{id}` | `echo.private('App.Models.User.' + id)` | user `{id}` only | `HandDealt` — one player's own cards; `DeclarerHandShown` — a robot declarer's cards, for its human dummy; `CallAlerted` — an opponent's alert or answer (anyone's, in the play); `AuctionAlertsShown` — partner's alerts, when the auction ends; `CallQuestioned` — a question about your call; `BoardMessageSent` — a chat message you may read; `UserBanned`; `UnseatedFromTable` — your seat was freed without you asking |
 
 A client should subscribe to its table's channel **after** it has a seat
 (the subscription is refused otherwise), and re-subscribe after moving to
@@ -2387,6 +2428,30 @@ again works, and `GET /api/user` carries the same `ban`.
 
 A banned user is refused `private-table.{id}` subscriptions (403); their own
 channel stays open.
+
+### Event `UnseatedFromTable`
+
+Class `App\Events\UnseatedFromTable`, on `private-App.Models.User.{id}`
+(Echo: `echo.private('App.Models.User.' + myId).listen('UnseatedFromTable', ...)`).
+Same delivery as `TableUpdated`.
+
+**Sent when** the user's seat was freed without them asking for it. The
+one reason so far is `"start_timeout"`: the table waited for their Start
+until the seat's `start_deadline` ([the Start timer](#the-start-timer)).
+The table gets a `TableUpdated` showing the seat free; this tells the
+player, who may no longer be listening on the table channel. Nothing is
+held against them: they may sit down again at once.
+
+```json
+{
+  "table_id": 7,
+  "reason": "start_timeout",
+  "kibitzing": false
+}
+```
+
+`kibitzing` is whether they stay at the table as a watcher; always `false`
+for now (there are no kibitzers yet).
 
 ## Stubs and not built
 
